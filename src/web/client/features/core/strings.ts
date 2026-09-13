@@ -50,7 +50,7 @@ const zh = {
 
   // run.ts
   runTitle: '运行态',
-  runDesc: '只观察——模型、存储这些控制在「控制台」。',
+  runDesc: '只观察——模型控制在「语言模型」,存储在「设置 → 存储」。',
   noStatus: '暂无状态',
   statContext: '上下文',
   statMessages: 'session 消息',
@@ -146,7 +146,7 @@ const en: typeof zh = {
 
   // run.ts
   runTitle: 'Loop status',
-  runDesc: 'Observation only — model and storage controls live under "Console".',
+  runDesc: 'Observation only — model controls live under "LLM", storage under Settings → Storage.',
   noStatus: 'No status yet',
   statContext: 'Context',
   statMessages: 'session messages',
