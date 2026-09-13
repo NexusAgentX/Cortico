@@ -26,6 +26,7 @@
 import { get, post } from '../../core/api.ts';
 import { pageIntro } from '../../ui/page.ts';
 import type { FeatureContext, FrameworkFeature } from '../feature.ts';
+import { S } from './strings.ts';
 
 /** 扩展类别。与 `ExtensionKind` 同形;这一页只用它分组与选关键字。 */
 export type ExtensionKindView = 'world' | 'provider' | 'bot';
@@ -92,11 +93,11 @@ export function parseInstallInput(raw: string): { name: string; version?: string
 }
 
 const STATE_LABEL: Record<ExtensionView['state'], string> = {
-  loaded: '已加载',
-  failed: '加载失败',
-  'pending-restart': '待重启',
-  removed: '已卸载,待重启',
-  idle: '已装,本部署未用',
+  loaded: S.stateLoaded,
+  failed: S.stateFailed,
+  'pending-restart': S.statePendingRestart,
+  removed: S.stateRemoved,
+  idle: S.stateIdle,
 };
 
 const KIND_LABEL: Record<ExtensionKindView, string> = {
@@ -121,10 +122,10 @@ const KIND_KEYWORD: Record<ExtensionKindView, string> = {
 
 /** 已安装清单的分组。`kind` 为 null 的一组收所有读不出 manifest 的包。 */
 const GROUPS: ReadonlyArray<{ kind: ExtensionKindView | null; title: string; desc: string }> = [
-  { kind: 'world', title: KIND_LABEL.world, desc: '接进外部世界的一路,激活后出现在「World」里。' },
-  { kind: 'provider', title: KIND_LABEL.provider, desc: '一种模型端点方言,在「语言模型」页里选用。' },
-  { kind: 'bot', title: KIND_LABEL.bot, desc: '一个 bot 代码包:Persona 与装配。部署的 deployment.json 里 bot 字段填包名即启用;一个进程只跑一个。' },
-  { kind: null, title: '未识别', desc: 'package.json 里的 cortico 块缺席或不合契约,框架不知道该往哪挂。' },
+  { kind: 'world', title: KIND_LABEL.world, desc: S.groupWorldDesc },
+  { kind: 'provider', title: KIND_LABEL.provider, desc: S.groupProviderDesc },
+  { kind: 'bot', title: KIND_LABEL.bot, desc: S.groupBotDesc },
+  { kind: null, title: S.groupUnknownTitle, desc: S.groupUnknownDesc },
 ];
 
 export function mountExtensions(ctx: FeatureContext): void {
@@ -133,22 +134,21 @@ export function mountExtensions(ctx: FeatureContext): void {
   const canRestart = ctx.capabilities.restart === true;
   const supervised = ctx.capabilities.supervised === true;
 
-  const intro = pageIntro(ui, '扩展', '从 npm 安装第三方 World、LLM Provider 与 bot 包。装卸只改磁盘,重启进程后生效。');
+  const intro = pageIntro(ui, S.introTitle, S.introDesc);
 
   // -------------------------------------------------------------------------
   // 已安装
   // -------------------------------------------------------------------------
 
   const installedSheet = ui.sheet({
-    title: '已安装',
+    title: S.installedTitle,
     en: 'extensions/',
-    desc: '每个包一张卡,按类别分组。状态对照的是本进程启动时的加载结果与此刻的磁盘:'
-      + '装了没加载、卸了还在跑的都标「待重启」。',
+    desc: S.installedDesc,
   });
   const sumBar = ui.rowbar();
   const msg = ui.msgline();
-  const refreshBtn = ui.button('↻ 刷新', { size: 'sm', onClick: () => void load() });
-  const restartBtn = ui.button('重启进程', {
+  const refreshBtn = ui.button(S.refresh, { size: 'sm', onClick: () => void load() });
+  const restartBtn = ui.button(S.restartProcess, {
     size: 'sm',
     variant: 'primary',
     onClick: (ev) => void restartProcess(ev.currentTarget as HTMLButtonElement),
@@ -170,30 +170,28 @@ export function mountExtensions(ctx: FeatureContext): void {
     if (!canRestart) return;
     if (!confirmed) {
       const ok = await ui.confirm({
-        title: supervised ? '重启进程?' : '⚠ 没有启动器循环',
-        body: supervised
-          ? '按次序收尾并退出,启动器随即重新拉起。回来是暂停态,去控制台点「继续」上线。最长约半分钟。'
-          : '这个进程不是启动器起的:退出后不会自动回来,需要手动重新启动。仍要继续?',
+        title: supervised ? S.restartConfirmTitle : S.restartNoLoopTitle,
+        body: supervised ? S.restartConfirmBody : S.restartNoLoopBody,
         danger: !supervised,
       });
       if (!ok || ctx.signal.aborted) return;
     }
     const lock = btn ? ui.disable(btn) : null;
-    const hold = ui.toast('正在按次序收尾…别关窗口。');
+    const hold = ui.toast(S.finishingToast);
     try {
       const out = await post<PowerReport>('/api/run/restart', undefined, { signal: ctx.signal });
       if (ctx.signal.aborted) return;
       if (out?.error) throw new Error(out.error);
       const lines = (out?.steps ?? []).map((s) =>
-        `${s.ok ? '✓' : '✗'} ${s.label} · ${(s.elapsedMs / 1000).toFixed(1)}s${s.ok ? '' : ` — ${s.detail ?? '未完成'}`}`);
+        `${s.ok ? '✓' : '✗'} ${s.label} · ${(s.elapsedMs / 1000).toFixed(1)}s${s.ok ? '' : ` — ${s.detail ?? S.stepIncomplete}`}`);
       void ui.confirm({
-        title: supervised ? '已退出,等待启动器拉起' : '已退出',
-        body: [out?.result ?? '已收尾。', '', ...lines].join('\n'),
+        title: supervised ? S.doneRestartSupervised : S.doneRestart,
+        body: [out?.result ?? S.resultDefault, '', ...lines].join('\n'),
       });
     } catch (err) {
       if (isAbort(err) || ctx.signal.aborted) return;
       // 连接在收尾途中断掉是预期之一:进程退出得比回执快。
-      ui.toast(`没拿到收尾回执(${errText(err)});进程可能已经退出。`, 'bad');
+      ui.toast(S.noReceipt(errText(err)), 'bad');
     } finally {
       hold.dispose();
       lock?.dispose();
@@ -202,21 +200,21 @@ export function mountExtensions(ctx: FeatureContext): void {
 
   async function uninstall(p: ExtensionView, btn: HTMLButtonElement): Promise<void> {
     const ok = await ui.confirm({
-      title: `卸载「${p.label || p.name}」?`,
-      body: `从 extensions/ 里移除 ${p.name}。它在本进程里仍在运行,重启后消失。`,
+      title: S.uninstallTitle(p.label || p.name),
+      body: S.uninstallBody(p.name),
       danger: true,
     });
     if (!ok || ctx.signal.aborted) return;
     const lock = ui.disable(btn);
-    const hold = ui.toast('正在卸载…');
+    const hold = ui.toast(S.uninstalling);
     try {
       const out = await post<{ result?: string }>('/api/extensions/uninstall', { name: p.name }, { signal: ctx.signal });
       if (ctx.signal.aborted) return;
-      setMsg(out?.result?.split('\n')[0] || '已卸载');
+      setMsg(out?.result?.split('\n')[0] || S.uninstalled);
       await load();
     } catch (err) {
       if (isAbort(err) || ctx.signal.aborted) return;
-      setMsg('卸载失败: ' + errText(err), true);
+      setMsg(S.uninstallFailed(errText(err)), true);
     } finally {
       hold.dispose();
       lock.dispose();
@@ -226,17 +224,17 @@ export function mountExtensions(ctx: FeatureContext): void {
   /** 装完问一句要不要顺手重启;答"否"也留在清单里标「待重启」。 */
   async function install(target: { name: string; version?: string } | { path: string }, btn?: HTMLButtonElement): Promise<void> {
     const lock = btn ? ui.disable(btn) : null;
-    const hold = ui.toast('正在安装…pnpm 在跑,可能要一分钟。');
+    const hold = ui.toast(S.installing);
     let result = '';
     try {
       const out = await post<{ result?: string }>('/api/extensions/install', target, { signal: ctx.signal });
       if (ctx.signal.aborted) return;
-      result = out?.result ?? '已安装';
+      result = out?.result ?? S.installed;
       setMsg(result.split('\n')[0]);
       await load();
     } catch (err) {
       if (isAbort(err) || ctx.signal.aborted) return;
-      setMsg('安装失败: ' + errText(err), true);
+      setMsg(S.installFailed(errText(err)), true);
       return;
     } finally {
       hold.dispose();
@@ -244,10 +242,8 @@ export function mountExtensions(ctx: FeatureContext): void {
     }
     if (!canRestart) return;
     const go = await ui.confirm({
-      title: '已安装,现在重启进程加载它?',
-      body: result + '\n\n' + (supervised
-        ? '重启会按次序收尾并由启动器重新拉起,回来是暂停态。'
-        : '⚠ 没有检测到启动器循环:重启等于关机,之后要手动启动。'),
+      title: S.installedRestartTitle,
+      body: result + '\n\n' + (supervised ? S.installedRestartNote : S.installedNoLoopNote),
       danger: !supervised,
     });
     if (!go || ctx.signal.aborted) return;
@@ -263,19 +259,17 @@ export function mountExtensions(ctx: FeatureContext): void {
     bar.append(ui.pill(STATE_LABEL[p.state], p.state === 'loaded' ? 'on' : 'off'));
     if (p.kind) bar.appendChild(ui.pill(KIND_LABEL[p.kind]));
     if (p.api !== undefined) bar.appendChild(ui.chip(`v${p.api}`));
-    if (p.console === 'served') bar.appendChild(ui.pill('自定义面板已加载', 'on'));
+    if (p.console === 'served') bar.appendChild(ui.pill(S.panelLoaded, 'on'));
     card.body.appendChild(bar);
     if (p.description) card.body.appendChild(ui.msgline(p.description));
     if (p.reason) card.body.appendChild(ui.msgline(p.reason, true));
-    if (p.state === 'pending-restart') card.body.appendChild(ui.msgline('装好了,重启进程后加载。'));
-    if (p.state === 'removed') card.body.appendChild(ui.msgline('已从磁盘卸掉,本进程里仍在运行;重启后消失。'));
-    if (p.state === 'idle') card.body.appendChild(ui.msgline('这份部署的 deployment.json 没有引用它,没有加载。'));
-    if (p.console === 'missing') {
-      card.body.appendChild(ui.msgline('声明了浏览器端产物但文件不在:到扩展目录里 build 一次,再重启。', true));
-    }
+    if (p.state === 'pending-restart') card.body.appendChild(ui.msgline(S.notePendingRestart));
+    if (p.state === 'removed') card.body.appendChild(ui.msgline(S.noteRemoved));
+    if (p.state === 'idle') card.body.appendChild(ui.msgline(S.noteIdle));
+    if (p.console === 'missing') card.body.appendChild(ui.msgline(S.noteConsoleMissing, true));
     if (p.state !== 'removed') {
       const actions = ui.actions();
-      actions.appendChild(ui.button('卸载', {
+      actions.appendChild(ui.button(S.uninstall, {
         size: 'sm',
         variant: 'danger',
         onClick: (ev) => void uninstall(p, ev.currentTarget as HTMLButtonElement),
@@ -291,14 +285,14 @@ export function mountExtensions(ctx: FeatureContext): void {
     const loaded = extensions.filter((p) => p.state === 'loaded').length;
     const pending = extensions.filter((p) => p.state === 'pending-restart' || p.state === 'removed').length;
     const failed = extensions.filter((p) => p.state === 'failed').length;
-    sumBar.appendChild(ui.pill(`已加载 ${loaded}`, 'on'));
-    if (pending > 0) sumBar.appendChild(ui.pill(`待重启 ${pending}`, 'off'));
-    if (failed > 0) sumBar.appendChild(ui.pill(`加载失败 ${failed}`, 'off'));
+    sumBar.appendChild(ui.pill(S.sumLoaded(loaded), 'on'));
+    if (pending > 0) sumBar.appendChild(ui.pill(S.sumPending(pending), 'off'));
+    if (failed > 0) sumBar.appendChild(ui.pill(S.sumFailed(failed), 'off'));
     sumBar.appendChild(ui.chip(dir));
     sumBar.append(ui.h('span', 'grow'), refreshBtn);
     if (canRestart) sumBar.appendChild(restartBtn);
     if (extensions.length === 0) {
-      installedGroups.appendChild(ui.placeholder('还没装任何扩展'));
+      installedGroups.appendChild(ui.placeholder(S.noExtensions));
       return;
     }
     for (const g of GROUPS) {
@@ -317,7 +311,7 @@ export function mountExtensions(ctx: FeatureContext): void {
       renderInstalled(Array.isArray(data?.extensions) ? data.extensions : [], data?.dir ?? '');
     } catch (err) {
       if (isAbort(err) || ctx.signal.aborted) return;
-      installedGroups.replaceChildren(ui.placeholder('扩展清单加载失败: ' + errText(err)));
+      installedGroups.replaceChildren(ui.placeholder(S.listLoadFailed(errText(err))));
     }
   }
 
@@ -326,9 +320,9 @@ export function mountExtensions(ctx: FeatureContext): void {
   // -------------------------------------------------------------------------
 
   const searchSheet = ui.sheet({
-    title: '从 npm 安装',
+    title: S.searchTitle,
     en: 'npm registry',
-    desc: '扩展在进程内运行,拥有与框架相同的文件与网络权限——安装前看一眼仓库与作者。',
+    desc: S.searchDesc,
   });
   let searchKind: ExtensionKindView = 'world';
   const searchBar = ui.rowbar();
@@ -350,13 +344,13 @@ export function mountExtensions(ctx: FeatureContext): void {
       },
     },
   );
-  const searchInput = ui.input({ type: 'search', placeholder: '关键字;留空列出全部' });
-  const searchBtn = ui.button('搜索', { size: 'sm', variant: 'primary', onClick: () => void search() });
+  const searchInput = ui.input({ type: 'search', placeholder: S.searchPlaceholder });
+  const searchBtn = ui.button(S.search, { size: 'sm', variant: 'primary', onClick: () => void search() });
   searchInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') void search(); }, { signal: ctx.signal });
   searchBar.append(kindSeg.el, searchInput, searchBtn);
   const keywordLine = ui.msgline();
   function paintKeyword(): void {
-    keywordLine.textContent = `列出 npm 上带 ${KIND_KEYWORD[searchKind]} 关键字的包。`;
+    keywordLine.textContent = S.searchKeywordNote(KIND_KEYWORD[searchKind]);
   }
   paintKeyword();
   const searchMsg = ui.msgline();
@@ -368,7 +362,7 @@ export function mountExtensions(ctx: FeatureContext): void {
   }
 
   function hitCard(h: SearchHitView): HTMLElement {
-    const card = ui.sheet({ title: h.name, en: `${h.version} · 月下载 ${h.downloads}${h.publisher ? ` · ${h.publisher}` : ''}` });
+    const card = ui.sheet({ title: h.name, en: S.hitMeta(h.version, h.downloads, h.publisher) });
     card.el.classList.add('iocard');
     if (h.kind) {
       const bar = ui.rowbar();
@@ -377,11 +371,11 @@ export function mountExtensions(ctx: FeatureContext): void {
     }
     if (h.description) card.body.appendChild(ui.msgline(h.description));
     const actions = ui.actions();
-    const links: Array<[string, string | undefined]> = [['npm', h.links.npm], ['仓库', h.links.repository], ['主页', h.links.homepage]];
+    const links: Array<[string, string | undefined]> = [['npm', h.links.npm], [S.linkRepo, h.links.repository], [S.linkHome, h.links.homepage]];
     for (const [label, href] of links) {
       if (href) actions.appendChild(ui.button(label, { size: 'sm', onClick: () => openLink(href) }));
     }
-    const installBtn = ui.button(h.installed ? '已安装' : '安装', {
+    const installBtn = ui.button(h.installed ? S.alreadyInstalled : S.install, {
       size: 'sm',
       variant: 'primary',
       onClick: (ev) => void install({ name: h.name, version: h.version }, ev.currentTarget as HTMLButtonElement),
@@ -394,7 +388,7 @@ export function mountExtensions(ctx: FeatureContext): void {
 
   async function search(): Promise<void> {
     const lock = ui.disable(searchBtn);
-    searchMsg.textContent = '搜索中…';
+    searchMsg.textContent = S.searching;
     searchMsg.className = 'msgline';
     try {
       const q = encodeURIComponent(searchInput.value.trim());
@@ -405,11 +399,11 @@ export function mountExtensions(ctx: FeatureContext): void {
       if (ctx.signal.aborted) return;
       const hits = Array.isArray(data?.hits) ? data.hits : [];
       resultGrid.replaceChildren();
-      searchMsg.textContent = hits.length === 0 ? '没有匹配的包' : `${hits.length} 个包`;
+      searchMsg.textContent = hits.length === 0 ? S.noHits : S.hitCount(hits.length);
       for (const h of hits) resultGrid.appendChild(hitCard(h));
     } catch (err) {
       if (isAbort(err) || ctx.signal.aborted) return;
-      searchMsg.textContent = '搜索失败: ' + errText(err);
+      searchMsg.textContent = S.searchFailed(errText(err));
       searchMsg.className = 'msgline bad';
     } finally {
       lock.dispose();
@@ -421,18 +415,18 @@ export function mountExtensions(ctx: FeatureContext): void {
   // -------------------------------------------------------------------------
 
   const manualSheet = ui.sheet({
-    title: '手动安装',
+    title: S.manualTitle,
     en: 'name@version · ./path',
-    desc: '包名(可带 @版本)或本机一个含 package.json 的目录。本机目录以链接方式装入,改源码后重启即生效——给自己写 World 的人用。',
+    desc: S.manualDesc,
   });
   const manualBar = ui.rowbar();
-  const manualInput = ui.input({ cls: 'mono', placeholder: '@scope/name@1.2.0 或 ../my-module' });
-  const manualBtn = ui.button('安装', {
+  const manualInput = ui.input({ cls: 'mono', placeholder: S.manualPlaceholder });
+  const manualBtn = ui.button(S.install, {
     size: 'sm',
     variant: 'primary',
     onClick: (ev) => {
       const target = parseInstallInput(manualInput.value);
-      if (!target) { setMsg('先填包名或目录', true); return; }
+      if (!target) { setMsg(S.manualEmpty, true); return; }
       void install(target, ev.currentTarget as HTMLButtonElement);
     },
   });
@@ -440,15 +434,15 @@ export function mountExtensions(ctx: FeatureContext): void {
   manualSheet.body.append(manualBar);
 
   root.append(intro, installedSheet.el, installedGroups, searchSheet.el, manualSheet.el);
-  installedGroups.appendChild(ui.placeholder('加载中…'));
+  installedGroups.appendChild(ui.placeholder(S.loading));
   void load();
 }
 
 export const extensionsFeature: FrameworkFeature = {
   route: 'extensions',
-  label: '扩展',
+  label: S.navLabel,
   icon: 'download',
-  navGroup: '系统',
+  navGroup: S.navGroup,
   needs: ['extensions'],
   mount: mountExtensions,
 };
