@@ -5,7 +5,7 @@
  * `extensions/` 下的外部 npm 包:那种包拿不到框架的浏览器代码,却同样要有这块面板。
  * 数据面仍归声明这一页的那个 provider(`ctx.invoke`),这里只有界面。
  *
- * 推理强度有两种模块:`reasoningTiers` 非空是封闭档位表(下拉必须命中一档);为空是开放
+ * 推理强度有两种模式:`reasoningTiers` 非空是封闭档位表(下拉必须命中一档);为空是开放
  * 字串(文本框 + 候选 datalist),空 = 端点默认、`none` = 关闭、其余原串落 `reasoningEffort`。
  */
 import type {
@@ -82,7 +82,7 @@ interface ProbeResult {
 
 const DEFAULT_ENDPOINT_PATH = '/responses';
 
-/** 开放模块的 effort 格 ↔ spec 的 thinking/reasoningEffort。 */
+/** 开放模式的 effort 格 ↔ spec 的 thinking/reasoningEffort。 */
 function effortOf(spec: Spec): string {
   if (!spec.thinking) return 'none';
   return spec.reasoningEffort ?? '';

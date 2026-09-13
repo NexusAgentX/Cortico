@@ -191,7 +191,7 @@ const en: typeof zh = {
   groupDialogue: 'Conversation',
   catOrient: 'ORIENTATION',
   catConstitution: 'CONSTITUTION',
-  catEnv: 'Environment · IO worlds',
+  catEnv: 'Environment · World',
   catToolsUsage: 'Tool usage notes',
   catMemory: 'MEMORY',
   catPrefixMisc: 'Preamble / separators / structure',

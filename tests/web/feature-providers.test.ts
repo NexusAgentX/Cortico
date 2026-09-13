@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  *
- * 「Provider」页:左侧次级菜单是 manifest 里 kind 为 `llm` 的 provider,右侧由嵌入的
+ * 「语言模型」页:左侧次级菜单是 manifest 里 kind 为 `llm` 的 provider,右侧由嵌入的
  * provider 宿主渲染选中模块的面板。这一页不认识任何具体模块,所以夹具里的模块一律
  * 用占位名;判据是"换一份 manifest / 换一条路由,菜单与宿主调用跟不跟得上"。
  */
@@ -93,10 +93,10 @@ afterEach(() => {
   window.location.hash = '';
 });
 
-describe('Provider 页', () => {
+describe('语言模型页', () => {
   it('左栏只占一条:在「系统」组里,带图标,永远可用', () => {
     expect(providersFeature.route).toBe('providers');
-    expect(providersFeature.label).toBe('Provider');
+    expect(providersFeature.label).toBe('语言模型');
     expect(providersFeature.navGroup).toBe('系统');
     expect(providersFeature.icon).toBe('cpu');
     expect(providersFeature.needs).toBeUndefined();
@@ -148,7 +148,7 @@ describe('Provider 页', () => {
     await mountProviders(ctx);
     await flush();
     expect(root.querySelectorAll('.settings-jump')).toHaveLength(0);
-    expect(root.textContent).toContain('没有已注册的 Provider 模块');
+    expect(root.textContent).toContain('没有已注册的供应模块');
     expect(fake.shown).toEqual([]);
   });
 

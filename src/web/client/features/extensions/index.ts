@@ -122,7 +122,7 @@ const KIND_KEYWORD: Record<ExtensionKindView, string> = {
 /** 已安装清单的分组。`kind` 为 null 的一组收所有读不出 manifest 的包。 */
 const GROUPS: ReadonlyArray<{ kind: ExtensionKindView | null; title: string; desc: string }> = [
   { kind: 'world', title: KIND_LABEL.world, desc: '接进外部世界的一路,激活后出现在「World」里。' },
-  { kind: 'provider', title: KIND_LABEL.provider, desc: '一种模型端点方言,在「Provider」页里选用。' },
+  { kind: 'provider', title: KIND_LABEL.provider, desc: '一种模型端点方言,在「语言模型」页里选用。' },
   { kind: 'bot', title: KIND_LABEL.bot, desc: '一个 bot 代码包:Persona 与装配。部署的 deployment.json 里 bot 字段填包名即启用;一个进程只跑一个。' },
   { kind: null, title: '未识别', desc: 'package.json 里的 cortico 块缺席或不合契约,框架不知道该往哪挂。' },
 ];

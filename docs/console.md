@@ -14,7 +14,7 @@ Owner: `src/web/server.ts`, `src/web/shared/console-protocol.ts`, `src/web/clien
 | `live` | 终端 | 与 bot 对话、时间线、上下文圈、fork |
 | `core` | 运行诊断 | run、session、事件、运行日志、工具 |
 | `usage` | 用量·成本 | 按 session、按天的 token 与费用 |
-| `provider` | Provider | 端点表(见 [providers.md](providers.md)) |
+| `provider` | 语言模型 | 端点表(见 [providers.md](providers.md)) |
 | `world` | World 总览 | 每个 World 一张卡:激活、停用、重启、灯与徽标 |
 | `extensions` | 扩展 | 装卸与 npm 搜索(见 [extensions.md](extensions.md)) |
 | `config` / `prompts` / `storage` / `appearance` / `settings` | 设置里的次级页 | 运行参数、提示词文档、存储清单、外观、语言 |

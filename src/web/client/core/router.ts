@@ -5,7 +5,7 @@
 import { toDisposable, type Disposable } from '../../shared/client-panel.ts';
 
 export interface Route {
-  /** 路径段，已 decode。`#/provider/worlds%3Achat/gate` → `['provider','world:chat','gate']` */
+  /** 路径段，已 decode。`#/provider/world%3Achat/gate` → `['provider','world:chat','gate']` */
   segments: string[];
   /** 查询参数（`?a=1`），已 decode */
   query: Record<string, string>;

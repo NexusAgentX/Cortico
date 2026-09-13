@@ -37,7 +37,7 @@ const en: typeof zh = {
     + ' plus the ones their owner explicitly sends back here (such as the context handoff threshold).'
     + ' **Changes save immediately**: every edit is written back to config.json and survives a restart. Items marked "takes effect after restart" need a restart; the rest apply at once.',
   loading: 'Loading…',
-  allClaimed: '(All parameters have moved to their own pages — worlds on the World pages, Persona on the persona page)',
+  allClaimed: '(All parameters have moved to their own pages — World knobs on the World pages, Persona on the persona page)',
   navLabel: 'Runtime parameters',
   optionCurrent: '(current)',
   ownerPersona: 'Persona',

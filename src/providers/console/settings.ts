@@ -57,12 +57,12 @@ export class ProviderSettings {
     private readonly file: string,
     /** 全局端点表的根(`<部署根>/providers/`);端点的改动写进 `<它>/<端点名>/config.json`。 */
     private readonly providersDir: string,
-    private readonly worlds: readonly ProviderModule[] = providerModules,
+    private readonly modules: readonly ProviderModule[] = providerModules,
   ) {
     this.language = resolveLanguage((config as { language?: unknown }).language);
     for (const [name, entry] of Object.entries(config.providers))
       config.providers[name] =
-        this.worlds
+        this.modules
           .find((module) => module.id === entry.kind)
           ?.normalize?.(structuredClone(entry)) ?? entry;
   }
@@ -72,7 +72,7 @@ export class ProviderSettings {
   }
 
   private module(kind: string): ProviderModule {
-    const module = this.worlds.find((module) => module.id === kind);
+    const module = this.modules.find((module) => module.id === kind);
     if (!module) throw new Error(`Unknown provider module: ${kind}`);
     return module;
   }
@@ -83,7 +83,7 @@ export class ProviderSettings {
       .map(([name, entry]) => ({ name, entry }));
   }
   private declaredGroups() {
-    return this.worlds.flatMap((module) =>
+    return this.modules.flatMap((module) =>
       this.entries(module).flatMap(({ name, entry }) =>
         (module.config?.(name, entry, this.language) ?? []).map((group) => ({ name, group })),
       ),
@@ -144,7 +144,7 @@ export class ProviderSettings {
   save(name: string, entry: LLMProviderEntry): void {
     const module = this.module(entry.kind);
     const prior = this.config.providers[name];
-    if (prior && prior.kind !== entry.kind && this.worlds.some((m) => m.id === prior.kind))
+    if (prior && prior.kind !== entry.kind && this.modules.some((m) => m.id === prior.kind))
       throw new Error(this.text.kindChange);
     this.persist(name, validateEntry(module, entry, this.language), this.config.activeProvider);
   }
@@ -205,7 +205,7 @@ export class ProviderSettings {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name)) throw new Error(this.text.nameFormat);
     const existing = this.config.providers[name];
     // 一个没有模块认领的旧条目(被删掉的 kind)可以被同名新建覆盖;它的目录与密钥文件留用。
-    if (existing && this.worlds.some((module) => module.id === existing.kind)) throw new Error(this.text.nameTaken);
+    if (existing && this.modules.some((module) => module.id === existing.kind)) throw new Error(this.text.nameTaken);
   }
 
   /** 端点目录里除 `config.json` 外还有什么(密钥、授权状态),删前给操作者看。 */
@@ -257,7 +257,7 @@ export class ProviderSettings {
   }
 
   sources() {
-    return this.worlds.map((module) => ({
+    return this.modules.map((module) => ({
       id: `llm:${module.id}`,
       contribute: () => this.contribute(module),
     })) satisfies ConsolePageSource[];

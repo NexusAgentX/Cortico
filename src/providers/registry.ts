@@ -12,7 +12,7 @@ import type { ResponseClient } from '../core/generation.ts';
 export async function discoverProviderModules(
   root = fileURLToPath(new URL('.', import.meta.url)),
 ): Promise<ProviderModule[]> {
-  const worlds: ProviderModule[] = [];
+  const modules: ProviderModule[] = [];
   for (const dir of readdirSync(root, { withFileTypes: true }).sort((a, b) =>
     a.name.localeCompare(b.name),
   )) {
@@ -22,9 +22,9 @@ export async function discoverProviderModules(
     const module = (await import(pathToFileURL(entry).href)).default as ProviderModule;
     if (module.id !== dir.name)
       throw new Error(`Provider module ID must match directory: ${dir.name}`);
-    worlds.push(module);
+    modules.push(module);
   }
-  return worlds;
+  return modules;
 }
 
 export const providerModules = await discoverProviderModules();
@@ -55,11 +55,11 @@ export class ProviderRegistry {
   constructor(
     private readonly entries: () => Record<string, LLMProviderEntry>,
     private readonly host: ProviderHostBase,
-    private readonly worlds: readonly ProviderModule[] = providerModules,
+    private readonly modules: readonly ProviderModule[] = providerModules,
   ) {}
 
   private module(kind: string): ProviderModule {
-    const module = this.worlds.find((module) => module.id === kind);
+    const module = this.modules.find((module) => module.id === kind);
     if (!module) throw new Error(`Unknown provider module: ${kind}`);
     return module;
   }

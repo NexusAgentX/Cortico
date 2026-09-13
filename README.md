@@ -35,7 +35,7 @@ mkdir -p deployments/mybot && echo '{ "bot": "cormini" }' > deployments/mybot/de
 mkdir -p deployments/providers/deepseek && echo "DEEPSEEK_API_KEY=你的key" > deployments/providers/deepseek/.env
 ```
 
-别的端点在控制台 Provider 页建。然后:
+别的端点在控制台「语言模型」页建。然后:
 
 ```bash
 pnpm start mybot
@@ -67,7 +67,7 @@ llama-server,可下载托管),其余是扩展。端点是全局事实:
 
 ## 控制台
 
-每份部署一个本机 Web 控制台:终端、运行诊断、用量、Provider、World 总览、扩展、设置。World、
+每份部署一个本机 Web 控制台:终端、运行诊断、用量、语言模型、World 总览、扩展、设置。World、
 Persona、provider 各自贡献自己的页,框架按声明渲染,新增一个 World 不改 `src/web/**` 一个字节。
 [docs/console.md](docs/console.md)
 

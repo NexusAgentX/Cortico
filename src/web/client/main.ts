@@ -33,7 +33,7 @@ import { usageFeature } from './features/usage/index.ts';
 import { providersFeature } from './features/providers/index.ts';
 import { configFeature } from './features/config/index.ts';
 import { storageFeature } from './features/storage/index.ts';
-import { modulesFeature } from './features/worlds/index.ts';
+import { worldsFeature } from './features/worlds/index.ts';
 import { extensionsFeature } from './features/extensions/index.ts';
 import { appearanceFeature } from './features/appearance/index.ts';
 import { promptsFeature } from './features/prompts/index.ts';
@@ -48,7 +48,7 @@ import type { ConsoleMemo } from '../shared/client-panel.ts';
  */
 export const FEATURES: readonly FrameworkFeature[] = [
   liveFeature, coreFeature, usageFeature, providersFeature,
-  modulesFeature, extensionsFeature, promptsFeature, configFeature, storageFeature, appearanceFeature,
+  worldsFeature, extensionsFeature, promptsFeature, configFeature, storageFeature, appearanceFeature,
   settingsFeature,
 ];
 

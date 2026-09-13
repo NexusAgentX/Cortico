@@ -73,9 +73,9 @@ const en: typeof zh = {
   introTitle: 'Worlds',
   introDesc: 'Manage World assembly, activation and agent visibility.',
   sheetTitle: 'Assembly status',
-  sheetDesc: 'One card per module. The console only knows there is a set of worlds, each in one of three states with a few switches; '
-    + 'the name, badges and notes on a card all come from the World\'s own declaration — so a newly installed module shows up here by itself. '
-    + 'The three icons in the corner are: visible to agent / restart module / deactivate module.',
+  sheetDesc: 'One card per World. The console only knows there is a set of Worlds, each in one of three states with a few switches; '
+    + 'the name, badges and notes on a card all come from the World\'s own declaration — so a newly installed World shows up here by itself. '
+    + 'The three icons in the corner are: visible to agent / restart World / deactivate World.',
   reloadPrefixBtn: '↻ Reload system prefix',
   prefixReloaded: 'Prefix reloaded',
   prefixReloadFailed: (msg: string) => `Prefix reload failed: ${msg}`,

@@ -438,7 +438,7 @@ describe('provider 那一段', () => {
     expect(nav.findAll('stacklabel').length).toBe(1);
   });
 
-  it('供应模块(kind llm)不逐个进左栏:它们的入口是框架的 Provider 页', async () => {
+  it('供应模块(kind llm)不逐个进左栏:它们的入口是框架的「语言模型」页', async () => {
     stubStatus({});
     const { shell, nav } = await mkShell({ features: [feature('alpha', '甲页', undefined, '系统')] });
     shell.setPages([

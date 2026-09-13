@@ -55,7 +55,7 @@ const en: typeof zh = {
   configEmpty: '(The config groups it declares are not in /api/config right now — most likely not assembled in this run)',
   configTitle: 'Parameters',
   configDesc: 'The knobs on this page are declared by this provider (JSON Schema); the console renders them generically.'
-    + ' **Changes save immediately**: every edit is written back to config.json. Items marked "takes effect after World restart" apply once you restart the module on the worlds page; the rest apply at once.',
+    + ' **Changes save immediately**: every edit is written back to config.json. Items marked "takes effect after World restart" apply once you restart that World on the World overview page; the rest apply at once.',
   assembly: 'Assembly',
   notInstalled: 'not installed',
   notActivated: 'not activated',

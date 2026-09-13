@@ -69,7 +69,7 @@ export type FrameworkFeature = {
       readonly navGroup: string;
     }
   | {
-      /** primary 是独立一级入口；module-root 是 World 实例树入口；hidden 只保留路由。 */
+      /** primary 是独立一级入口；world-root 是 World 实例树入口；hidden 只保留路由。 */
       readonly navMode: 'primary' | 'world-root' | 'hidden';
       readonly navGroup?: string;
     }

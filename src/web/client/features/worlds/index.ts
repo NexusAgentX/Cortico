@@ -37,11 +37,11 @@ import { S } from './strings.ts';
  * (`ConsolePageKind`,与 `persona` 对举)。这不是 World 名,是页的类别——
  * 任何一个第三方 World 落在这一页上都拿同一个前缀。
  */
-const MODULE_PAGE_KIND = 'world';
+const WORLD_PAGE_KIND = 'world';
 
 /** 某个 World 那一页的路由:`#/provider/<kind>:<id>`。 */
-function modulePageId(id: string): string {
-  return pageIdFor(MODULE_PAGE_KIND, id);
+function worldPageId(id: string): string {
+  return pageIdFor(WORLD_PAGE_KIND, id);
 }
 
 /**
@@ -279,7 +279,7 @@ export function mountWorlds(ctx: FeatureContext): void {
     const el = lampRow(doc, m.status === 'active'
       ? m.lamps ?? []
       : [{ label: S.lampAssembly, state: 'offline', hint: m.status === 'missing' ? S.notInstalled : S.notActive }]);
-    if (m.status === 'active') lampNodes.set(modulePageId(m.id), el);
+    if (m.status === 'active') lampNodes.set(worldPageId(m.id), el);
     return el;
   }
 
@@ -310,7 +310,7 @@ export function mountWorlds(ctx: FeatureContext): void {
   function detailButton(m: WorldView): HTMLButtonElement {
     return ui.button(S.details, {
       size: 'sm',
-      onClick: () => ctx.router.navigate([PROVIDER_ROUTE, modulePageId(m.id)]),
+      onClick: () => ctx.router.navigate([PROVIDER_ROUTE, worldPageId(m.id)]),
     });
   }
 
@@ -405,7 +405,7 @@ export function mountWorlds(ctx: FeatureContext): void {
     return card.el;
   }
 
-  function moduleCard(m: WorldView): HTMLElement {
+  function worldCard(m: WorldView): HTMLElement {
     if (m.status === 'missing') return missingCard(m);
     if (m.status === 'inactive') return inactiveCard(m);
     return activeCard(m);
@@ -431,7 +431,7 @@ export function mountWorlds(ctx: FeatureContext): void {
       grid.appendChild(ui.placeholder(S.noWorlds));
       return;
     }
-    for (const m of sortWorlds(worlds)) grid.appendChild(moduleCard(m));
+    for (const m of sortWorlds(worlds)) grid.appendChild(worldCard(m));
   }
 
   async function load(): Promise<void> {
@@ -452,7 +452,7 @@ export function mountWorlds(ctx: FeatureContext): void {
 /**
  * `route` 沿用旧的 `worlds`:用户的书签与外部链接都指着它。
  */
-export const modulesFeature: FrameworkFeature = {
+export const worldsFeature: FrameworkFeature = {
   route: 'world',
   label: S.navLabel,
   icon: 'boxes',

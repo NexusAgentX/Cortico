@@ -60,7 +60,7 @@ const en: typeof zh = {
   restartAria: 'Restart',
   restartTitleSupervised: 'Restart (finish in order; the launcher relaunches)',
   restartTitleUnsupervised: 'Restart (no launcher loop: start manually after exit)',
-  sequence: 'Finish in order and exit the process: hold event delivery → stop IO worlds (managed external processes and saves happen here)'
+  sequence: 'Finish in order and exit the process: hold event delivery → stop Worlds (managed external processes and saves happen here)'
     + ' → stop provider instances → persist state → close the console.',
   confirmShutdownTitle: '⚠ Shut down',
   confirmRestartTitle: '⚠ Restart',
