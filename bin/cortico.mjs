@@ -303,8 +303,6 @@ async function main() {
   }
 
   console.log(`\n  启动: ${choice.bot}`);
-  console.log('  启动后是暂停态,去控制台点「继续」才上线;停止用控制台的「关机」键。');
-  console.log('  ⚠ 别直接关本窗口:那是硬杀,Minecraft 世界会回档到上次自动存档。\n');
   return supervise(choice.bot, passthrough, process.env.CORTICO_OPEN_BROWSER !== '0');
 }
 
