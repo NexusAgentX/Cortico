@@ -51,11 +51,6 @@ const zh = {
   // run.ts
   runTitle: '运行态',
   runDesc: '只观察——模型、存储这些控制在「控制台」。',
-  pause: '⏸ 暂停',
-  resume: '▶ 继续',
-  actionFailed: (msg: string) => `操作失败：${msg}`,
-  pausedHint: '已暂停：事件照常落库排队，不投递唤醒。',
-  runningHint: '运行中：点暂停后事件仍落库，只是不再投递唤醒。',
   noStatus: '暂无状态',
   statContext: '上下文',
   statMessages: 'session 消息',
@@ -152,11 +147,6 @@ const en: typeof zh = {
   // run.ts
   runTitle: 'Loop status',
   runDesc: 'Observation only — model and storage controls live under "Console".',
-  pause: '⏸ Pause',
-  resume: '▶ Resume',
-  actionFailed: (msg: string) => `Action failed: ${msg}`,
-  pausedHint: 'Paused: events are still stored and queued, but no wakes are delivered.',
-  runningHint: 'Running: after pausing, events are still stored, just no longer delivered as wakes.',
   noStatus: 'No status yet',
   statContext: 'Context',
   statMessages: 'session messages',

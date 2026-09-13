@@ -98,13 +98,7 @@ function mountHarness(ctx: FeatureContext, env: SocketEnv): Disposable | void {
   };
 
   // ── 五个子页 ─────────────────────────────────────────────────────
-  const run = createRunView({
-    ui,
-    signal: ctx.signal,
-    canPause: ctx.capabilities.run === true,
-    refresh: () => refreshStatus(),
-    onError: (err) => ctx.onError(err),
-  });
+  const run = createRunView({ ui });
   const sessions = createSessionTable(ui);
   const events = createEventsView({
     ui,

@@ -579,41 +579,7 @@ describe('运行态', () => {
     expect(grid.textContent).toContain('暂停');
   });
 
-  it('运行控制没挂就不画那颗按钮', () => {
-    stubFetch(defaultReply);
-    const { env } = fakeEnv();
-    const a = mkCtx({ debug: true, run: false });
-    core.createCoreFeature({ env }).mount(a.ctx);
-    expect(a.root.findAll('btn').some((b) => b.textContent.includes('暂停'))).toBe(false);
-
-    const { env: env2 } = fakeEnv();
-    const b = mkCtx({ debug: true, run: true });
-    core.createCoreFeature({ env: env2 }).mount(b.ctx);
-    expect(b.root.findAll('btn').some((x) => x.textContent.includes('暂停'))).toBe(true);
-  });
-
-  it('按下暂停发 POST,再按服务端回报的状态把按钮翻成继续', async () => {
-    // 按钮的字最终由 `/api/status` 说了算(动作之后必刷一次),所以假服务端也得记住这件事。
-    let paused = false;
-    stubFetch((url) => {
-      if (url === '/api/run/pause') {
-        paused = true;
-        return { ok: true, paused: true };
-      }
-      if (url.startsWith('/api/status')) return { loop: { paused } };
-      return defaultReply(url);
-    });
-    const { env } = fakeEnv();
-    const { ctx, root } = mkCtx({ debug: true, run: true });
-    core.createCoreFeature({ env }).mount(ctx);
-    const btn = root.findAll('btn').find((b) => b.textContent.includes('暂停')) as FakeEl;
-    btn.dispatchEvent({ type: 'click' });
-    await flush();
-    expect(calls.find((c) => c.url === '/api/run/pause')?.method).toBe('POST');
-    expect(btn.textContent).toContain('继续');
-  });
-
-  // 关机键不在这一页:它与暂停/继续并列在左栏右下角(shell),测试在 shell.test.ts。
+  // 暂停/继续与关机都不在这一页:它们在左栏右下角(shell),测试在 shell.test.ts。
 });
 
 describe('事件流', () => {
