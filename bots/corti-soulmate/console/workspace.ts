@@ -135,8 +135,7 @@ class WorkspaceView {
     const card = ui.sheet({
       title: '工作区',
       en: 'persona/',
-      desc: '这里的每一次保存都会立即提交进 persona 的 git 仓(署名 operator),'
-        + '所以改错了能从「版本历史」找回来。保存带底本核对:别处改过的档案不会被你这一版悄悄盖掉。',
+      desc: '保存时以 operator 署名提交到工作区的 Git 仓库。',
     });
 
     // ---- 顶栏:新建 / 刷新 / 过滤 / git 一行 ----
