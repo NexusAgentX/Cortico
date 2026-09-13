@@ -99,6 +99,24 @@ carries a fact the reader needs and cannot get from the code.
 - No test that asserts a mock was called with a constant. Test behavior against real or
   realistically faked components; when a call count is the behavior, say so in the test name.
 
+### AI 垃圾文风检查清单
+
+适用于 UI 文本、提示文本、说明文档、代码注释和提交信息。逐句检查，优先删除；
+保留的每句话都应提供读者当前需要、且无法从界面或代码直接得知的事实。
+
+- [ ] **多余常识**：删除读者已知的常识和观察界面即可明白的操作引导。
+- [ ] **复述界面**：删除对卡片、分组、按钮和布局的介绍；状态由状态标签表达。
+- [ ] **冗长叙事**：把“这里会……所以你就能……”压成必要的行为、条件或结果。
+- [ ] **制造转折**：删除没有实际分歧的“不是……而是……”、破折号转折和刻意强调。
+- [ ] **术语与比喻**：用常用词描述具体对象和动作；必要术语先定义，并遵守项目命名。
+- [ ] **含糊动作**：写清操作对象、发生的变化和生效条件，不用“落盘”“收尾”等词代替具体行为。
+- [ ] **自夸与保证**：删除对实现优点的宣传，以及“悄悄”“稳稳”“放心”等主观修饰和无依据承诺。
+- [ ] **事故残留**：删除事故经过、修复过程、旧方案辩解和预防性训话；仍有效的约束只写当前规则。
+- [ ] **越层细节**：平台细节留在所属 World；通用入口不描述具体 World、Persona 或 bot 的内部行为。
+- [ ] **信息错位**：UI 保留操作所需信息，接口处写契约，模块或所属文档写架构，历史留在 git。
+- [ ] **重复说明**：同一事实只在需要的位置说明；清理时检查重复文案及其他语言版本。
+- [ ] **删改失真**：核实保留的行为、条件、单位和边界；必要的操作后果、错误原因与恢复方法应准确具体。
+
 ## 5. Tests
 
 - Assert the contract, not incidental values: compare with the exported default, not a literal.
