@@ -127,8 +127,8 @@ World 自声明自管理(工具、回执、内存表),不需要 Core 或 Persona
 | `websearch` | 只有请求 / 响应工具,不产事件 |
 | `console-fixture` | 控制台边界的活体验收件,不在真 bot 里激活 |
 
-`vtuber`、`asr`、`pvz`、`canvas` 是扩展包(见 [extensions.md](extensions.md))。每个 World
-目录有自己的 README,`src/worlds/websearch/` 最短,`src/worlds/minecraft/` 最全。
+`vtuber`、`asr`、`pvz`、`canvas` 是扩展包(见 [extensions.md](extensions.md))。`bilibili` 与
+`minecraft` 各有自己的 README;`src/worlds/websearch/` 最短,`src/worlds/minecraft/` 最全。
 
 ## 写一个
 
