@@ -37,6 +37,11 @@ World 是 Bot 与一个外部环境之间的唯一边界:把环境变化描述�
 触发档位 `trigger`:`preempt`(取消在途未外化的模型轮,立即投递)、`flush`(到达即投递,带走
 积压)、`debounce`(默认,参与合批)、`piggyback`(只入队,不发车)。`deliver: false` 只落库不唤醒。
 
+事件还是工具:被动发生的是事件,bot 主动要看的是工具。描述「此刻状态」的快照用 `pushDeferred`
+在发车刻成文、挂 `piggyback` 只搭车不发车;要 bot 立刻停手的才 `preempt`。World 内部状态的生命周期
+变化(服务器起停、换存档、连接断续)都投事件告知 bot:静默切换会让两边状态错开,bot 以为自己还在
+旧状态。
+
 事件是 `EventEnvelope`:`cursor`、`run`、`type`、`ts`、`source`(World id)、`origin`、`tags`、
 `text`(归一化正文,Core 渲染时一字不加)、`senderKey`、`meta`、`blobs`、`ephemeral`。
 原则:只陈述系统能确认的事实,严禁转录认证不了来源的外部内容。
@@ -68,6 +73,10 @@ false,由 bot 的 `declares` 置 true)、`preflight?`、`configOptions?`、`crea
 `bots/<名>/worlds/<id>/ENV_PROMPT.md` ← `<部署>/worlds/<id>/ENV_PROMPT.md`,后一层整份替换。
 Persona 的段模板用 `{{world.id}}` 与 `{{world.envPrompt}}` 嵌入,前缀总装模板用
 `{{worlds.envPrompts}}`。模板语法只有三条(`src/core/template.ts`)。
+
+环境提示词与工具 `description` 的分工:使用时机、该回避的错误模式这类要连着说、会随迭代变动的
+语义内容写进环境提示词;每个工具自己的定义与用法写进 `description`,那是独立的、机械的、从 handler
+代码就能看出来的、对迭代稳定的内容。两边不重复。
 
 ## Persona–World 状态对账(PWSR)
 

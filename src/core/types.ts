@@ -1073,7 +1073,7 @@ export interface World {
    * "上下文窗口换了"的信号来重置自己的增量基线,挪调用时机前先查一遍。
    */
   envPromptVars(): Record<string, string> | null | Promise<Record<string, string> | null>;
-  /** World 工具集(schema+description+handler 都由 World 自己提供;更长的用法写进环境提示词模板) */
+  /** World 工具集(schema+description+handler 都由 World 自己提供;使用时机与该回避的模式写进环境提示词模板,description 只放这个工具自己的定义与用法) */
   tools(): ToolDef[];
   /** 本 World 要在控制台露出什么(可选;不声明=控制台只显示通用信息) */
   console?(): WorldConsoleDecl;
