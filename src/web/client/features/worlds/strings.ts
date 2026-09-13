@@ -69,7 +69,7 @@ const zh = {
 };
 
 const en: typeof zh = {
-  navLabel: 'Worlds',
+  navLabel: 'World Overview',
   introTitle: 'Worlds',
   introDesc: 'Manage World assembly, activation and agent visibility.',
   sheetTitle: 'Assembly status',
