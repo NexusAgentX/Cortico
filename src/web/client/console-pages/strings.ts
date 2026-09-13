@@ -2,19 +2,17 @@ import { pick } from '../core/language.ts';
 
 const zh = {
   protocolMismatch: (server: string, page: string) =>
-    `控制台协议版本对不上:服务端 ${server}、本页 ${page}。`
-    + '多半是浏览器缓存了旧的内核 bundle,强制刷新一次。',
-  pageFailed: (pageId: string) => `「${pageId}」这一页没能打开`,
-  noPage: (pageId: string) => `没有这个 provider:「${pageId}」`,
-  noPageHint: '它可能未激活，或者名字写错了。',
+    `控制台协议版本不一致：服务端 ${server}，页面 ${page}。请强制刷新页面。`,
+  pageFailed: (pageId: string) => `页面「${pageId}」打开失败`,
+  noPage: (pageId: string) => `控制台页面不存在：「${pageId}」`,
+  noPageHint: '请检查页面地址及模块激活状态。',
   noPanels: (label: string) => `「${label}」没有声明任何面板。`,
   noSuchPanel: (label: string, wanted: string) => `「${label}」没有面板「${wanted}」`,
-  provides: (list: string) => '它提供的是: ' + list,
-  panelFailed: (title: string) => `面板「${title}」没能加载`,
-  configEmpty: '(它声明的参数组这会儿没在 /api/config 里——多半是这次运行没装配)',
+  provides: (list: string) => '可用面板：' + list,
+  panelFailed: (title: string) => `面板「${title}」加载失败`,
+  configEmpty: '配置组不可用。',
   configTitle: '参数',
-  configDesc: '这一页的旋钮由这个 provider 自己声明（JSON Schema），控制台按声明通用渲染。'
-    + '**改了就存**：一改动就写回 config.json。标「重启 World 生效」的在 World 总览页重启这个 World 即生效，其余立即。',
+  configDesc: '修改自动保存到 config.json。标注需重启的参数在重启后生效，其余立即生效。',
   assembly: '装配',
   notInstalled: '未安装',
   notActivated: '未激活',
@@ -27,35 +25,34 @@ const zh = {
   reloadBody: '重读全部前缀源并替换当前 session 的 system 消息。会丢一次缓存前缀（下一轮要重新计费），不影响对话内容。',
   prefixReloaded: '前缀已重载',
   noBundle: (pageId: string) =>
-    `「${pageId}」声明了面板，但没有它的面板产物。仓内的页跑一次 pnpm build:web；`
-    + `extensions/ 下的包要在包自己的目录里 build 再重启。若它本来就不该有面板，去掉声明。`,
+    `「${pageId}」缺少面板构建产物。仓内页面请运行 pnpm build:web；`
+    + 'extensions/ 下的扩展请在包目录构建，再重启进程。',
   badBundleUrl: (pageId: string) => `「${pageId}」的面板产物地址不合法，已拒绝加载`,
   bundleLoadFailed: (pageId: string, err: string) => `「${pageId}」的面板产物加载失败: ${err}`,
-  badDefaultExport: (pageId: string) => `「${pageId}」的面板产物没有导出合法的 default —— 应为 { panels: { … } }`,
+  badDefaultExport: (pageId: string) => `「${pageId}」的面板产物缺少有效的 default 导出，格式应为 { panels: { … } }`,
   none: '(无)',
   noSuchBundlePanel: (pageId: string, panelId: string, known: string) =>
-    `「${pageId}」的面板产物里没有面板「${panelId}」。它提供的是: ${known}`,
+    `「${pageId}」的面板产物中没有「${panelId}」。可用面板：${known}`,
   badPanelImpl: (pageId: string, panelId: string) =>
-    `「${pageId}」的面板产物里，面板「${panelId}」不是合法实现 —— 缺 mount 方法`,
+    `「${pageId}」的面板「${panelId}」缺少 mount 方法`,
   noBuiltinPanel: (name: string, known: string) =>
-    `内核没有内置面板「${name}」。它自带的是: ${known}`,
+    `内置面板「${name}」不存在。可用面板：${known}`,
 };
 
 const en: typeof zh = {
   protocolMismatch: (server: string, page: string) =>
     `Console protocol version mismatch: server ${server}, this page ${page}.`
-    + ' The browser most likely cached an old kernel bundle; force a refresh.',
+    + ' Force a page refresh.',
   pageFailed: (pageId: string) => `Could not open "${pageId}"`,
-  noPage: (pageId: string) => `No such provider: "${pageId}"`,
-  noPageHint: 'It may not be activated, or the name is misspelled.',
+  noPage: (pageId: string) => `Console page not found: "${pageId}"`,
+  noPageHint: 'Check the page address and module activation status.',
   noPanels: (label: string) => `"${label}" declares no panels.`,
   noSuchPanel: (label: string, wanted: string) => `"${label}" has no panel "${wanted}"`,
-  provides: (list: string) => 'It provides: ' + list,
+  provides: (list: string) => 'Available panels: ' + list,
   panelFailed: (title: string) => `Panel "${title}" failed to load`,
-  configEmpty: '(The config groups it declares are not in /api/config right now — most likely not assembled in this run)',
+  configEmpty: 'Configuration groups unavailable.',
   configTitle: 'Parameters',
-  configDesc: 'The knobs on this page are declared by this provider (JSON Schema); the console renders them generically.'
-    + ' **Changes save immediately**: every edit is written back to config.json. Items marked "takes effect after World restart" apply once you restart that World on the World overview page; the rest apply at once.',
+  configDesc: 'Changes are saved to config.json automatically. Parameters marked as requiring a restart apply after restarting; the rest apply immediately.',
   assembly: 'Assembly',
   notInstalled: 'not installed',
   notActivated: 'not activated',
@@ -68,19 +65,18 @@ const en: typeof zh = {
   reloadBody: 'Re-reads every prefix source and replaces the current session\'s system message. One cached prefix is lost (the next turn is billed anew); the conversation is unaffected.',
   prefixReloaded: 'Prefix reloaded',
   noBundle: (pageId: string) =>
-    `"${pageId}" declares panels but its panel bundle is missing. For a page in this repo run pnpm build:web;`
-    + ' for a page from a package under extensions/, build it in that package\'s own directory and restart.'
-    + ' If it should not have panels, drop the declaration.',
+    `Panel bundle missing for "${pageId}". For repository pages, run pnpm build:web;`
+    + ' for packages under extensions/, build in the package directory and restart the process.',
   badBundleUrl: (pageId: string) => `Panel bundle URL of "${pageId}" is invalid; refused to load`,
   bundleLoadFailed: (pageId: string, err: string) => `Panel bundle of "${pageId}" failed to load: ${err}`,
-  badDefaultExport: (pageId: string) => `Panel bundle of "${pageId}" has no valid default export — expected { panels: { … } }`,
+  badDefaultExport: (pageId: string) => `Panel bundle of "${pageId}" has no valid default export; expected { panels: { … } }`,
   none: '(none)',
   noSuchBundlePanel: (pageId: string, panelId: string, known: string) =>
-    `Panel bundle of "${pageId}" has no panel "${panelId}". It provides: ${known}`,
+    `Panel bundle of "${pageId}" has no panel "${panelId}". Available panels: ${known}`,
   badPanelImpl: (pageId: string, panelId: string) =>
-    `In the panel bundle of "${pageId}", panel "${panelId}" is not a valid implementation — missing mount`,
+    `Panel "${panelId}" of "${pageId}" is missing the mount method`,
   noBuiltinPanel: (name: string, known: string) =>
-    `The kernel has no built-in panel "${name}". It provides: ${known}`,
+    `Built-in panel "${name}" not found. Available panels: ${known}`,
 };
 
 export const S = pick({ zh, en });

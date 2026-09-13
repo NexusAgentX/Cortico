@@ -1,14 +1,5 @@
 /**
- * 「存储」页 —— 落盘与内存各部分的规模与清除。
- *
- * 清单由服务端给（`ConsoleSurface.storage`：每一项自带 `label` / `kind` / `group` /
- * `stat()` / `clear()`），这一页不知道任何一项背后是什么文件。分节靠 World 声明的
- * `group`：不同生命周期与清理语义的存储必须各归各节，否则"清空"这个词在同一张卡上
- * 会有两种含义。
- *
- * 危险确认走 `ui.confirm({ danger: true })` 而不是 `window.confirm`：
- * 后者是模态阻塞的浏览器原生框，面板卸载时不会跟着消失，而且它的"确定"上写的是
- * 「确定」——`danger` 模式的按钮上写的是**后果**，比通用的确定更难误按。
+ * 存储项由服务端声明；清除范围和操作结果由各项的实现决定。
  */
 
 import { get, post } from '../../core/api.ts';
@@ -61,12 +52,11 @@ export function storageSections(
 
 export function mountStorage(ctx: FeatureContext, opts: { embedded?: boolean } = {}): void {
   const { ui, root } = ctx;
-  const intro = pageIntro(ui, S.pageTitle, S.pageIntro);
+  const intro = pageIntro(ui, S.pageTitle);
 
   const sheet = ui.sheet({
     title: S.sheetTitle,
     en: 'disk / memory',
-    desc: S.sheetDesc,
   });
   const body = ui.h('div');
   const bar = ui.actions();

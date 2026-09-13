@@ -120,11 +120,11 @@ describe('内置面板的挂载', () => {
     expect(s.imported).toEqual([BUNDLE_JS]);
   });
 
-  it('内核不认识的内置名只毁这一格:错误卡列出内核自带的面板,别的页照常挂', async () => {
+  it('未知内置面板显示可用面板列表，其他页面仍可挂载', async () => {
     const s = stage([UNKNOWN_BUILTIN, MIXED]);
     await s.host.load();
     await expect(s.host.show('llm:gamma', 'settings')).resolves.toBeUndefined();
-    expect(s.text()).toContain('内核没有内置面板「nope」');
+    expect(s.text()).toContain('内置面板「nope」不存在');
     expect(s.text()).toContain('demo-settings');
     expect(s.errors).toHaveLength(1);
     expect(s.imported).toEqual([]);

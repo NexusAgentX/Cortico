@@ -518,7 +518,6 @@ describe('扩展失败隔离', () => {
     await stage.host.show('world:a', 'one');
 
     // 那一格：错误卡，写着面板名与原因
-    expect(stage.slotText()).toContain('没能加载');
     expect(stage.slotText()).toContain('第一格');
     expect(stage.slotText()).toContain('扩展在 mount 里炸了');
     // 页头照常：provider 的名字、id 都还在
@@ -606,7 +605,7 @@ describe('扩展失败隔离', () => {
     expect(stage.slotText()).toContain('(无)');
   });
 
-  it('panels[x] 在、但 mount 不是函数 → 与「没有这个面板」分开措辞（刻意区分，别合并）', async () => {
+  it('mount 不是函数时报告无效的面板实现', async () => {
     const stage = solo(() => ({
       default: { panels: { one: { mount: 'not a function' }, two: { mount() {} } } },
     }));
@@ -614,41 +613,27 @@ describe('扩展失败隔离', () => {
     await stage.host.show('world:a', 'one');
 
     const txt = stage.slotText();
-    // 这一支说的是"这一项写坏了"
-    expect(txt).toContain('缺 mount');
-    expect(txt).toContain('不是合法实现');
-    // 而不是"没有这个面板"那一支——后者会把人引去查声明和拼写
-    expect(txt).not.toContain('它提供的是');
+    expect(txt).toContain('mount');
+    expect(txt).not.toContain('可用面板');
   });
 
-  it('panels[x] 是数组 / 字符串 / 普通对象（真值但没有 mount）→ 都落「缺 mount」这一支', async () => {
+  it('面板值缺少 mount 函数时报告实现错误', async () => {
     for (const impl of [[], 'x', { mounted: true }, 42, { mount: null }]) {
       const stage = solo(() => ({ default: { panels: { one: impl, two: { mount() {} } } } }));
       await stage.host.load();
       await stage.host.show('world:a', 'one');
       const txt = stage.slotText();
-      expect([String(impl), txt.includes('缺 mount')]).toEqual([String(impl), true]);
+      expect([String(impl), txt.includes('mount')]).toEqual([String(impl), true]);
     }
   });
 
-  /**
-   * **行为记录，不是背书**（见回报）：`resolvePanel` 用 `if (!panel)` 分支，于是
-   * `panels: { one: null }`（键在、值是假值）会掉进"没有这个面板"那一支，
-   * 而那一支的措辞里又会把 `Object.keys(panels)` 列出来——里面明明有 `one`。
-   * 结果是一句自相矛盾的诊断：**"没有面板 one。它提供的是: one / two"**。
-   *
-   * 计划书要求这两种情形分开措辞，正是为了不把人引去查拼写；这条假值路径把两者
-   * 又混回去了。改判据为 `panelId in bundle.panels` 即可。这条钉的是现状。
-   */
-  it('panels[x] 是假值时说"实现坏了"，而不是"没有这个面板"', async () => {
-    // 键在、值是假值 = 这一项写坏了。若判据用真值,就会掉进"没有面板"那一支,
-    // 而那一支又会列出全部键——印出"没有面板 one。它提供的是: one / two"。
+  it('面板键存在但值为假值时报告实现错误', async () => {
     for (const impl of [null, undefined, 0, '', false]) {
       const stage = solo(() => ({ default: { panels: { one: impl, two: { mount() {} } } } }));
       await stage.host.load();
       await stage.host.show('world:a', 'one');
       const txt = stage.slotText();
-      expect([String(impl), txt.includes('不是合法实现')]).toEqual([String(impl), true]);
+      expect([String(impl), txt.includes('mount')]).toEqual([String(impl), true]);
       expect([String(impl), txt.includes('没有面板「one」')]).toEqual([String(impl), false]);
     }
   });
@@ -772,16 +757,7 @@ describe('扩展失败隔离', () => {
     }
   });
 
-  /**
-   * **行为记录，不是背书**（见回报）：`console-protocol.ts` 给 `protocolVersion`
-   * 写的定义是"前端拿到不认识的版本时**拒绝渲染**，而不是猜"，但浏览器侧从头到尾
-   * 没有一处读过这个字段（`host.load()` 直接拿 `providers` 就画）。
-   *
-   * 也就是说协议版本目前是一个**只有服务端在填、没人在看**的字段：真出现跨版本
-   * 部署（前端资源缓存在旧版、服务端已升级）时，前端会拿新形状的 manifest 硬画，
-   * 坏法取决于哪个字段变了——正是那句注释想避免的"猜"。
-   */
-  it('协议版本不认识就拒绝渲染,并明确报错(不按旧形状硬读)', async () => {
+  it('协议版本不匹配时拒绝渲染并报告版本错误', async () => {
     const stage = makeStage(
       [{ id: 'world:a', label: 'A World', panels: TWO_PANELS, client: { js: JS('a') } }],
       { [JS('a')]: () => helloBundle('A') },
@@ -789,9 +765,9 @@ describe('扩展失败隔离', () => {
     );
     await stage.host.load();
 
-    // 版本对不上 → 当作取数失败:导航空着,而不是拿新结构按旧形状去读
     expect(stage.host.pages).toEqual([]);
-    expect(stage.errors.map(String).join()).toContain('协议版本对不上');
+    expect(stage.errors.map(String).join()).toContain('协议版本');
+    expect(stage.errors.map(String).join()).toContain('999');
   });
 
   it('provider 不存在 / 面板 id 不存在 → 各自一张写清楚的卡，不是空白', async () => {
@@ -802,7 +778,8 @@ describe('扩展失败隔离', () => {
     await stage.host.load();
 
     await stage.host.show('world:nope', 'one');
-    expect(stage.text()).toContain('没有这个 provider');
+    expect(stage.text()).toContain('控制台页面不存在');
+    expect(stage.text()).toContain('world:nope');
 
     await stage.host.show('world:a', 'nope');
     expect(stage.slotText()).toContain('没有面板');

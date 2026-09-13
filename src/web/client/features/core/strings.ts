@@ -5,7 +5,6 @@ const zh = {
   navLabel: '运行诊断',
   navGroup: '系统',
   pageTitle: '运行诊断',
-  pageDesc: '查看 bot 的运行状态、会话活动、事件与日志；运行参数和系统提示词在「设置」中管理。',
   subRun: '运行',
   subSessions: '会话统计',
   subEvents: '事件流',
@@ -20,7 +19,6 @@ const zh = {
   groupPersona: '记忆 / 文件工具 · Persona',
   noDescription: '（未填写工具说明）',
   paramCount: (n: number) => `${n} 个参数`,
-  schemaNote: '代码注册的只读 Schema。工具说明、参数类型、必填约束与嵌套结构在这里统一查看。',
   paramHeadPath: '参数路径',
   paramHeadType: '类型',
   paramHeadConstraint: '约束',
@@ -31,16 +29,16 @@ const zh = {
   copySchema: '复制 schema',
   fullSchema: '完整 JSON Schema',
   toolsTitle: '工具库',
-  toolsDesc: '主循环当前发给模型的整张工具表:说明、参数约束与完整 JSON Schema。全部只读。',
+  toolsDesc: '当前提供给模型的工具定义，只读。',
   toolCount: (n: number) => `${n} 个`,
   toolsFilter: '筛选工具名或说明…',
   toolsEmpty: '工具表为空——主循环启动后会在这里出现',
 
   // events.ts
-  eventsDesc: '事件库＝bot 的经历（外部世界发生的事，agent 可查）。core 内部事件不进这里。',
+  eventsDesc: '事件记录，agent 可查询。',
   allSources: '全部来源',
   showArchive: '显示原始归档',
-  showArchiveTitle: '摄取刻落的 archive-only 原始事件，与发车刻的投影同源同文',
+  showArchiveTitle: '包括仅归档、未直接投递到上下文的事件',
   loadEarlier: '← 加载更早',
   evHeadTime: '时间',
   evHeadSource: '来源',
@@ -50,7 +48,6 @@ const zh = {
 
   // run.ts
   runTitle: '运行态',
-  runDesc: '只观察——模型控制在「语言模型」,存储在「设置 → 存储」。',
   noStatus: '暂无状态',
   statContext: '上下文',
   statMessages: 'session 消息',
@@ -75,7 +72,7 @@ const zh = {
   roundPlaceholder: '轮次',
   roundField: '轮次',
   refresh: '刷新',
-  runlogDesc: 'core 内部运行日志——只给人看，agent 不可见。',
+  runlogDesc: '运行日志，agent 不可见。',
   logHeadTime: '时间',
   logHeadLevel: '级别',
   logHeadArea: '区域',
@@ -84,7 +81,7 @@ const zh = {
 
   // sessions.ts
   sessionsTitle: '会话统计',
-  sessionsDesc: '主意识与各潜意识 fork 本次运行以来的 token 累计与缓存命中。跨重启的历史看「用量 · 成本」。',
+  sessionsDesc: '本次运行中各 session 的 token 用量与缓存命中。跨重启统计见「用量 · 成本」。',
   sesHeadStatus: '状态',
   sesHeadCalls: '调用',
   sesHeadInput: '输入 tok',
@@ -101,7 +98,6 @@ const en: typeof zh = {
   navLabel: 'Diagnostics',
   navGroup: 'System',
   pageTitle: 'Diagnostics',
-  pageDesc: 'Inspect the bot\'s run state, session activity, events and logs; run parameters and the system prompt are managed under "Settings".',
   subRun: 'Run',
   subSessions: 'Sessions',
   subEvents: 'Events',
@@ -116,7 +112,6 @@ const en: typeof zh = {
   groupPersona: 'Memory / file tools · Persona',
   noDescription: '(no tool description)',
   paramCount: (n: number) => `${n} params`,
-  schemaNote: 'Read-only schema registered in code. Tool description, parameter types, required constraints and nesting are all viewable here.',
   paramHeadPath: 'Path',
   paramHeadType: 'Type',
   paramHeadConstraint: 'Constraint',
@@ -127,16 +122,16 @@ const en: typeof zh = {
   copySchema: 'Copy schema',
   fullSchema: 'Full JSON Schema',
   toolsTitle: 'Tool library',
-  toolsDesc: 'The full tool table the main loop currently sends to the model: descriptions, parameter constraints and the full JSON Schema. Read-only.',
+  toolsDesc: 'Current tool definitions provided to the model. Read-only.',
   toolCount: (n: number) => `${n} tools`,
   toolsFilter: 'Filter by tool name or description…',
   toolsEmpty: 'Tool table is empty — it appears here once the main loop starts',
 
   // events.ts
-  eventsDesc: 'Event store = the bot\'s experience (things that happened in the outside world; the agent can query it). core-internal events do not go here.',
+  eventsDesc: 'Event records, queryable by the agent.',
   allSources: 'All sources',
   showArchive: 'Show raw archive',
-  showArchiveTitle: 'Archive-only raw events written at ingest; same source and text as the projection written at dispatch',
+  showArchiveTitle: 'Include archived events that are not delivered directly to the context',
   loadEarlier: '← Load earlier',
   evHeadTime: 'Time',
   evHeadSource: 'Source',
@@ -146,7 +141,6 @@ const en: typeof zh = {
 
   // run.ts
   runTitle: 'Loop status',
-  runDesc: 'Observation only — model controls live under "LLM", storage under Settings → Storage.',
   noStatus: 'No status yet',
   statContext: 'Context',
   statMessages: 'session messages',
@@ -171,7 +165,7 @@ const en: typeof zh = {
   roundPlaceholder: 'Round',
   roundField: 'Round',
   refresh: 'Refresh',
-  runlogDesc: 'core internal run log — for humans only; invisible to the agent.',
+  runlogDesc: 'Run logs, invisible to the agent.',
   logHeadTime: 'Time',
   logHeadLevel: 'Level',
   logHeadArea: 'Area',
@@ -180,7 +174,7 @@ const en: typeof zh = {
 
   // sessions.ts
   sessionsTitle: 'Session stats',
-  sessionsDesc: 'Token totals and cache hits for the main session and each subconscious fork since this run started. For history across restarts see "Usage · Cost".',
+  sessionsDesc: 'Token usage and cache hits for each session in this run. For history across restarts, see "Usage · Cost".',
   sesHeadStatus: 'Status',
   sesHeadCalls: 'Calls',
   sesHeadInput: 'Input tok',

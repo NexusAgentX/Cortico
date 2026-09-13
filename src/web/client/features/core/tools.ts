@@ -106,7 +106,6 @@ function toolSchemaCard(ui: ConsoleUi, schema: ToolSchemaDoc): CardEntry {
   card.appendChild(summary);
 
   const body = ui.h('div', 'tool-schema-body');
-  body.appendChild(ui.h('div', 'schema-safety-note', S.schemaNote));
   const rootDesc = (schema.parameters as { description?: unknown } | null)?.description;
   if (typeof rootDesc === 'string' && rootDesc !== '') {
     body.appendChild(ui.h('div', 'schema-root-description', rootDesc));

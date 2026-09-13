@@ -59,8 +59,6 @@ export function createCoreFeature(opts: CoreFeatureOptions = {}): FrameworkFeatu
 
 export const coreFeature: FrameworkFeature = createCoreFeature();
 
-const PAGE_DESC = S.pageDesc;
-
 function mountHarness(ctx: FeatureContext, env: SocketEnv): Disposable | void {
   const { ui } = ctx;
 
@@ -76,7 +74,7 @@ function mountHarness(ctx: FeatureContext, env: SocketEnv): Disposable | void {
 
   // ── 页头 ─────────────────────────────────────────────────────────
   const view = ui.h('div', 'coreview');
-  const head = pageIntro(ui, S.pageTitle, PAGE_DESC);
+  const head = pageIntro(ui, S.pageTitle);
   head.className = 'featureintro pagehead';
   const tabs = ui.segmented(
     subs.map((s) => ({ value: s.id, label: s.label })),

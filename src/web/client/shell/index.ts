@@ -188,12 +188,6 @@ export function createShell(deps: ShellDeps): ConsoleShell {
   };
   renderPower();
 
-  const SEQUENCE = S.sequence;
-
-  /**
-   * 关机 / 重启。**双确认**:第一道说这是什么,第二道说不可逆。
-   * 逐步结果摊在一个对话框里 —— 进程马上退出,这是操作员能看到的最后一屏,得留得住。
-   */
   const powerAction = async (kind: 'shutdown' | 'restart'): Promise<void> => {
     if (shuttingDown) return;
     if (kind === 'shutdown' ? capabilities.shutdown !== true : capabilities.restart !== true) return;
@@ -201,13 +195,12 @@ export function createShell(deps: ShellDeps): ConsoleShell {
     const first = await ui.confirm(kind === 'shutdown'
       ? {
           title: S.confirmShutdownTitle,
-          body: `${SEQUENCE}\n\n${S.halfMinute}`,
+          body: S.shutdownBody,
           danger: true,
         }
       : {
           title: S.confirmRestartTitle,
-          body: `${SEQUENCE}\n\n${supervised ? S.restartSupervisedNote : S.restartUnsupervisedNote}`
-            + `\n\n${S.halfMinute}`,
+          body: supervised ? S.restartSupervisedNote : S.restartUnsupervisedNote,
           danger: true,
         });
     if (!first || signal.aborted) return;

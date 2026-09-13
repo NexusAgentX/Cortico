@@ -166,7 +166,6 @@ describe('已安装清单', () => {
     expect(cardOf(root, 'zeta-bot').textContent).toContain('bot zeta');
     const eta = cardOf(root, 'eta-bot');
     expect(eta.textContent).toContain('已装,本部署未用');
-    expect(eta.textContent).toContain('没有引用它');
     expect(root.textContent).toContain('已加载 1');
     expect(root.textContent).not.toContain('加载失败');
   });
@@ -182,8 +181,6 @@ describe('已安装清单', () => {
     expect(alpha.textContent).toContain('自定义面板已加载');
 
     const beta = cardOf(root, 'beta-mod');
-    expect(beta.textContent).toContain('声明了浏览器端产物但文件不在');
-    expect(beta.textContent).toContain('build 一次');
     expect(beta.textContent).not.toContain('自定义面板已加载');
 
     const gamma = cardOf(root, 'gamma-prov');
@@ -222,30 +219,28 @@ describe('已安装清单', () => {
     expect(calls.filter((c) => c.url === '/api/extensions').length).toBe(2);
   });
 
-  it('重启:问一句(supervised 时说启动器会拉起);答"是"打 /api/run/restart', async () => {
+  it('确认后发送重启请求并显示逐项结果', async () => {
     stub();
     const { ctx, root } = mkCtx();
     mountExtensions(ctx);
     await flush();
     button(root, '重启进程').click();
     await flush();
-    expect(document.querySelector('.modal')?.textContent).toContain('启动器随即重新拉起');
     answer(true);
     await flush();
     expect(calls.find((c) => c.url === '/api/run/restart')?.method).toBe('POST');
     // 回执摊在对话框里
-    expect(document.body.textContent).toContain('等待启动器拉起');
     expect(document.body.textContent).toContain('✓ 按住事件投递');
   });
 
-  it('没有启动器循环时重启的确认框说清"不会自动回来"', async () => {
+  it('未受监督的进程提示手动重新启动', async () => {
     stub();
     const { ctx, root } = mkCtx({ extensions: true, restart: true, supervised: false });
     mountExtensions(ctx);
     await flush();
     button(root, '重启进程').click();
     await flush();
-    expect(document.querySelector('.modal')?.textContent).toContain('不会自动回来');
+    expect(document.querySelector('.modal')?.textContent).toContain('手动重新启动');
     answer(false);
     await flush();
     expect(calls.some((c) => c.url === '/api/run/restart')).toBe(false);

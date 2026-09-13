@@ -550,7 +550,6 @@ describe('底部运行控制', () => {
     expect(seen.find((c) => c.url === '/api/run/shutdown')?.method).toBe('POST');
     // 报告对话框:进程马上退出,这是操作员能看到的最后一屏
     const body = doc.body.textContent;
-    expect(body).toContain('有步骤没走完');
     expect(body).toContain('World 收尾');
     expect(body).toContain('✗ 托管 LLM server 停机');
     expect(body).toContain('超时(3秒)');
@@ -605,7 +604,7 @@ describe('底部运行控制', () => {
 
   const restartBtn = (el: FakeEl): FakeEl => el.find('rail-restart') as FakeEl;
 
-  it('重启键跟 restart 能力位走;title 按 supervised 说清退出后会不会被拉起', async () => {
+  it('重启键按能力位显示，未受监督时提示手动启动', async () => {
     stubStatus({});
     const { shell, el } = await mkShell({ capabilities: { run: true, shutdown: true } });
     expect(restartBtn(el).hidden).toBe(true);
@@ -614,7 +613,7 @@ describe('底部运行控制', () => {
     expect(restartBtn(el).getAttribute('aria-label')).toBe('重启');
     expect(restartBtn(el).title).toContain('手动启动');
     shell.setCapabilities({ run: true, shutdown: true, restart: true, supervised: true });
-    expect(restartBtn(el).title).toContain('启动器重新拉起');
+    expect(restartBtn(el).title).not.toContain('手动启动');
   });
 
   it('重启也要过两道确认才打 /api/run/restart;关机端点一次都不碰', async () => {
@@ -630,24 +629,22 @@ describe('底部运行控制', () => {
     await flush();
     click(restartBtn(el));
     await flush();
-    expect(doc.body.textContent).toContain('启动器立即重新拉起');
     expect(seen.some((c) => c.url === '/api/run/restart')).toBe(false);
     await proceed(doc);
     expect(seen.some((c) => c.url === '/api/run/restart')).toBe(false);
     await proceed(doc);
     expect(seen.find((c) => c.url === '/api/run/restart')?.method).toBe('POST');
     expect(seen.some((c) => c.url === '/api/run/shutdown')).toBe(false);
-    expect(doc.body.textContent).toContain('等待启动器拉起');
     expect(doc.body.textContent).toContain('✓ 按住事件投递');
   });
 
-  it('没有启动器循环时确认框说"不会自动回来"', async () => {
+  it('未受监督的进程提示手动重新启动', async () => {
     stubStatus({});
     const { doc, el } = await mkShell({ capabilities: { run: true, restart: true } });
     await flush();
     click(restartBtn(el));
     await flush();
-    expect(doc.body.textContent).toContain('不会自动回来');
+    expect(doc.body.textContent).toContain('手动重新启动');
   });
 });
 
