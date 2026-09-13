@@ -1,9 +1,9 @@
+<!-- Owner: src/paths.ts, src/deploy.ts, src/launcher.ts, bin/cortico.mjs -->
+
 # 部署
 
-Owner: `src/paths.ts`, `src/deploy.ts`, `src/launcher.ts`
-
-一份部署是一个目录,持有一个 bot 的配置、密钥、Memory 与运行数据,整片不进版本控制。
-代码包在 `bots/<名>/`,永远在仓库里;一个包可以背好几份部署。
+一份部署是一个目录，存放一个 bot 的配置、密钥、Memory 与运行数据，不纳入版本控制。
+代码包来自仓库的 `bots/<名>/` 或安装的 bot 扩展；多份部署可以使用同一个代码包。
 
 ## 部署根
 
@@ -35,7 +35,7 @@ pnpm start mybot
 | `config.json` | 这份部署的配置,压过包里的默认值(见 [configuration.md](configuration.md)) |
 | `.env` | 这份部署里 World 的密钥(`SESSDATA`、`BRAVE_API_KEY`…),一行一个 `NAME=value` |
 | `memory/` | Memory。目录名由 Persona 的 `paths.memory` 定(Cormini 与 CortiV 用 `workspace/`) |
-| `data/` | 运行数据。判据:删掉之后还能起来 |
+| `data/` | 事件、会话、用量和进程状态等运行数据；删除后可重新启动，但原有记录无法恢复 |
 | `prompts/` | Persona 文本的部署侧覆盖:`ORIENTATION.md`;`FIRST_TURN_{USER,THINKING,REPLY}.md` 只有这一层 |
 | `worlds/<id>/ENV_PROMPT.md` | 某个 World 环境提示词的部署侧覆盖,整份替换。控制台上改就写这里,「恢复默认」即删它 |
 | `avatar.png`、`voices/` | 头像与参考声线 |
@@ -57,27 +57,28 @@ pnpm start <部署名>
 |---|---|
 | `--list`(`pnpm bots`) | 列出部署根下每个含 `deployment.json` 的目录 |
 | 不给名字 | 取 `CORTICO_BOT`;只有一份部署时可省略 |
-| `--paused`、`CORTICO_START_PAUSED=1` | 启动即暂停:事件照常落库排队,去控制台点「继续」才上线 |
-| `--open`、`CORTICO_OPEN_BROWSER=1` | 起来后打开控制台 |
-| `--log-level=<级别>`、`CORTICO_LOG` | 日志落盘门槛,压过 `config.json` |
+| `--paused`、`CORTICO_START_PAUSED=1` | 启动时暂停事件投递，事件仍写入事件库并排队 |
+| `--open`、`CORTICO_OPEN_BROWSER=1` | 启动后打开控制台 |
+| `--log-level=<级别>`、`CORTICO_LOG` | 写入日志文件的最低级别，覆盖 `config.json` |
 | `--force-second-instance` | 绕过单实例锁 |
 
 启动前校验:`activeProvider` 必须在端点表里;它声明的 `secret` 必须能从进程环境或
 `providers/<端点名>/.env` 读到。任一不满足直接退出。
 
-`bin/cortico.mjs` 是给操作员的那一层:补依赖与控制台产物、选部署(多份时弹方向键菜单)、
-设 `CORTICO_START_PAUSED=1`、`CORTICO_OPEN_BROWSER=1`、`CORTICO_SUPERVISED=1`,再 fork 出
-进程并监管它。`start.bat` 与 `start.sh` 只是它的壳。控制台的「重启进程」靠它回来;
-裸 `pnpm start` 起的进程没有它,重启等于关机。
+`start.bat` 与 `start.sh` 调用 `bin/cortico.mjs`。它安装缺失的依赖、构建缺失的控制台产物，
+在有多份部署时提供方向键菜单，并创建和监管 bot 子进程。子进程设置 `CORTICO_SUPERVISED=1`；
+`CORTICO_START_PAUSED` 未设置时默认为 `1`。首次启动默认打开控制台，
+`CORTICO_OPEN_BROWSER=0` 可关闭此行为；重启不再打开浏览器。
+控制台的「重启进程」由此启动器执行；直接使用 `pnpm start` 时，进程退出后需要手动启动。
 
-**只有子进程明说要重启才重起。** 两条证据任一成立:IPC 消息,或 `data/.restart-request`
-(给「消息发出前被硬杀」兜底)。崩溃、非零退出、被信号打死一律不重起——那是需要人看一眼的
-事,悄悄拉回来只会让同一个故障刷屏并盖掉第一现场。
+子进程通过 IPC 消息或 `data/.restart-request` 文件请求重启，启动器接受任一方式。
+没有重启请求时，崩溃、非零退出和信号退出均不触发自动重启。
 
 ## 关机
 
-SIGINT / SIGTERM / SIGHUP(Windows 另加 SIGBREAK)走分步关机,外层期限 35 秒;未捕获异常
-也走同一仪式。Windows 上关窗口只给约 5 秒,来不及存盘,完整关机从控制台点。
+SIGINT / SIGTERM / SIGHUP（Windows 另加 SIGBREAK）和未捕获异常触发分步关机，
+总时限为 35 秒。Windows 关闭终端窗口的处理时限通常为 5 秒，可能不足以完成关机；
+正常退出使用控制台的「关机」。系统时限见 [Windows 控制台文档](https://learn.microsoft.com/en-us/windows/console/handlerroutine)。
 
 ## 多份部署
 

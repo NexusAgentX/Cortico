@@ -1,18 +1,17 @@
+<!-- Owner: src/extensions.ts, src/extensions/manifest.ts -->
+
 # 扩展
 
-Owner: `src/extensions.ts`, `src/extensions/manifest.ts`
-
 扩展是一个 npm 包,给一份部署补一个 World、一个 provider 或一个 bot。仓库内建的 World 与
-provider 只有参考 bot 用到的那些;接一个新平台、一种新端点方言,写成扩展装进去。
+provider 仅包含参考 bot 所需的实现;其他平台或模型通信协议通过扩展提供。
 
 ## 安装
 
-三条路,结果一样:`extensions/package.json` 多一条依赖,重启进程后加载。
+安装会向 `extensions/package.json` 添加依赖,重启进程后加载。支持以下方式:
 
 - 控制台「扩展」页:搜索 npm 上带 `cortico-world` / `cortico-provider` / `cortico-bot` 关键字的包,点安装;
   或在「手动安装」里填 `name@version`。
-- 控制台「手动安装」填本机目录的绝对路径:以 link 方式装入,改源码后重启即生效。给自己写
-  扩展的人用。
+- 控制台「手动安装」填本机目录的绝对路径:以 link 方式装入,改源码后重启生效。
 - 命令行,在仓库根下:
 
 ```bash
@@ -22,16 +21,15 @@ cd extensions && corepack pnpm add --ignore-workspace <包名或目录>
 `--ignore-workspace` 不能省:少了它 pnpm 会把 `extensions/` 当成仓库工作区的一员写进根
 lockfile。
 
-装完整进程重启。扩展页上每个包一张卡:`已加载` / `加载失败`(卡上写原因)/ `待重启`。
+扩展页显示 `已加载`、`加载失败` 及原因、`待重启` 等状态。
 `extensions/` 整个目录不进版本控制,是部署状态。
 
 ## 起步
 
-`templates/extension/` 下三种 kind 各一个最小完整包,都是能直接装的真包(仓库的测试对它们做干装载)。
+`templates/extension/` 为三种 kind 各提供一个可安装的模板,测试会验证构造和声明接口。
 复制一份出来,改包名与 id,把 `tsconfig.json` 的 `paths` 与 `vitest.config.ts` 的 alias 指到你的 Cortico
 checkout,`corepack pnpm install`,`pnpm test`。每个模板的 README 说它验证什么、装进实例后该看见什么。
-带着 coding agent 写扩展,用 [Cortina](https://github.com/Pal-AI-Lab/Cortina):它按这里的文档与模板陪你走完
-设计、实现与三级验证。
+扩展开发相关项目:[Cortina](https://github.com/Pal-AI-Lab/Cortina)。
 
 ## 写一个 World 扩展
 
@@ -74,10 +72,10 @@ export default { id: 'discord', label: 'Discord', defaults: () => ({ ... }), cre
 ## 写一个 bot 扩展
 
 `"kind": "bot"`,关键字 `cortico-bot`,默认导出 `BotDefinition`(见 [personas.md](personas.md)):
-与仓内 `bots/<名>/` 是同一种东西,只是装在 `extensions/` 下。入口可以直接发 TS 源
+接口与仓内 `bots/<名>/` 相同,安装在 `extensions/` 下。入口可以直接使用 TS 源码
 (`"main": "./index.ts"`),框架经 tsx 跑它。
 
-一份部署用它:`deployment.json` 的 `bot` 字段写包名。仓内 `bots/<同名>/` 存在时仓内赢。
+在部署的 `deployment.json` 中将 `bot` 设为包名即可引用。存在同名 `bots/<名>/` 时优先使用仓内版本。
 一个进程只跑一个 bot,所以装了好几个 bot 包也只 import 被引用的那一个,其余在扩展页上标
 「已装,本部署未用」。bot 的 `id` 不得与仓内 `bots/` 任一目录同名:控制台面板产物按
 `persona:<id>` 找,撞名会拿到仓内那份。
@@ -92,24 +90,23 @@ export default { id: 'discord', label: 'Discord', defaults: () => ({ ... }), cre
 pnpm check:extension <包目录>
 ```
 
-不启动任何东西:读 manifest、import 入口、按 kind 核对默认导出形状、确认面板产物在,再干装载——
-World 在假部署(默认配置、无密钥)下 `create()`,跑 `tools()`、`envPromptVars()`、`console(language)`,对照
-Core 保留名与内建 World 的工具名;provider 按假端点条目 `create()`;bot 按假部署 `build()`。
-装配层启动时对每个 World 定义都调 `create()`,不管启没启用,所以默认配置下构造不出来就是失败。
-通过就能装。
+检查会读取 manifest、导入入口、按 kind 核对默认导出结构并确认面板产物存在,随后验证构造与声明接口:
+World 在假部署(默认配置、无密钥)下调用 `create()`、`tools()`、`envPromptVars()`、
+`console(language)`,检查工具名与 Core 保留名及内建 World 的冲突;provider 按假端点调用
+`create()`;bot 按假部署调用 `build()`。检查不调用 `start()`,不验证真实服务运行。
+装配层会为未启用的 World 创建实例,因此所有 World 都必须能以默认配置构造。
 
 ## 契约版本
 
 `cortico.api` 必须等于框架的 `EXTENSION_API_VERSION`(现在是 3)。`WorldDefinition`、
 `ProviderModule`、`BotDefinition`(连同 `BotParts`、`Persona`、`LoadedConfig`)或
-`ConsolePanelContext` 任一不兼容变更时框架把它加一,旧扩展在扩展页上标「需要升级」而不是
-静默装上。它与控制台协议版本无关。
+`ConsolePanelContext` 任一不兼容变更时框架将版本加一,版本不符的扩展不能加载,页面显示「需要升级」。
+扩展 API 与控制台协议分别版本化。
 
-## 现成的
+## 已有扩展
 
 - `cortico-world-vtuber`:Live2D VTuber 演出(VTube Studio、流式 TTS、强制对齐、字幕 overlay)。
 - `cortico-world-asr`:麦克风语音识别(RtAudio 采集、能量门限切分、FireRedASR2-AED 后端)。
 - `cortico-provider-grok`:xAI Grok 端点与设备码授权。
 
-三个都在仓库之外,是它们各自机器上的二进制运行时依赖(声卡原生模块、Python 推理环境、VTS)
-不进这个仓库的原因。
+这些包独立于本仓库发布。声卡原生模块、Python 推理环境、VTS 等运行时依赖由相应扩展说明。

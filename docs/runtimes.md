@@ -1,10 +1,9 @@
+<!-- Owner: src/paths.ts, src/providers/llamacpp/runtime-store.ts, src/providers/llamacpp/options.ts, src/providers/llamacpp/server.ts -->
+
 # 运行时与模型文件
 
-Owner: `src/paths.ts`, `src/providers/llamacpp/runtime-store.ts`, `src/providers/llamacpp/options.ts`
-
-一个模块需要的外部二进制(llama-server 这类)与模型权重都是机器事实,放在部署根下、与各部署
-平级的两个目录里,几份部署共用。内建的 `llamacpp` provider 是这套约定的参考实现;别的模块和
-扩展照同一套摆。
+外部运行程序与模型权重保存在部署根下的共享目录,供多个部署使用。
+内建 `llamacpp` provider 按以下约定管理文件,其他模块和扩展也应遵循该目录结构。
 
 ## 目录
 
@@ -21,30 +20,34 @@ Owner: `src/paths.ts`, `src/providers/llamacpp/runtime-store.ts`, `src/providers
 
 ## 运行时的四条约定
 
-1. **钉版本。** 模块代码里写死一个上游 build tag 与各平台的资产名;配置可改 tag。目录名带
-   tag,换版本是另一个目录。
+1. **固定版本。** 模块声明默认的上游 build tag 与各平台的下载文件名,配置可覆盖 tag。
+   不同版本分别存储。
 2. **模块自己下载。** 压缩包下到 `<目录>.partial/`、解压、写标记,最后整个目录改名到位;中断只留
-   一个下次会被清掉的半成品目录。上游给校验和就校,不给只校压缩包完整。
+   未完成的目录,下次安装时清理。模块应校验上游提供的校验和;未提供时检查压缩包完整性。
 3. **不代装系统依赖。** CUDA 版只搭配上游的 cudart 包;驱动版本、运行库、应用控制策略这类只在
-   失败时用人话报出。
+   不由 Cortico 修改;启动失败时报告已知错误。
 4. **自备目录优先。** 配置里给了运行时目录就不下载:自编译、Linux CUDA、签过名的构建走这里。
 
 ## 模型文件的两条约定
 
 1. **能让运行时下载的,交给运行时。** llama-server 的 router 模式自己实现了 HuggingFace 拉取
-   (`POST /models`)、进度(`GET /models` 里的 `status`)与取消;Cortico 只是这几个端点的皮。
+   (`POST /models`)、进度(`GET /models` 里的 `status`)与取消;Cortico 面板调用这些接口。
 2. **不能的,模块自己下,位置仍是 `models/<owner>/`。** 面板上给出来源链接与固定 revision。
 
 ## Windows 智能应用控制
 
-llama.cpp 的官方 Windows 二进制没有签名。全新安装的 Windows 11 默认带着 Smart App Control,
-强制态下未签名的 exe 和 dll 一律不许运行,`spawn` 拿到的错误码是 `UNKNOWN`。它没有按应用放行,
-自签证书也无效。`llamacpp` 在下载前读注册表
-`HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy\VerifiedAndReputablePolicyState`(0 关、1 强制、
-2 评估),为 1 时面板直接说明:关掉它(设置 → 隐私和安全性 → Windows 安全中心 → 应用和浏览器
-控制;25H2 起关了还能再开),或填一份自己签过名的自备运行时目录。
+Smart App Control 强制模式按应用信誉或可信证书判断是否允许程序运行,不能仅凭未签名断定会被拦截。
+其规则见 [Microsoft Learn](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/overview)。
+本模块读取注册表
+`HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy\VerifiedAndReputablePolicyState`:
+0 为关闭,1 为强制,2 为评估,读取失败为 null。面板在值为 1 时提示应用控制状态。
 
-## 上游发布形状(b10930,2026-09)
+Windows 下的 `spawn UNKNOWN` 本身不能证明 Smart App Control 拦截。应核对 Windows 安全中心
+的拦截记录;若确认被拦截,可提供符合信任要求的运行时目录,或由操作者决定是否更改应用控制设置。
+自行签名不等于使用受信任 CA 签发的证书。单应用例外、关闭后的重新启用条件以本机系统版本和
+[微软 FAQ](https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions) 为准。
+
+## 默认版本的发布文件(b10930)
 
 每个 build 一个 tag,资产名 `llama-<tag>-bin-<os>-<后端>-<架构>.{zip,tar.gz}`:Windows 有
 `cuda-13.3` / `cuda-12.4` / `vulkan` / `cpu`(x64)与 `cuda-13.4` / `cpu`(arm64),CUDA 版另配

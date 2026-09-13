@@ -1,10 +1,10 @@
+<!-- Owner: src/providers/base.ts, src/providers/registry.ts -->
+
 # src/providers
 
-Owner: `src/providers/base.ts`, `src/providers/registry.ts`
-
-模型端点这一层的三个接口:`ProviderModule`(一种方言)、`ProviderInstance`(一条端点)、
-`ProviderHost`(框架给实例的东西)。Core 经 `ProviderRegistry.bind(name)` 拿到带报价与来源的
-客户端,Persona 拿不到其中任何一样。
+`ProviderModule` 实现一种模型通信协议,`ProviderInstance` 对应一个端点,
+`ProviderHost` 提供实例所需的配置、密钥、资源与日志接口。Core 通过 `ProviderRegistry.bind(name)`
+获取带报价与来源信息的客户端,Persona 通过 Core 调用模型。
 
 ## 文件
 
@@ -12,12 +12,12 @@ Owner: `src/providers/base.ts`, `src/providers/registry.ts`
 |---|---|
 | `base.ts` | 三个接口与 `BaseProvider`(抽象 `respond`) |
 | `registry.ts` | 目录扫描发现内建模块、`registerProviderModules()` 收扩展、实例缓存与 `bind()` |
-| `configuration.ts` | `validateSpec` / `validateEntry`:外部配置进门的校验 |
+| `configuration.ts` | `validateSpec` / `validateEntry`:外部配置校验 |
 | `pricebook.ts` | 价目定义、快照、报价合并 |
 | `console/` | provider 页的服务端:`ProviderSettings`(落盘、密钥、探活)与通用连接配置组 |
-| `openai-responses-compat/` | 内建模块:Responses 线协议客户端与模型目录 |
+| `openai-responses-compat/` | 内建模块:Responses 协议客户端与模型目录 |
 | `llamacpp/` | 内建模块:llama-server 的 Chat 客户端、router 目录、官方 release 的下载安装与进程托管 |
-| `transport/` | HTTP/SSE 引擎、Chat 与 Responses 两种输入投影、事件装配、计量、错误 |
+| `transport/` | HTTP/SSE 引擎、Chat 与 Responses 请求转换、事件装配、计量、错误 |
 
 ## ProviderModule
 
@@ -37,13 +37,13 @@ effort 收任意非空串)、`serviceTiers`、`create(name, entry, host)`。可�
 ## 注册与解析
 
 内建模块由 `providers/<module>/index.ts` 的默认导出自动发现。扩展模块由启动器在 `createBot`
-之前经 `registerProviderModules()` 就地并入同一数组,id 撞车抛错。
+之前通过 `registerProviderModules()` 注册,id 重复时抛错。
 
 `ProviderRegistry.resolve(name)`:按 `entry.kind` 找模块,`normalize`,以去掉 `pricing` 与
 `spec` 的条目 JSON 为缓存键(改模型或价格不重建实例),填 `stateDir` 与 `secret`。
 `bind(name)` 在实例外包一层:注入 `quote`(报价快照)与 `origin`(实例、模块、模型、
-`compatibilityDomain` = sha256(kind + baseUrl + `compatibilityKey()`))。历史推理签名只在同一
-`compatibilityDomain` 内回传。`invalidate()` 丢缓存;写过 `.env` 必须调它,密钥每实例只读一次。
+`compatibilityDomain` = sha256(kind + baseUrl + `compatibilityKey()`))。Responses 历史推理仅在实例、
+模块、兼容域与模型均匹配时回传。`invalidate()` 清除缓存;写入 `.env` 后必须调用,每个实例仅缓存一次文件内容。
 
 ## 配置形状
 
@@ -57,14 +57,14 @@ Core 侧:`activeProviderEntry()` / `activeSpec()` 每次现读;`contextWindowOf(
 
 ## transport
 
-`response-http.ts` 是唯一的 HTTP/SSE 引擎:一次生成多次 attempt,退避 `[1s, 4s, 10s]`;超时
+`response-http.ts` 处理 HTTP/SSE:一次生成可包含多次请求尝试,重试间隔为 `[1s, 4s, 10s]`;超时
 四档(流式首包 300s、非流式 120s、帧空闲 120s、内容空闲 300s);只对状态 0 / 429 / 5xx 重试,
 401 / 403 先 `transport.refresh()` 一次;已提交不可逆增量后不再重试;输出字符超过
-`max_output_tokens × 12` 判 runaway;终态只接受 `completed` / `incomplete`,`failed` 抛
-`LLMError`;每个 attempt 记 `meters` 与 `charges`。
+`max_output_tokens × 12` 时终止请求并报告超限;终态只接受 `completed` / `incomplete`,`failed` 抛
+`LLMError`;每次请求尝试记录 `meters` 与 `charges`。
 
 `responses-input.ts` 是原生 Responses 的无状态重放(system / developer 上提为
-`instructions`);`chat.ts` + `native-input.ts` / `history.ts` 是 Chat Completions 投影(历史
+`instructions`);`chat.ts` + `native-input.ts` / `history.ts` 转换 Chat Completions 请求(历史
 思维链不回传);`response-assembly.ts` 把两种流归一成 Open Responses 的 Item 流,
 `finish_reason` 的 `length` / `content_filter` 落成 `incomplete_details.reason`;
 `response-meters.ts` 把两种 usage 归一成 `TokenMeters`,缺项保持 null。
