@@ -5,6 +5,7 @@ import type { FeatureContext, FrameworkFeature } from '../feature.ts';
 import { mountFirstTurn } from '../firstturn/index.ts';
 import { mountPrompts } from '../prompts/index.ts';
 import { mountStorage } from '../storage/index.ts';
+import { mountGeneral } from './general.ts';
 import { S } from './strings.ts';
 
 interface SettingSection {
@@ -16,6 +17,12 @@ interface SettingSection {
 }
 
 const SECTIONS: readonly SettingSection[] = [
+  {
+    id: 'general',
+    label: S.general,
+    description: S.generalDesc,
+    mount: mountGeneral,
+  },
   {
     id: 'appearance',
     label: S.appearance,
