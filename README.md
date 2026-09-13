@@ -127,6 +127,7 @@ npm 包,补一个 World、provider 或 bot。装在 `extensions/` 下,控制台�
 | `src/extensions/` | 扩展装载 | [src/extensions/README.md](src/extensions/README.md) |
 | `src/worlds/<id>/` | 内建 World,各有 README | [docs/worlds.md](docs/worlds.md) |
 | `bots/<名>/` | bot 包 | [bots/README.md](bots/README.md) |
+| `templates/extension/<kind>/` | 扩展包模板,三种 kind 各一个能装的最小包 | [templates/extension/README.md](templates/extension/README.md) |
 | `scripts/` | 构建、日志查询、审计、迁移 | [docs/development.md](docs/development.md) |
 | `tests/` | 测试 | [docs/development.md](docs/development.md) |
 

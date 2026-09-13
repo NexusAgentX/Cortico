@@ -25,6 +25,12 @@ lockfile。
 装完整进程重启。扩展页上每个包一张卡:`已加载` / `加载失败`(卡上写原因)/ `待重启`。
 `extensions/` 整个目录不进版本控制,是部署状态。
 
+## 起步
+
+`templates/extension/` 下三种 kind 各一个最小完整包,都是能直接装的真包(仓库的测试对它们做干装载)。
+复制一份出来,改包名与 id,把 `tsconfig.json` 的 `paths` 与 `vitest.config.ts` 的 alias 指到你的 Cortico
+checkout,`corepack pnpm install`,`pnpm test`。每个模板的 README 说它验证什么、装进实例后该看见什么。
+
 ## 写一个 World 扩展
 
 `package.json`:

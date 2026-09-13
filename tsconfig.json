@@ -21,7 +21,7 @@
     // 运行时由 src/extensions/runtime.ts 的模块钩子解析(tsx 也认这份 paths),vitest 用同形 alias。
     "paths": { "cortico/*": ["./src/*"] }
   },
-  "include": ["src/**/*.ts", "bots/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "bin/**/*.mjs"],
+  "include": ["src/**/*.ts", "bots/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "templates/**/*.ts", "bin/**/*.mjs"],
   // 浏览器端源码由 tsconfig.web.json 用 DOM lib 单独 check。这里排掉它们,否则
   // 会拿 Node 的 lib 去 check DOM 代码。exclude 只影响初始文件表——被 Node 侧
   // import 到的仍然照常检查,所以服务端也 import 的 shared/console-protocol.ts

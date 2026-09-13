@@ -60,6 +60,7 @@ Node 侧与浏览器侧的 lib 互斥:`tsconfig.json` 排掉 `src/web/client/**`
 | `src/worlds/<id>/` | 内建 World |
 | `bots/<名>/` | bot 包 |
 | `scripts/` | `build-web`、`dev-console`、`logq`、`extension-check`、`release-audit`、`migrate-rename`、`generate-open-responses` |
+| `templates/extension/<kind>/` | 扩展包模板:三种 kind 各一个能装的最小包 |
 | `scratch/`、`deprecated/`、`deployments/`、`extensions/` | 都不进版本控制 |
 
 ## 文档

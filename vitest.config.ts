@@ -18,7 +18,7 @@ export default defineConfig({
     alias: [{ find: /^cortico\//, replacement: fileURLToPath(new URL('./src/', import.meta.url)) }],
   },
   test: {
-    include: ['tests/**/*.test.ts'],
+    include: ['tests/**/*.test.ts', 'templates/extension/*/tests/*.test.ts'],
     // 控制台语言是按进程读一次的系统事实;测试断言中文文案,与跑测试的机器区域无关。
     env: { CORTICO_LANGUAGE: 'zh', TEMP: longTmp, TMP: longTmp, TMPDIR: longTmp },
     testTimeout: 20000,
