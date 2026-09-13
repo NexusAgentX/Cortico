@@ -71,7 +71,7 @@ export const BILIBILI_PANEL_DECLS: readonly WorldPanelDecl[] = [
   {
     id: PANEL_LOG,
     title: '直播间事件',
-    description: '最近事件的文本投影与各 cmd 计数;没见过的 cmd 也列在这里。',
+    description: '直播间事件与各 cmd 计数。',
   },
 ];
 
@@ -261,7 +261,7 @@ export class BilibiliWorld implements World {
   /** 已布置的待成文事件挂在总线上的时刻;null = 没挂单。见 ARM_STALE_MS */
   private armedAt: number | null = null;
 
-  /** 控制台用:最近事件的文本投影 */
+  /** 控制台最近事件的文本。 */
   private readonly recent: string[] = [];
   /** 记过的总条数(含已被 RECENT_CAP 挤掉的);控制台据此只取自己没见过的那一截 */
   private noteSeq = 0;

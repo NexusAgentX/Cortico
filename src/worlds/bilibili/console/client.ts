@@ -54,7 +54,7 @@ interface BilibiliLogState {
   /** 最近一窗弹幕全都没有 uid——服务端在脱敏,多半是登录凭证过期了 */
   desensitized: boolean;
   aggregate: BilibiliAggregate;
-  /** 最近事件的文本投影,新→旧 */
+  /** 最近事件的文本，按时间倒序排列。 */
   recent: string[];
   /** 记过的总条数(含已被上限挤掉的) */
   total: number;
@@ -70,9 +70,7 @@ interface BilibiliLogState {
   };
 }
 
-const DESC =
-  '直播间进来的每一条的文本投影,以及各 cmd 的条数。'
-  + '没见过的 cmd 也列在计数里——那是这条非官方协议改了字段时最先看得见的地方。';
+const DESC = '直播间事件与各 cmd 计数。';
 
 const PHASE_TEXT: Record<string, string> = {
   stopped: '未接入',
