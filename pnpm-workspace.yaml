@@ -1,0 +1,12 @@
+allowBuilds:
+  '@parcel/watcher': false
+  canvas: set this to true or false
+  esbuild: true
+
+# 所有 prismarine 依赖必须解析到同一 vec3 版本,否则同名 Vec3 类型互不兼容。
+# 0.2.0 相对 0.1.10 仅增加 API,可同时满足 prismarine 与本仓库的约束。
+overrides:
+  vec3: ^0.2.0
+
+patchedDependencies:
+  mineflayer-pathfinder@2.4.5: patches/mineflayer-pathfinder@2.4.5.patch

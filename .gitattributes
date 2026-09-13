@@ -1,0 +1,13 @@
+# 索引一律 LF,与开发者本机的 autocrlf 设置无关。
+* text=auto eol=lf
+
+# 前缀模板的换行是内容的一部分:段与段之间空几行由模板文件说了算。
+# autocrlf 把它们签出成 CRLF 会改掉渲染结果,故 Markdown 一律签出为 LF。
+*.md text eol=lf
+
+# 批处理是唯一的例外。cmd.exe 解析 LF 文件的 goto 标签会出错,而 start.bat 是
+# 操作员在 Windows 上双击的那一个;从 GitHub 下 zip 或从 Linux 检出再拷过去,
+# 拿到 LF 版本就点不动。PowerShell 不在意行尾,跟着一起钉只为一致。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

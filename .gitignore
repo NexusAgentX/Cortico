@@ -1,0 +1,48 @@
+node_modules/
+__pycache__/
+.env
+*.log
+# 控制台产物。锚在仓库根上:不带斜杠会连 tests/fixtures/ 下那几个夹具包的 dist/
+# 一起吞掉,那些是**源文件**(装载线要 import 它们),不是产物。
+/dist/
+
+# 部署根。一份部署 = 本机事实 + 密钥 + 头像 + 她的 Memory + 运行状态,整片不进版本控制。
+# 锚在仓库根上;实际位置由 CORTICO_HOME 决定,这条只管默认落点。
+# 合成一条之后爆炸半径变大(一次 `git add -f` 就是全泄),所以 release-audit 里
+# 另有一条按整片拦的硬规则,见 scripts/release-audit.ts 的 isSensitivePath。
+/deployments/
+
+# 私有运行数据不得进入版本控制。
+# 旧布局的运行数据;现在全在 deployments/ 下,这几条只防手工备份被误加。
+bots/*/data/
+# 手工备份(资源管理器留下的 "workspace - Copy" 之类)装的是同一份私有数据,
+# 却不匹配上面那条,曾差点被 git add -A 收进来;按前缀一并排除。
+bots/*/workspace*/
+# 头像由控制台上传写入 bot 根目录,属部署产物。
+bots/*/avatar.png
+# 参考声线属于部署者持有的声音素材，不进入源码或 Git 历史。
+bots/*/voices/
+# 部署配置。含真实 QQ 群号/好友号与 access token。
+# 迁移脚本留下的 config.json.bak-* 同样是真配置的副本,一起排除。
+bots/*/config.json
+bots/*/config.json.bak-*
+# 历史材料可能含私人数据或完整提示词。
+deprecated/
+
+# 第三方与本机产物。Live2D 模型文件与模型档案都在 VTube Studio 的模型目录里,不进仓库。
+
+# 本机部署的第三方运行时体积较大，且不属于源码。
+runtime/
+# 允许部署者采用仓库内资源根时仍不会误提交；推荐位置在仓库同级。
+local-resources/
+Cortico-Resources/
+
+# Agent 与本地临时工作区（见 AGENTS.md §3）。
+scratch/
+
+# 控制台装的扩展(npm 包),属部署状态。
+# 锚在仓库根上:不带斜杠会连 src/web/client/features/extensions/ 一起吞掉。
+/extensions/
+
+# Corti 运维目录(数据归档+复盘),不入库
+CortiV-DataAnalysis/

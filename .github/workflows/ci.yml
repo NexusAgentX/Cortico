@@ -1,0 +1,57 @@
+# 跑的就是 AGENTS.md §6 那几条命令,只是在两个操作系统上各跑一遍。
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# 同一分支上的新推送顶掉还没跑完的那次。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # corepack 按 package.json 的 packageManager 取 pnpm,别停下来问人。
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    # Windows runner 比 ubuntu 慢一截;整套本机约 100 秒,留足余量。
+    timeout-minutes: 30
+    strategy:
+      # 一边红不掐掉另一边:跨平台问题往往只在一边现形,两边的结果都要看到。
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 启用 corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          # engines.node 是 >=22。Node 25 起不再自带 corepack,那时这一步要改。
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        # 锁文件是在 Windows 上生成的,但 pnpm 把各平台的可选包全记在里面
+        # (@rollup/rollup-linux-x64-gnu、@esbuild/linux-x64 等),冻结锁在 ubuntu 上装得起来。
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查(Node 侧)
+        run: pnpm run typecheck
+
+      - name: 类型检查(浏览器侧)
+        run: pnpm run typecheck:web
+
+      - name: 测试
+        run: pnpm test
+
+      - name: 控制台产物构建得起来
+        run: pnpm run build:web
