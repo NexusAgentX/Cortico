@@ -30,6 +30,8 @@ lockfile。
 `templates/extension/` 下三种 kind 各一个最小完整包,都是能直接装的真包(仓库的测试对它们做干装载)。
 复制一份出来,改包名与 id,把 `tsconfig.json` 的 `paths` 与 `vitest.config.ts` 的 alias 指到你的 Cortico
 checkout,`corepack pnpm install`,`pnpm test`。每个模板的 README 说它验证什么、装进实例后该看见什么。
+带着 coding agent 写扩展,用 [Cortina](https://github.com/Pal-AI-Lab/Cortina):它按这里的文档与模板陪你走完
+设计、实现与三级验证。
 
 ## 写一个 World 扩展
 

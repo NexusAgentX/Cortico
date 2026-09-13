@@ -97,7 +97,8 @@ Persona 契约是一组按机械时机命名的钩子,Core 只通知时机、自
 
 npm 包,补一个 World、provider 或 bot。装在 `extensions/` 下,控制台可搜可装,重启生效。
 `cortico-world-vtuber`、`cortico-world-asr`、`cortico-world-pvz`、`cortico-world-canvas`、
-`cortico-provider-grok` 都是扩展。
+`cortico-provider-grok` 都是扩展。起步用 `templates/extension/` 下的三个模板;带着 coding agent 写,用
+[Cortina](https://github.com/Pal-AI-Lab/Cortina):一个陪你走完设计、实现与三级验证的 TINA。
 [docs/extensions.md](docs/extensions.md)
 
 ## 环境变量
