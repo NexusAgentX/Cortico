@@ -914,14 +914,7 @@ export class BilibiliWorld implements World {
     return Number.isFinite(value) ? Math.min(5000, Math.max(1, Math.round(value))) : 200;
   }
 
-  /**
-   * 布置一条待成文的人流读数。`piggyback` 不叫醒她,也不刷新计时器——搭下一班车,
-   * 正文在发车刻才渲染,所以带出去的永远是那一刻的新鲜数。
-   * 同时最多布置一条,免得安静期堆一叠陈旧观察;挂单超过 ARM_STALE_MS 没被渲染
-   * 视为失踪,允许重挂——渲染是唯一的复位点,丢单不该换来永久沉默。
-   * 挂单其实还在(只是久等没发车)时会多出一份:发车刻第一条把读数带走,
-   * 余下的渲染出空正文,按投递成文契约整条蒸发,不会重复播报。
-   */
+  /** `piggyback` 随下一批事件投递，不触发唤醒或重置合批计时器。 */
   private armAggregate(): void {
     if (!this.host) return;
     const now = Date.now();
