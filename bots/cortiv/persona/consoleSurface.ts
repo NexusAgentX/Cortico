@@ -18,7 +18,7 @@ export const PERSONA_PANELS: WorldPanelDecl[] = [
   {
     id: 'workspace',
     title: '工作区',
-    description: 'workspace/ 的目录树与编辑器:改一份档案立即提交(署名 operator),保存带冲突检测。',
+    description: '保存时以 operator 署名提交到工作区的 Git 仓库。',
   },
   {
     id: 'memory',
