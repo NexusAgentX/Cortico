@@ -18,13 +18,9 @@ import { toDisposable } from '../../../web/shared/client-panel.ts';
 const NAME_MAX = 32;
 const IMAGES_MAX = 8;
 
-/**
- * 面板文案,两种语言各一张表;`en: typeof zh` 由 tsc 保证键集一致。中文逐字保留现状。
- * 扩展不能 import 控制台内部模块,语言从 `ctx.language` 取,两张表就地二选一。
- */
 const zh = {
   title: '对话',
-  desc: '直接和她说话,可以附图。消息即时投递(跳过合批的安静窗口);进出场会给她一条在场提示。',
+  desc: '消息即时投递。',
   connecting: '连接中…',
   connected: '已连接',
   reconnecting: '断开,重连中…',
@@ -40,7 +36,7 @@ const zh = {
 };
 const en: typeof zh = {
   title: 'Chat',
-  desc: 'Talk to her directly, with optional images. Messages are delivered immediately (skipping the batching quiet window); entering and leaving posts a presence hint.',
+  desc: 'Messages are delivered immediately.',
   connecting: 'Connecting…',
   connected: 'Connected',
   reconnecting: 'Disconnected, reconnecting…',
