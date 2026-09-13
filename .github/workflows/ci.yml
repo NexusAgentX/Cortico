@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 启用 corepack
+      - name: Enable corepack
         run: corepack enable
 
       - uses: actions/setup-node@v4
@@ -39,19 +39,19 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: 安装依赖
+      - name: Install dependencies
         # 锁文件是在 Windows 上生成的,但 pnpm 把各平台的可选包全记在里面
         # (@rollup/rollup-linux-x64-gnu、@esbuild/linux-x64 等),冻结锁在 ubuntu 上装得起来。
         run: pnpm install --frozen-lockfile
 
-      - name: 类型检查(Node 侧)
+      - name: Typecheck (Node)
         run: pnpm run typecheck
 
-      - name: 类型检查(浏览器侧)
+      - name: Typecheck (browser)
         run: pnpm run typecheck:web
 
-      - name: 测试
+      - name: Tests
         run: pnpm test
 
-      - name: 控制台产物构建得起来
+      - name: Build console bundle
         run: pnpm run build:web
