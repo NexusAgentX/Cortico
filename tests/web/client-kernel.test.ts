@@ -396,14 +396,18 @@ describe('Lifecycle —— 资源账本', () => {
  * 一处刻意不同：**这里是同步派发**，真浏览器里改 `location.hash` 之后 hashchange
  * 是在当前任务结束后异步派发的。同步派发让测试不必等一轮宏任务，代价是"改 hash
  * 的那行之后紧跟的代码"在这里跑在事件之后而不是之前——被测的 Router 在改完 hash
- * 之后没有任何后续语句（`navigate` 与 revert 都以赋值收尾），所以这个差异对它无害。
+ * 之后没有任何后续语句（`navigate` / `replace` 与 revert 都以写地址栏收尾），所以
+ * 这个差异对它无害。
+ *
+ * 历史条目照真浏览器记：赋 `hash` 新增一条，`location.replace` 换掉当前那条。
  */
 interface FakeWin {
-  location: { hash: string };
+  location: { hash: string; replace(url: string): void };
   addEventListener(type: string, fn: () => void): void;
   removeEventListener(type: string, fn: () => void): void;
   listenerCount(): number;
   setHashSilently(v: string): void;
+  history(): string[];
 }
 
 function normalizeHash(v: string): string {
@@ -413,16 +417,20 @@ function normalizeHash(v: string): string {
 
 function makeWin(initialHash = ''): FakeWin {
   let hash = normalizeHash(initialHash);
+  const entries: string[] = [hash];
   const listeners = new Set<() => void>();
+  const write = (v: string, push: boolean): void => {
+    const next = normalizeHash(v);
+    if (next === hash) return; // 值没变 → 真浏览器不发事件
+    hash = next;
+    if (push) entries.push(next); else entries[entries.length - 1] = next;
+    for (const fn of [...listeners]) fn();
+  };
   return {
     location: {
       get hash(): string { return hash; },
-      set hash(v: string) {
-        const next = normalizeHash(v);
-        if (next === hash) return; // 值没变 → 真浏览器不发事件
-        hash = next;
-        for (const fn of [...listeners]) fn();
-      },
+      set hash(v: string) { write(v, true); },
+      replace(url: string): void { write(url, false); },
     },
     addEventListener(type: string, fn: () => void): void {
       if (type === 'hashchange') listeners.add(fn);
@@ -433,6 +441,7 @@ function makeWin(initialHash = ''): FakeWin {
     listenerCount(): number { return listeners.size; },
     /** 改地址栏但不派发事件——用来人为造出"内部状态与地址栏脱节"。 */
     setHashSilently(v: string): void { hash = normalizeHash(v); },
+    history(): string[] { return [...entries]; },
   };
 }
 
@@ -630,6 +639,38 @@ describe('Router —— navigate', () => {
     router.navigate(['a', 'b']);
     await flush();
     expect(seen).toEqual(['/a/b']);
+  });
+
+  it('replace 改 hash 并广播,但换掉当前历史条目而不新增', async () => {
+    const win = makeWin('');
+    const router = new Router({ win, confirmLeave: async () => true });
+    const seen: string[] = [];
+    router.onChange((r: Any) => seen.push(r.raw));
+    router.start();
+
+    router.replace(['live']);
+    await flush();
+    expect(win.location.hash).toBe('#/live');
+    expect(seen).toEqual(['', '/live']);
+    expect(router.route.segments).toEqual(['live']);
+    expect(win.history()).toEqual(['#/live']);
+
+    router.navigate(['usage']);
+    await flush();
+    expect(win.history()).toEqual(['#/live', '#/usage']);
+  });
+
+  it('replace 到与地址栏相同的路由不重复广播', async () => {
+    const win = makeWin('#/live');
+    const router = new Router({ win, confirmLeave: async () => true });
+    const seen: string[] = [];
+    router.onChange((r: Any) => seen.push(r.raw));
+    router.start();
+
+    router.replace(['live']);
+    await flush();
+    expect(seen).toEqual(['/live']);
+    expect(win.history()).toEqual(['#/live']);
   });
 });
 

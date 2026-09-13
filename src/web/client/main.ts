@@ -222,10 +222,9 @@ export function boot(doc: Document = document): { dispose(): void } {
     // capabilities 没到齐之前一律不渲染。feature 的 needs 判定依赖它,早渲染会把
     // 该有的页判成"不可用",而随后那次 apply 因为路由没变会提前返回、永远纠不回来。
     if (!ready) return;
-    // 空路由落去终端:控制台的门面是那块对话台,首次打开 `http://127.0.0.1:<port>/`
-    // 不该停在一片空台面上,连"下一步看哪"都不说。
+    // 空路由落去终端。替换而不新增历史条目:否则后退回到空路由又被送走。
     if (route.segments.length === 0) {
-      router.navigate(['live']);
+      router.replace(['live']);
       return;
     }
     const head = route.segments[0];

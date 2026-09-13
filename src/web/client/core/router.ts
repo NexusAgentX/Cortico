@@ -122,7 +122,18 @@ export class Router {
   }
 
   navigate(segments: readonly string[], query?: Record<string, string>): void {
-    const next = buildHash(segments, query);
+    this.go(buildHash(segments, query), (hash) => { this.deps.win.location.hash = hash; });
+  }
+
+  /**
+   * 与 `navigate` 同，但替换当前历史条目而不新增。重定向必须走这条：新增条目会让
+   * 后退键回到被重定向的地址、再次被送走，永远退不出去。
+   */
+  replace(segments: readonly string[], query?: Record<string, string>): void {
+    this.go(buildHash(segments, query), (hash) => this.deps.win.location.replace(hash));
+  }
+
+  private go(next: string, write: (hash: string) => void): void {
     // 去重要跟**地址栏**比，不能跟 `current` 比：两者一旦脱节，"写一个地址栏里
     // 已经有的值"既不早退、也不触发 hashchange，这个路由就永远到不了了。
     if (sameHash(this.deps.win.location.hash, next)) {
@@ -132,7 +143,7 @@ export class Router {
       }
       return;
     }
-    this.deps.win.location.hash = next;
+    write(next);
   }
 
   /** 把地址栏拨回某个值。已经是它了就不写——那样不会有 hashchange，旗子会漏消费。 */
