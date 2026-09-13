@@ -102,7 +102,9 @@ carries a fact the reader needs and cannot get from the code.
 ### AI slop checklist
 
 Review UI copy, prompts, documentation, code comments and commit messages sentence by sentence.
-Prefer deletion. Keep only facts the reader needs now and cannot infer directly from the UI or code.
+Prefer deleting redundant prose. Preserve factual content in documentation; trace vague claims to
+their implementation and state the actual behavior. Keep comments only when they explain facts
+that cannot be inferred from the code.
 
 - [ ] **Obvious information**: Remove common knowledge and instructions evident from the UI.
 - [ ] **UI narration**: Remove descriptions of cards, groups, buttons and layout. Show state in
