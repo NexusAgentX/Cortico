@@ -111,7 +111,7 @@ beforeEach(() => { calls = []; });
 afterEach(() => { vi.unstubAllGlobals(); document.body.replaceChildren(); });
 
 describe('已安装清单', () => {
-  it('四种状态各一张卡:药丸文字、原因、待重启提示、卸载键的有无', async () => {
+  it('扩展卡片显示状态和失败原因，已卸载的扩展没有卸载按钮', async () => {
     stub();
     const { ctx, root } = mkCtx();
     mountExtensions(ctx);
@@ -129,7 +129,6 @@ describe('已安装清单', () => {
 
     const gamma = cardOf(root, 'gamma-prov');
     expect(gamma.textContent).toContain('待重启');
-    expect(gamma.textContent).toContain('重启进程后加载');
     expect(gamma.textContent).toContain('丙');
 
     const delta = cardOf(root, 'delta-mod');

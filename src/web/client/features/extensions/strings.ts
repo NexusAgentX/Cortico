@@ -4,11 +4,9 @@ const zh = {
   navLabel: '扩展',
   navGroup: '系统',
   introTitle: '扩展',
-  introDesc: '从 npm 安装第三方 World、LLM Provider 与 bot 包。装卸只改磁盘,重启进程后生效。',
+  introDesc: '从 npm 安装第三方 World、LLM Provider 和 bot 包。安装、卸载后需重启进程才能生效。',
 
   installedTitle: '已安装',
-  installedDesc: '每个包一张卡,按类别分组。状态对照的是本进程启动时的加载结果与此刻的磁盘:'
-    + '装了没加载、卸了还在跑的都标「待重启」。',
   refresh: '↻ 刷新',
   restartProcess: '重启进程',
 
@@ -50,8 +48,6 @@ const zh = {
   installedNoLoopNote: '⚠ 没有检测到启动器循环:重启等于关机,之后要手动启动。',
 
   panelLoaded: '自定义面板已加载',
-  notePendingRestart: '装好了,重启进程后加载。',
-  noteRemoved: '已从磁盘卸掉,本进程里仍在运行;重启后消失。',
   noteIdle: '这份部署的 deployment.json 没有引用它,没有加载。',
   noteConsoleMissing: '声明了浏览器端产物但文件不在:到扩展目录里 build 一次,再重启。',
 
@@ -89,11 +85,9 @@ const en: typeof zh = {
   navGroup: 'System',
   introTitle: 'Extensions',
   introDesc: 'Install third-party Worlds, LLM providers and bot packages from npm. '
-    + 'Installing and removing only touch the disk; loading takes a process restart.',
+    + 'Installations and removals take effect after restarting the process.',
 
   installedTitle: 'Installed',
-  installedDesc: 'One card per package, grouped by kind. The state compares this process\'s load result at startup '
-    + 'against the disk right now: installed but not loaded, or removed but still running, both read "restart pending".',
   refresh: '↻ Refresh',
   restartProcess: 'Restart process',
 
@@ -137,8 +131,6 @@ const en: typeof zh = {
   installedNoLoopNote: '⚠ No launcher loop detected: restarting equals shutting down, and you start it manually afterwards.',
 
   panelLoaded: 'Custom panel loaded',
-  notePendingRestart: 'Installed; loads after a process restart.',
-  noteRemoved: 'Removed from disk but still running in this process; gone after a restart.',
   noteIdle: 'This deployment\'s deployment.json does not reference it, so it was not loaded.',
   noteConsoleMissing: 'It declares a browser-side bundle but the file is missing: build once in the extension directory, then restart.',
 
