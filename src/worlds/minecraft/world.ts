@@ -400,7 +400,7 @@ export const MINECRAFT_STORAGE_DECLS: ReadonlyArray<Omit<StoragePart, 'stat' | '
 ];
 
 // ---------------------------------------------------------------------------
-// PWSR 暂态骨架(Persona–World State Reconciliation;准则见 DESIGN.md §2.6)
+// PWSR 暂态骨架(Persona–World State Reconciliation;准则见 docs/worlds.md「Persona–World 状态对账」)
 // ---------------------------------------------------------------------------
 
 /**

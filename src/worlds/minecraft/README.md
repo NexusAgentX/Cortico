@@ -208,7 +208,7 @@ slim 不用选，配置里写 `model: "auto"`，CustomSkinLoader 逐张按材质
 | `mc_blueprint(design/save/查询/unload)` | `tags:['write']`。Palette 满矩阵功能工程蓝图。`site_mode:new` 空地新建，`retrofit` 先探测现有结构；冲突格均需审阅后带 `confirm:true`。建筑、农场、液源、作物和常见红石状态共用施工链。按 palette 编码后的总输出长度受理，IR 自动切分大平面。`design` 支持同键携现场探测结果迭代；锚点、探测、游标按 realm + dimension 隔离，首次开工回执要求登记工地路标。施工使用 `mc_do` 的 `build {blueprint, at?, stopAfter?, confirm?, dryRun?}` |
 | `mc_map(set/drop/rename/查询)` | `tags:['write']`。路标格式为 `{name, pos, kind, dimension?, note?, radius?}`；`dimension` 缺省按主世界记并在回执点名。最多 24 条，kind 限九种。set 支持批量装载，并核验当前维度的床、箱、工作站族；查询列出各维度记录，仅计算当前维度的距离方位。本工具只读写路标。路标用于死亡、行军、快照的相对位置说明及「你标记的危险区」提示 |
 
-三张 PWSR 表共同的契约见 `DESIGN.md` §2.6（Persona–World State Reconciliation）：暂态真身在她的
+三张 PWSR 表共同的契约见 [docs/worlds.md](../../../docs/worlds.md) 的「Persona–World 状态对账」：暂态真身在她的
 记忆里， World 只有临时装载态 + 机械计算；恢复不是开机仪式，何时装回由她自己判断；过夜提醒只跟
 语义写操作，位置、进度这类机械变化绝不催写 memory。
 
