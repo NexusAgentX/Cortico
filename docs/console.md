@@ -19,6 +19,9 @@ Owner: `src/web/server.ts`, `src/web/shared/console-protocol.ts`, `src/web/clien
 | `extensions` | 扩展 | 装卸与 npm 搜索(见 [extensions.md](extensions.md)) |
 | `config` / `prompts` / `storage` / `appearance` / `settings` | 设置里的次级页 | 运行参数、提示词文档、存储清单、外观、语言 |
 
+地址栏不带路由(根 URL 不带 hash)时落去 `live`;其余没人认领的路由清空台面,
+左栏保持可用。
+
 World、Persona 与 provider 各自贡献自己的页,页 id `world:<id>` / `persona:<id>` /
 `llm:<id>`。页里有几个面板、面板叫什么、有哪些配置组与提示词文档,都由贡献方声明;
 框架按声明渲染,`src/web/**` 不因新增一个 World 或 Persona 改一个字节
