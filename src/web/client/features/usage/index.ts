@@ -214,6 +214,11 @@ export function mountUsage(ctx: FeatureContext): void {
     const t: Partial<UsageGroupStat> = d.totals || {};
     const series = d.series || [];
     const calls = t.calls || 0;
+    // 空范围整排清零的读数读起来像坏了;一句话说清"没数据"和"数据坏了"的分别。
+    if (calls === 0) {
+      cards.replaceChildren(ui.placeholder(S.noCalls));
+      return;
+    }
     const totTok = (t.promptTokens || 0) + (t.completionTokens || 0);
     const successful = d.successful ?? t;
     const avgCost = successful.calls ? (successful.cost || 0) / successful.calls : 0;

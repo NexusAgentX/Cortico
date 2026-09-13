@@ -4,6 +4,7 @@
  * ```
  * 贡献方的路由（#/provider/…）         → ConsolePageHost
  * 有对应 FrameworkFeature 的路由        → 那个 feature
+ * 空路由                               → 默认去终端（首次打开不该停在空台面上）
  * 其余                                 → 清空台面（左栏保持可用）
  * ```
  *
@@ -221,6 +222,11 @@ export function boot(doc: Document = document): { dispose(): void } {
     // capabilities 没到齐之前一律不渲染。feature 的 needs 判定依赖它,早渲染会把
     // 该有的页判成"不可用",而随后那次 apply 因为路由没变会提前返回、永远纠不回来。
     if (!ready) return;
+    // 空路由落去终端。替换而不新增历史条目:否则后退回到空路由又被送走。
+    if (route.segments.length === 0) {
+      router.replace(['live']);
+      return;
+    }
     const head = route.segments[0];
 
     if (head === PROVIDER_ROUTE) {

@@ -112,8 +112,10 @@ function genUsage(): UsageRecord[] {
       reasoningTokens: Math.floor(comp * 0.4),
     });
   };
-  // 覆盖到"今天"(系统日期 2026-07-20)往前 ~40 天,让 近30/90天、按周、按月 都有数据
-  const END = Date.UTC(2026, 6, 20); // 月份 0-based:6=七月
+  // 覆盖到"今天"往前 ~40 天,让 近30/90天、按周、按月 都有数据;锚定系统当天
+  // (按夹具时间戳的 +08:00 日历日),夹具不随日期过期。
+  const today = new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10);
+  const END = new Date(`${today}T00:00:00Z`).getTime();
   for (let back = 40; back >= 0; back--) {
     const day = new Date(END - back * 86400000).toISOString().slice(0, 10);
     for (let hr = 8; hr < 24; hr++) {
@@ -122,7 +124,7 @@ function genUsage(): UsageRecord[] {
     }
   }
   // 今天再补一段密集的分钟级活动(14 点前后),让"按分"粒度有多根柱可看
-  for (let mm = 2; mm < 52; mm += 3) { const c = 1 + Math.floor(rnd() * 2); for (let k = 0; k < c; k++) push('2026-07-20', 14, mm); }
+  for (let mm = 2; mm < 52; mm += 3) { const c = 1 + Math.floor(rnd() * 2); for (let k = 0; k < c; k++) push(today, 14, mm); }
   return recs;
 }
 const usageRecords = genUsage();
@@ -1015,11 +1017,11 @@ const devProvidersDir=join(tmpData,'providers');
 const devProviders=new ProviderSettings(devCfg,new ProviderRegistry(()=>devCfg.providers,{stateRoot:devProvidersDir,readBlob:()=>null,keepThinking:()=>true,log:nullLogger()}),join(tmpData,'config.json'),devProvidersDir);
 function devConsolePageSources(){return devProviders.sources();}
 
-/** 扩展页的假清单(见下面 `extensions` 依赖)。 */
+/** 扩展页的假清单(见下面 `extensions` 依赖)。kind 缺了会被归进「未识别」组。 */
 const devExtensions: ExtensionInfo[] = [
-  { name: '@acme/cortico-world-discord', spec: '^0.3.0', version: '0.3.1', description: 'Discord 频道接入 (dev 假数据)', consoleClient: false, loaded: true, worldId: 'discord', label: 'Discord 频道', state: 'loaded' },
-  { name: 'cortico-world-broken', spec: '^0.1.0', version: '0.1.4', consoleClient: true, loaded: false, reason: '默认导出不是 WorldDefinition(需要 id / label / defaults() / create())。', state: 'failed' },
-  { name: 'cortico-world-weather', spec: 'link:../cortico-world-weather', version: '0.0.1', description: '本机开发中的天气播报 (dev 假数据)', consoleClient: false, loaded: false, state: 'pending-restart' },
+  { name: '@acme/cortico-world-discord', spec: '^0.3.0', version: '0.3.1', description: 'Discord 频道接入 (dev 假数据)', kind: 'world', consoleClient: false, loaded: true, worldId: 'discord', label: 'Discord 频道', state: 'loaded' },
+  { name: 'cortico-world-broken', spec: '^0.1.0', version: '0.1.4', kind: 'world', consoleClient: true, loaded: false, reason: '默认导出不是 WorldDefinition(需要 id / label / defaults() / create())。', state: 'failed' },
+  { name: 'cortico-world-weather', spec: 'link:../cortico-world-weather', version: '0.0.1', kind: 'world', description: '本机开发中的天气播报 (dev 假数据)', consoleClient: false, loaded: false, state: 'pending-restart' },
 ];
 
 const app = new WebApp({

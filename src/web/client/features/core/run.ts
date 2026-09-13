@@ -19,7 +19,7 @@ export function createRunView(deps: RunViewDeps): RunView {
   const { ui } = deps;
   const sheet = ui.sheet({
     title: S.runTitle,
-    en: 'loop status',
+    en: 'context · cache · batches',
     desc: S.runDesc,
   });
   const grid = ui.statgrid();

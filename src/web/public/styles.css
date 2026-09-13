@@ -183,6 +183,8 @@
 
   /* 概览读数网格 */
   .statgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+  /* 网格里只剩一句占位时横跨整行，不缩在第一格 */
+  .statgrid > .placeholder { grid-column: 1 / -1; }
   .stat {
     background: var(--sheet-2); border: 1px solid var(--line); border-radius: 10px 11px 9px 10px;
     padding: 12px 14px;
