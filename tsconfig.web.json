@@ -31,6 +31,8 @@
     // 跑在 jsdom 上的测试:用真 DOM 类型 check,与它测的那一页同一套 lib
     "tests/web/feature-prompts.test.ts",
     "tests/web/feature-firstturn.test.ts",
+    "tests/web/client-language.test.ts",
+    "tests/web/settings-general.test.ts",
     "tests/web/feature-providers.test.ts",
     "tests/web/feature-extensions.test.ts"
   ]
