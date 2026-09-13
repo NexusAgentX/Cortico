@@ -29,19 +29,9 @@ function templateText(type: string, name: string): string {
   return '';
 }
 
-/** 1024 → `1.0K`。`ui.fmt.bytes` 就是这件事,树里每行都要印。 */
 const sizeText = (n: number | undefined, ctx: ConsolePanelContext): string =>
   n == null ? '' : ctx.ui.fmt.bytes(n);
 
-// 纯前端 Markdown 预览。
-
-/**
- * 极简 markdown → HTML。**只认标题/列表/引用/行内 code/加粗/围栏代码**,
- * 其余原样。这里不引 markdown 库:预览是给写档案的人扫一眼版式用的,
- * 不是渲染器;引一个库进来 bundle 就翻倍。
- *
- * 每一行都先过 `esc`,所以档案正文里的 `<script>` 只会被显示成字。
- */
 function markdownPreview(ctx: ConsolePanelContext, source: string): string {
   const esc = (s: string): string => ctx.ui.esc(s);
   let inCode = false;
@@ -83,18 +73,12 @@ export const workspacePanel: ConsolePanel = {
       loading: '读取 workspace/ 目录树…',
       failed: '工作区不可用',
       load: () => ctx.invoke<WorkspaceTree>('tree'),
-      // 只在**第一次**进面板时走 autoload 的重画。之后的刷新由 view 自己重取树、
-      // 只重画左栏——整卡重画会把正在编辑的档案连同未保存的改动一起清掉,
-      // 而"保存之后要刷新树(大小变了)"恰恰是最常发生的那次刷新。
+      // 刷新目录树时保留编辑器及未保存修改。
       render: (tree) => [new WorkspaceView(ctx, tree).el],
     });
   },
 };
 
-/**
- * 一次挂载的全部状态。写成类而不是一串闭包,是因为这一屏的状态(当前档案、脏位、
- * 查找位置、预览挡位)彼此纠缠,散成闭包之后每加一个动作都要多穿一层参数。
- */
 class WorkspaceView {
   readonly el: HTMLElement;
 
@@ -227,11 +211,9 @@ class WorkspaceView {
 
     this.el = card.el;
 
-    // 光标读数要跟着点击与方向键走;监听带 signal,面板卸载自动摘。
     for (const type of ['click', 'keyup'] as const) {
       this.editor.addEventListener(type, () => this.syncMeta(), { signal: ctx.signal });
     }
-    // Tab 在编辑器里是缩进,不是"跳到下一个按钮"。
     this.editor.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Tab') return;
       ev.preventDefault();
@@ -367,7 +349,6 @@ class WorkspaceView {
     return !!this.cur && this.editor.value !== this.cur.content;
   }
 
-  /** 切换档案前先问一次。`ui.confirm` 在面板卸载时 resolve false,所以不会挂住。 */
   private async canLeaveCurrent(): Promise<boolean> {
     if (!this.dirty()) return true;
     return this.ctx.ui.confirm({
@@ -418,7 +399,6 @@ class WorkspaceView {
         [this.cur.path, content, this.cur.revision],
       );
       if (!out.ok) {
-        // 冲突:**不覆盖**,原话回给用户,让他自己决定重新载入。
         setMsg(this.msg, out.error, true);
         return;
       }
@@ -670,7 +650,6 @@ class WorkspaceView {
     }
   }
 
-  /** 光标读数、字数、脏位、预览。每次击键与每次点击都跑,所以要便宜。 */
   private syncMeta(): void {
     const text = this.editor.value;
     const before = text.slice(0, this.editor.selectionStart);

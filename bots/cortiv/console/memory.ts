@@ -1,7 +1,5 @@
 /**
- * 面板 `memory`——CortiV 的记忆概览:工作区、人物档案、宪法。
- *
- * 不画 MEMORY 0–4 或写权限矩阵;那些是 corti-soulmate 的设计,这份人格没有。
+ * 工作区、人物档案与宪法的记忆概览。
  */
 
 import type {
