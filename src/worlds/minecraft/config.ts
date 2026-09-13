@@ -275,7 +275,7 @@ export const MINECRAFT_RHYTHM_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.minecraft.world.snapshotSec': {
         type: 'integer', title: '世界快照间隔', minimum: 5, maximum: 300, 'x-suffix': 's', 'x-hot': true,
-        description: '世界快照搭下一班投递走(不单独唤醒),内容是发车那一刻现拿的;这里限制它进上下文的最短间隔。',
+        description: '世界快照随下一批事件投递，不单独唤醒；投递时读取世界状态。此值为快照的最短间隔。',
       },
       'worlds.minecraft.world.snapshotAnchorSec': {
         type: 'integer', title: '快照全量锚间隔', minimum: 60, maximum: 3600, 'x-suffix': 's', 'x-hot': true,
@@ -342,7 +342,7 @@ export const MINECRAFT_RHYTHM_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.minecraft.show.dwellOpenMs': {
         type: 'integer', title: '演出·开窗停顿', minimum: 0, maximum: 3000, 'x-suffix': 'ms', 'x-hot': true,
-        description: '开窗后停一拍再动手;也顺带消灭同 tick 开关窗(历史上摄像机同步屏关不掉的竞态源头)。',
+        description: '打开容器界面后，等待此时长再操作。',
       },
       'worlds.minecraft.show.dwellResultMs': {
         type: 'integer', title: '演出·产物亮相', minimum: 0, maximum: 5000, 'x-suffix': 'ms', 'x-hot': true,
@@ -353,8 +353,7 @@ export const MINECRAFT_RHYTHM_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.minecraft.show.reopenGapMs': {
         type: 'integer', title: '演出·再开窗间隔', minimum: 0, maximum: 3000, 'x-suffix': 'ms', 'x-hot': true,
-        description: '上一次关窗到下一次开窗至少空这么久。协议层里这个间隔只有几十毫秒,'
-          + '同步到画面上就是一次闪屏;同 tick 开关窗还是同步屏卡死的老竞态源头。不吃单次预算。',
+        description: '关闭容器界面到下次打开的最短间隔，不计入单次预算。',
       },
       'worlds.minecraft.show.budgetMs': {
         type: 'integer', title: '演出·单次预算', minimum: 0, maximum: 30000, 'x-suffix': 'ms', 'x-hot': true,
@@ -422,8 +421,8 @@ export const MINECRAFT_CLIENT_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.minecraft.client.restartMax': {
         type: 'integer', title: '崩溃自动重启上限', minimum: 0, maximum: 10, 'x-suffix': '次', 'x-hot': true,
-        description: '摄像机进程非人为退出时自动重启,30 秒起步逐次加倍,10 分钟窗口内累计到这个数就停手并报警。'
-          + '0=不重启(0825 场就是这个行为:崩了没人管,黑屏 28 分钟)。',
+        description: '异常退出后自动重启，等待时间从 30 秒起逐次加倍；超过重启上限后停止重试并报警。'
+          + '相邻两次异常退出间隔超过 10 分钟时重置计数。0 表示禁用自动重启。',
       },
       'worlds.minecraft.client.noPauseOnLostFocus': {
         type: 'boolean', title: '调整启动选项', 'x-hot': true,
