@@ -16,9 +16,9 @@ import type { CoreConfig, World, WorldLifecycleEvent } from './core/types.ts';
 import type { LoadedConfig } from './core/config.ts';
 import type { BotDefinition } from './bot.ts';
 import { updateJsonObject } from './config-file.ts';
-import { pick, resolveLanguage, type Language } from './core/language.ts';
+import { pick, type Language } from './core/language.ts';
 
-/** 装配层给控制台的回执与拒绝理由。 */
+/** 装配层给控制台的回执与拒绝理由,按发起请求的界面语言取。 */
 const ASSEMBLY_TEXT = {
   zh: {
     constructFailed: (detail: string) => `构造失败: ${detail}`,
@@ -49,6 +49,7 @@ const ASSEMBLY_TEXT = {
     unbound: 'The assembly layer is not bound to a core yet',
   },
 };
+const text = (language: Language) => pick(language, ASSEMBLY_TEXT);
 
 /** 每个 World 配置段的最小形状。 */
 export interface WorldSection {
@@ -67,8 +68,6 @@ export interface WorldContext<S extends WorldSection = WorldSection> {
   /** `worlds.<id>` 的活引用。热键现读即生效;构造时读走的静态键在下次 World 重启时更新。 */
   readonly cfg: S;
   readonly timezone: string;
-  /** 控制台语言(部署事实)。 World 自己决定要不要按它切换文案;不切就一直中文。 */
-  readonly language: Language;
   readonly botName: string;
   /** 这份**部署**的目录。本机事实、密钥、部署侧的资产覆盖都在这下面。 */
   readonly botDir: string;
@@ -165,7 +164,8 @@ export interface WorldSlot {
 export interface MissingWorld {
   readonly id: string;
   readonly label: string;
-  readonly reason: string;
+  /** 缺失的原因,按界面语言给;bot 声明里自带的理由不翻译。 */
+  readonly reason: (language: Language) => string;
   /** Persona声明过的渠道。缺省 true:声明了却没实现的那类。 */
   readonly declared?: boolean;
 }
@@ -220,7 +220,6 @@ export class WorldAssembly {
   readonly missing: MissingWorld[] = [];
   private host: WorldMountHost | null = null;
   private readonly cfgPath: string;
-  private readonly language: Language;
 
   constructor(
     private readonly loaded: LoadedConfig<CoreConfig>,
@@ -228,7 +227,6 @@ export class WorldAssembly {
     declares: readonly WorldDeclaration[],
   ) {
     this.cfgPath = join(loaded.rootDir, 'config.json');
-    this.language = resolveLanguage(loaded.config.language);
     const declared = new Set<string>();
     for (const decl of declares) declared.add(typeof decl === 'string' ? decl : decl.id);
     const defined = new Set(worlds.map((m) => m.id));
@@ -239,11 +237,12 @@ export class WorldAssembly {
         instance = def.create(this.context(def));
       } catch (error) {
         // 定义可以来自可替换的包;构造失败只废这一格,不让一个 World 否决整个启动。
+        const detail = error instanceof Error ? error.message : String(error);
         this.missing.push({
           id: def.id,
           label: def.label,
           declared: declared.has(def.id),
-          reason: this.text.constructFailed(error instanceof Error ? error.message : String(error)),
+          reason: (language) => text(language).constructFailed(detail),
         });
         continue;
       }
@@ -268,11 +267,12 @@ export class WorldAssembly {
     }
     for (const decl of declares) {
       if (typeof decl === 'string') {
-        if (!defined.has(decl)) this.missing.push({ id: decl, label: decl, reason: this.text.notImplemented });
+        if (!defined.has(decl)) this.missing.push({ id: decl, label: decl, reason: (language) => text(language).notImplemented });
         continue;
       }
       if (defined.has(decl.id)) continue;
-      this.missing.push({ id: decl.id, label: decl.label, reason: decl.reason ?? this.text.notImplemented });
+      const given = decl.reason;
+      this.missing.push({ id: decl.id, label: decl.label, reason: given ? () => given : (language) => text(language).notImplemented });
     }
   }
 
@@ -300,7 +300,7 @@ export class WorldAssembly {
         this.slots.splice(existing, 1);
       }
       const clash = this.toolClash(mod, this.mounted);
-      if (clash) throw new Error(clash);
+      if (clash) throw new Error(clash('zh'));
       this.slots.push({
         id: mod.id,
         label: opts.labels?.[mod.id] ?? mod.id,
@@ -326,9 +326,9 @@ export class WorldAssembly {
     }
   }
 
-  slot(id: string): WorldSlot {
+  slot(id: string, language: Language = 'zh'): WorldSlot {
     const slot = this.slots.find((s) => s.id === id);
-    if (!slot) throw new Error(this.text.unknownWorld(id));
+    if (!slot) throw new Error(text(language).unknownWorld(id));
     return slot;
   }
 
@@ -341,15 +341,17 @@ export class WorldAssembly {
     return this.slots.find((s) => s.id === id)?.label;
   }
 
-  async activate(id: string): Promise<string> {
-    const slot = this.slot(id);
-    if (slot.mounted) return this.text.alreadyRunning(slot.label);
+  /** 三个动作的回执与拒绝理由按 `language` 给;省略 = 中文。 */
+  async activate(id: string, language: Language = 'zh'): Promise<string> {
+    const t = text(language);
+    const slot = this.slot(id, language);
+    if (slot.mounted) return t.alreadyRunning(slot.label);
     const def = slot.definition;
-    if (!def) throw new Error(this.text.prebuilt(slot.label));
+    if (!def) throw new Error(t.prebuilt(slot.label));
     const ctx = this.context(def);
     def.preflight?.(ctx);
     const clash = this.toolClash(slot.instance, this.mounted);
-    if (clash) throw new Error(clash);
+    if (clash) throw new Error(clash(language));
     this.persist(id, { enabled: true });
     try {
       await this.mountHost().mount(slot.instance);
@@ -360,28 +362,28 @@ export class WorldAssembly {
     }
     slot.mounted = true;
     this.host?.lifecycle?.({ kind: 'mounted', id, label: slot.label });
-    return this.text.activated(slot.label, id);
+    return t.activated(slot.label, id);
   }
 
-  async deactivate(id: string): Promise<string> {
-    const slot = this.slot(id);
+  async deactivate(id: string, language: Language = 'zh'): Promise<string> {
+    const slot = this.slot(id, language);
     const wasMounted = slot.mounted;
     if (wasMounted) await this.stopSlot(slot);
     this.persist(id, { enabled: false });
     if (wasMounted) this.host?.lifecycle?.({ kind: 'unmounted', id, label: slot.label });
-    return this.text.deactivated(slot.label, id);
+    return text(language).deactivated(slot.label, id);
   }
 
-  async restart(id: string): Promise<string> {
-    const slot = this.slot(id);
-    if (!slot.mounted) throw new Error(this.text.notActive(slot.label));
+  async restart(id: string, language: Language = 'zh'): Promise<string> {
+    const slot = this.slot(id, language);
+    if (!slot.mounted) throw new Error(text(language).notActive(slot.label));
     await this.stopSlot(slot);
     const clash = this.toolClash(slot.instance, this.mounted);
-    if (clash) throw new Error(clash);
+    if (clash) throw new Error(clash(language));
     await this.mountHost().mount(slot.instance);
     slot.mounted = true;
     this.host?.lifecycle?.({ kind: 'restarted', id, label: slot.label });
-    return this.text.restarted(slot.label);
+    return text(language).restarted(slot.label);
   }
 
   /** 按 `worlds.<id>.enabled` 对账(`WorldContext.restart`)。 */
@@ -407,24 +409,23 @@ export class WorldAssembly {
    * 工具名在一个 bot 内全局唯一:模型按名字调用,Core 按名字归属与隐藏。
    * 占了保留名或与挂载表里任何 World 撞名的 World 不挂,理由给操作员;约定是用自家短名做前缀。
    */
-  private toolClash(mod: World, mounted: readonly World[]): string | null {
+  private toolClash(mod: World, mounted: readonly World[]): ((language: Language) => string) | null {
     const names = new Set(mod.tools().map((t) => t.name));
     const reserved = (this.host?.reservedToolNames?.() ?? []).filter((n) => names.has(n));
-    if (reserved.length) return this.text.toolReserved(reserved);
+    if (reserved.length) return (language) => text(language).toolReserved(reserved);
     for (const other of mounted) {
       const shared = other.tools().map((t) => t.name).filter((n) => names.has(n));
-      if (shared.length) return this.text.toolClash(this.labelOf(other.id) ?? other.id, shared);
+      if (shared.length) {
+        const label = this.labelOf(other.id) ?? other.id;
+        return (language) => text(language).toolClash(label, shared);
+      }
     }
     return null;
   }
 
   private mountHost(): WorldMountHost {
-    if (!this.host) throw new Error(this.text.unbound);
+    if (!this.host) throw new Error(text('zh').unbound);
     return this.host;
-  }
-
-  private get text(): (typeof ASSEMBLY_TEXT)['zh'] {
-    return pick(this.language, ASSEMBLY_TEXT);
   }
 
   /** `worlds.<id>` 活引用;缺段时按定义默认值补一段。 */
@@ -450,7 +451,6 @@ export class WorldAssembly {
       id: def.id,
       cfg: this.section(def as unknown as WorldDefinition<WorldSection>) as S,
       timezone: cfg.timezone,
-      language: this.language,
       botName: cfg.displayName,
       botDir: loaded.rootDir,
       packageDir: loaded.packageDir ?? loaded.rootDir,

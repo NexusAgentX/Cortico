@@ -31,6 +31,13 @@ import type { ConfigGroup, StoragePart } from '../../core/types.ts';
 export const CONSOLE_PROTOCOL_VERSION = 1;
 
 /**
+ * 界面语言随每个请求走:HTTP 请求带这个头,WebSocket 握手带这个查询参数(浏览器的
+ * WebSocket 构造器带不了头)。值是 `zh` / `en`;缺席或不认识时服务端用部署默认语言。
+ */
+export const CONSOLE_LANGUAGE_HEADER = 'x-cortico-language';
+export const CONSOLE_LANGUAGE_QUERY = 'language';
+
+/**
  * 一页的类别。
  *
  * - `worlds`      —— 一个 World 带来的控制面

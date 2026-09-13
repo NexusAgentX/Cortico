@@ -24,6 +24,7 @@ import { QQWorld } from '../src/worlds/qq/world.ts';
 import { QQ_CONFIG_GROUP } from '../src/worlds/qq/config.ts';
 import { TerminalWorld } from '../src/worlds/terminal/world.ts';
 import { WebSearchWorld } from '../src/worlds/websearch/world.ts';
+import type { Language } from '../src/core/language.ts';
 import { WEBSEARCH_CONFIG_GROUP } from '../src/worlds/websearch/config.ts';
 import { MINECRAFT_CLIENT_CONFIG_GROUP, MINECRAFT_CONFIG_GROUP, MINECRAFT_DEFAULTS, MINECRAFT_PLAYER_CONFIG_GROUP, MINECRAFT_RHYTHM_CONFIG_GROUP } from '../src/worlds/minecraft/config.ts';
 import { MINECRAFT_PANEL_DECLS } from '../src/worlds/minecraft/world.ts';
@@ -34,7 +35,7 @@ import { BUILTIN_OVERLAY_STYLES, normalizeOverlayDesign } from '../src/worlds/bi
 import { OverlayAssetStore } from '../src/worlds/bilibili/overlay/assets.ts';
 import { BilibiliOverlayServer, OverlayEditorConflictError } from '../src/worlds/bilibili/overlay/server.ts';
 import type { AgentAnnouncementState, BilibiliOverlayDesign } from '../src/worlds/bilibili/overlay/types.ts';
-import { WebApp, type ExtensionInfo, type StoragePart, type ToolOwner } from '../src/web/server.ts';
+import { PromptRevisionConflict, WebApp, type ExtensionInfo, type StoragePart, type ToolOwner } from '../src/web/server.ts';
 import { pageIdFor } from '../src/web/shared/console-protocol.ts';
 import { ioPageContribution } from '../src/bot.ts';
 import { ConsoleFixtureWorld } from '../src/worlds/console-fixture/world.ts';
@@ -1037,7 +1038,7 @@ const app = new WebApp({
     startedAt: '2026-07-19T09:00:00+08:00',
   }),
   sessions: { list: () => sessionsList, messages: (id) => (id === 'main' ? session : sessionsList.some((s) => s.id === id) ? session.slice(0, 4) : null), onChange: () => {} },
-  storage,
+  storage: () => storage,
   usage: { aggregate: (opts) => aggregateUsage(usageRecords, opts) },
   // 框架级表面:MINIMAL 下也在
   config: {
@@ -1057,7 +1058,7 @@ const app = new WebApp({
    */
   consolePageSources: () => [...devConsolePageSources(), ...[...worlds, ...devFakeWorlds].map((m) => ({
     id: pageIdFor('world', m.id),
-    contribute: () => {
+    contribute: (language: Language) => {
       const c = ioPageContribution(m.id, worldLabels[m.id] ?? m.id, {
         id: m.id,
         status: 'active',
@@ -1066,7 +1067,7 @@ const app = new WebApp({
         tools: [],
         visible: devWorldVisible[m.id] !== false,
         prefixDrifted: devWorldDrift.has(m.id),
-      }, m);
+      }, m, language);
       const dev = devPanelSurface(m.id);
       if (dev) c.invoke = (panel, method, args) => dev.invoke(panel, method, args);
       return c;
@@ -1131,7 +1132,7 @@ const app = new WebApp({
     write: (key, content, baseRevision) => {
       const doc = devPromptDocs.find((item) => item.key === key);
       if (!doc) throw new Error(`未知提示词模板: ${key}`);
-      if (baseRevision && baseRevision !== doc.revision) throw new Error(`${doc.title} 已在别处被修改，请重新载入后再保存`);
+      if (baseRevision && baseRevision !== doc.revision) throw new PromptRevisionConflict(`${doc.title} 已在别处被修改，请重新载入后再保存`);
       doc.content = content; doc.revision = `dev-${Date.now()}`;
       return `已保存 ${doc.title} (dev)`;
     },

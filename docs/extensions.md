@@ -93,7 +93,7 @@ pnpm check:extension <包目录>
 ```
 
 不启动任何东西:读 manifest、import 入口、按 kind 核对默认导出形状、确认面板产物在,再干装载——
-World 在假部署(默认配置、无密钥)下 `create()`,跑 `tools()`、`envPromptVars()`、`console()`,对照
+World 在假部署(默认配置、无密钥)下 `create()`,跑 `tools()`、`envPromptVars()`、`console(language)`,对照
 Core 保留名与内建 World 的工具名;provider 按假端点条目 `create()`;bot 按假部署 `build()`。
 装配层启动时对每个 World 定义都调 `create()`,不管启没启用,所以默认配置下构造不出来就是失败。
 通过就能装。

@@ -40,6 +40,7 @@ import type {
   SessionOpeningReason,
   ToolDef,
 } from 'cortico/core/types.ts';
+import type { Language } from 'cortico/core/language.ts';
 import { estimateTokens, withDeadline } from 'cortico/core/util.ts';
 import { Cormini, HANDOFF_DIR, MAIN, type CorminiOptions } from '../../cormini/persona/persona.ts';
 import { AUTHOR_SELF, type WorkspaceGit } from '../../cormini/persona/workspaceGit.ts';
@@ -312,8 +313,8 @@ export class CortiV extends Cormini {
   }
 
   /** 在 Cormini 的 ORIENTATION/宪法/工作区清除面之上,加上工作区编辑器三块。 */
-  override console(): PersonaConsoleDecl {
-    const base = super.console();
+  override console(language: Language = 'zh'): PersonaConsoleDecl {
+    const base = super.console(language);
     const surface = personaConsoleDecl({ memory: this.memory });
     return {
       ...base,

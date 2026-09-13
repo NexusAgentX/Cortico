@@ -28,7 +28,7 @@ Owner: `src/deploy.ts`, `src/core/config.ts`, `src/core/config-schema.ts`
 | `context` | `keepPastThinking true`、`firstTurn false` | 发给模型前的处理;阶段预算归 Persona 的段 |
 | `logging` | `file debug`、`console info`、`areas ''` | 日志门槛与按区域覆盖,热改 |
 | `worlds.<id>` | 各 World 自定 | `enabled` 决定挂不挂;其余形状归 World |
-| `language` | 系统区域 | 控制台语言 `zh` / `en`(见 [console.md](console.md)) |
+| `language` | 系统区域 | 控制台默认语言 `zh` / `en`,浏览器可改(见 [console.md](console.md)) |
 
 Persona 自己的段(如 CortiV 的 `context.maxTokens`、`rounds`、`cognition`、`tick`)由各 bot 的
 `index.ts` 定义。

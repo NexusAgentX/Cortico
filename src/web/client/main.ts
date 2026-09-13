@@ -14,7 +14,7 @@
  */
 
 import { fetchManifest, get } from './core/api.ts';
-import { pick } from './core/language.ts';
+import { pick, withLanguage } from './core/language.ts';
 import { Lifecycle } from './core/lifecycle.ts';
 import { Router, type Route } from './core/router.ts';
 import type { SocketLike } from './core/stream.ts';
@@ -132,7 +132,7 @@ export function boot(doc: Document = document): { dispose(): void } {
     fetchManifest: () => fetchManifest(),
     memo,
     createSocket: (url: string) => new WebSocket(url) as unknown as SocketLike,
-    wsUrl: (path: string) => wsUrlOf(location, path),
+    wsUrl: (path: string) => wsUrlOf(location, withLanguage(path)),
     onError,
   };
   const host = new ConsolePageHost({ ...hostDeps, root: pageRoot });

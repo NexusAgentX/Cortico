@@ -42,8 +42,8 @@ export interface ConsolePanelContext {
   /** 本页内的局部 id，如 `gate` */
   readonly panelId: string;
   /**
-   * 控制台语言,部署事实(`zh` / `en`)。扩展自己决定要不要带第二套文案;
-   * 没有这一语言的就给中文,宿主不翻译、不告警。
+   * 这个浏览器的界面语言(`zh` / `en`):部署默认,或操作员在设置里改过的那种。扩展自己
+   * 决定要不要带第二套文案;没有这一语言的就给中文,宿主不翻译、不告警。
    */
   readonly language: Language;
 

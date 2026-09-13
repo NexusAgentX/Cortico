@@ -34,7 +34,7 @@ import {
   type PathPickerOptions,
   type PathPickerResponse,
 } from '../../shared/path-picker.ts';
-import { pick } from './language.ts';
+import { languageHeaders, pick } from './language.ts';
 
 const zh = {
   httpStatus: (status: number, snippet: string) => `HTTP ${status}：${snippet}`,
@@ -80,6 +80,7 @@ async function send(path: string, init: RequestInit, opts?: RequestOptions): Pro
   try {
     return await fetch(path, {
       ...init,
+      headers: { ...languageHeaders(), ...(init.headers as Record<string, string> | undefined) },
       ...(opts?.signal ? { signal: opts.signal } : {}),
       ...(opts?.keepalive ? { keepalive: true } : {}),
     });

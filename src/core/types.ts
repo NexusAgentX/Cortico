@@ -3,6 +3,7 @@ import type { ContextRecord } from '../protocol/open-responses/context.ts';
 import type { StreamEvent } from '../protocol/open-responses/index.ts';
 import type { ResponseClient, ProviderAttempt } from './generation.ts';
 import type { ConfigGroup } from './config-schema.ts';
+import type { Language } from './language.ts';
 
 export type { ConfigGroup, ConfigProperty, ConfigValues } from './config-schema.ts';
 
@@ -1075,8 +1076,14 @@ export interface World {
   envPromptVars(): Record<string, string> | null | Promise<Record<string, string> | null>;
   /** World 工具集(schema+description+handler 都由 World 自己提供;使用时机与该回避的模式写进环境提示词模板,description 只放这个工具自己的定义与用法) */
   tools(): ToolDef[];
-  /** 本 World 要在控制台露出什么(可选;不声明=控制台只显示通用信息) */
-  console?(): WorldConsoleDecl;
+  /**
+   * 本 World 要在控制台露出什么(可选;不声明=控制台只显示通用信息)。
+   *
+   * `language` 是发起这次请求的浏览器的界面语言:声明里的文案、`invoke` 与 `stream` 闭包
+   * 回给操作员的话都按它取。控制台每个请求都重新调一次,所以声明不缓存语言。省略 = 中文,
+   * 只有不读文案的调用方(前缀组装)才省略。发给模型的文本不看它。
+   */
+  console?(language?: Language): WorldConsoleDecl;
   /**
    * 本 World 对主 session 输出流的接收器(见 `SessionDecl.outputTap`)。Persona把所有
    * 挂载 World 的接收器扇出成一个 tap 填进声明;World 运行中挂载/卸载时接收集合随之变化。
@@ -1271,8 +1278,9 @@ export interface Persona {
    * `ConsoleContribution.consolePages`,因为它们要写 config.json、要跨 owner 编排。
    *
    * 面板 id 在本人格内唯一,不带任何前缀;page id 由装配层按 bot 名生成。
+   * `language` 与 `World.console` 同义:这次请求的界面语言,省略 = 中文。
    */
-  console?(): PersonaConsoleDecl;
+  console?(language?: Language): PersonaConsoleDecl;
 }
 
 /**
@@ -1430,8 +1438,8 @@ export interface CoreConfig {
   displayName: string;
   timezone: string;
   /**
-   * 控制台语言(部署事实)。不填 = 进程启动时读一次系统区域,不是中文就按英文。
-   * 只管控制台与各所有方给控制台的文案;发给模型的文本不归它管。
+   * 控制台的默认语言。不填 = 进程启动时读一次系统区域,不是中文就按英文。浏览器可以
+   * 在设置里改成另一种,那份选择只存在那个浏览器里。发给模型的文本不归它管。
    */
   language?: 'zh' | 'en';
   /** 可接入的 LLM 供应端点表(部署事实;名字是部署自取的不透明字符串) */

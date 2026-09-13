@@ -76,7 +76,7 @@ beforeAll(async () => {
     memoryDir: dir,
     dataDir: dir,
     getStatus: () => ({}),
-    storage: parts,
+    storage: () => parts,
     log: nullLogger(),
   });
   port = await app.start(0);

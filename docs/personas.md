@@ -51,7 +51,7 @@ Persona 工具,Core 只认 `ToolDef.endsTurn`。
 | `declares` | 为之设计的渠道 id;有实现的默认 `enabled: true`,没实现的在控制台是灰卡。有实现但没声明的 World 是部署侧选配,默认关 |
 | `build(loaded, worlds)` | 造 Persona,返回 `BotParts { persona, onStart?, onStop?, console? }` |
 
-`createBot()` 的顺序:算提示词覆盖目录 → 定语言 → `WorldAssembly` → `build()` → `Core` →
+`createBot()` 的顺序:算提示词覆盖目录 → 定默认语言 → `WorldAssembly` → `build()` → `Core` →
 装配层绑定挂载钩子 → 收配置组(含未激活槽位)→ provider 设置页 → `WebApp`。`start()`:单实例锁
 → 控制台 → 启动 active provider → `onStart` → `core.start()`。
 

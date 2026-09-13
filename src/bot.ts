@@ -38,6 +38,7 @@ import { providerModules } from './providers/registry.ts';
 import { readGroupValues, setByPath as setConfigPath } from './core/config-schema.ts';
 import type { ConfigValues } from './core/config-schema.ts';
 import {
+  PromptRevisionConflict,
   WebApp,
   type ConsoleWorldInfo,
   type WorldInfo,
@@ -113,8 +114,8 @@ export interface ConsoleContribution {
   storage?: StoragePart[];
   /** 追加的可调配置组(Persona那组;core 与各 World 的由框架收拢) */
   configGroups?: ConfigGroup[];
-  /** `x-options` 下拉的活选项(如播放设备表) */
-  configOptions?(kind: string): Array<{ value: string; label: string }>;
+  /** `x-options` 下拉的活选项(如播放设备表),固定项的文案按 `language` 给 */
+  configOptions?(kind: string, language: Language): Array<{ value: string; label: string }>;
   /** 合并进状态快照的实现特有字段(框架给的基础字段在前,这里覆盖) */
   status?(): Record<string, unknown>;
   /**
@@ -148,8 +149,10 @@ export interface ConsoleContribution {
  * 禁止的"两套实现"。
  */
 export interface ConsolePageBuildContext {
-  /** 权威的可清除存储清单,与 `/api/storage` 看到的是同一批对象。 */
+  /** 权威的可清除存储清单,与 `/api/storage` 看到的是同一批对象(文案已按 `language`)。 */
   storage: readonly StoragePart[];
+  /** 发起这次请求的浏览器的界面语言。 */
+  language: Language;
 }
 
 /** 关机仪式里的一步。`ok=false` 时 `detail` 说的是没走完的原因(超时或异常)。 */
@@ -262,6 +265,20 @@ const BOT_TEXT = {
         cleared: (n: number) => `已丢弃${n}条待投递事件`,
       },
     },
+    config: {
+      unknownGroup: (id: string) => `没有这一组配置: ${id}`,
+      updated: (title: string, file: string) => `${title}已更新,已写回 ${file}`,
+    },
+    prompts: {
+      unknown: (key: string) => `未知提示词模板: ${key}`,
+      packageReadOnly: (title: string) => `${title} 住在扩展包里,包内文件只读;要让它可改,bot 包在这份模板的声明里给出 deploymentPath。`,
+      conflict: (title: string) => `${title} 已在别处被修改,请重新载入后再保存`,
+      saved: (title: string) => `已保存 ${title}`,
+      savedOverride: (title: string) => `已保存 ${title}(写入本 bot 的覆盖文件,World 自带的模板未动)`,
+      notEnvPrompt: (title: string) => `${title} 不是 World 的环境提示词,没有 World 默认可恢复`,
+      alreadyDefault: (title: string) => `${title} 本来就在用 World 默认`,
+      reset: (title: string) => `已删除本 bot 对 ${title} 的覆盖,回到 World 默认`,
+    },
     visibility: {
       shown: (id: string) => `${id} 对 agent 重新可见。事件投递已恢复;前缀段与工具要等前缀重载才回来。`,
       hidden: (id: string) => `${id} 已对 agent 隐藏。新事件不再唤醒 agent(仍照常落库);前缀段与工具要等前缀重载才撤下。`,
@@ -344,6 +361,20 @@ const BOT_TEXT = {
         stat: (n: number) => `${n} pending`,
         cleared: (n: number) => `Discarded ${n} pending events`,
       },
+    },
+    config: {
+      unknownGroup: (id: string) => `No such config group: ${id}`,
+      updated: (title: string, file: string) => `${title} updated and written back to ${file}`,
+    },
+    prompts: {
+      unknown: (key: string) => `Unknown prompt template: ${key}`,
+      packageReadOnly: (title: string) => `${title} lives in an extension package and package files are read-only; to make it editable, the bot package declares a deploymentPath for this template.`,
+      conflict: (title: string) => `${title} was modified elsewhere; reload before saving`,
+      saved: (title: string) => `Saved ${title}`,
+      savedOverride: (title: string) => `Saved ${title} (written to this bot's override file; the World's own template is untouched)`,
+      notEnvPrompt: (title: string) => `${title} is not a World environment prompt, so there is no World default to restore`,
+      alreadyDefault: (title: string) => `${title} is already using the World default`,
+      reset: (title: string) => `Removed this bot's override of ${title}; back to the World default`,
     },
     visibility: {
       shown: (id: string) => `${id} is visible to the agent again. Event delivery has resumed; its prefix segment and tools return once the prefix is reloaded.`,
@@ -516,23 +547,30 @@ function derivePrompts<C extends CoreConfig>(
   dirs: EnvPromptDirs,
   packageReadOnly: boolean,
 ): WebAppPromptDeps | undefined {
-  const personaDocs = parts.persona.console?.().promptDocs ?? [];
   // 同 key 先到先得:装配层的声明可以覆盖Persona自报的同名源
   // (部署把某份文件换成自己的那份时用;测试也靠这个换临时文件)。
-  const seen = new Set<string>();
-  const docs = [
-    ...(contribution.promptDocs ?? []).map((d) => ({ ...d, scope: 'persona' as const })),
-    ...personaDocs.map((d) => ({ ...d, scope: 'persona' as const })),
-    // 未激活槽位的模板也列出来:接入前就要能改。
-    ...assembly.instances()
-      .flatMap((m) => (m.console?.()?.promptDocs ?? []).map((d) => ({ ...d, scope: 'world' as const, worldId: m.id }))),
-  ].filter((d) => (seen.has(d.key) ? false : (seen.add(d.key), true)));
-  if (docs.length === 0) return undefined;
-  const byKey = new Map(docs.map((d) => [d.key, d]));
+  // 标题与说明按界面语言给,所以每次请求按那种语言重新问一遍声明方;key 与路径不随语言变。
+  const docsOf = (language: Language) => {
+    const seen = new Set<string>();
+    return [
+      ...(contribution.promptDocs ?? []).map((d) => ({ ...d, scope: 'persona' as const })),
+      ...(parts.persona.console?.(language)?.promptDocs ?? []).map((d) => ({ ...d, scope: 'persona' as const })),
+      // 未激活槽位的模板也列出来:接入前就要能改。
+      ...assembly.instances()
+        .flatMap((m) => (m.console?.(language)?.promptDocs ?? []).map((d) => ({ ...d, scope: 'world' as const, worldId: m.id }))),
+    ].filter((d) => (seen.has(d.key) ? false : (seen.add(d.key), true)));
+  };
+  type Doc = ReturnType<typeof docsOf>[number];
+  if (docsOf('zh').length === 0) return undefined;
+  const docOf = (key: string, language: Language): Doc => {
+    const doc = docsOf(language).find((d) => d.key === key);
+    if (!doc) throw new Error(botText(language).prompts.unknown(key));
+    return doc;
+  };
   const revisionOf = (content: string): string => createHash('sha256').update(content).digest('hex');
 
   /** 一份模板此刻读哪份文件、存到哪份文件。`origin` 只有 World 的环境提示词才有。 */
-  const sourceOf = (d: (typeof docs)[number]): { readPath: string; writePath: string; origin?: EnvPromptOrigin } => {
+  const sourceOf = (d: Doc): { readPath: string; writePath: string; origin?: EnvPromptOrigin } => {
     if (d.scope === 'world' && d.role === 'envPrompt') {
       const { path, origin } = envPromptTemplateSource(d, d.worldId, dirs);
       // 写永远落在部署层:部署者调出来的提示词是私有资产,不该写进代码包被一起发出去。
@@ -575,7 +613,7 @@ function derivePrompts<C extends CoreConfig>(
   /** 声明的源文件可以尚不存在(部署侧的文本在首次保存前没有那份文件):读作空。 */
   const readSource = (path: string): string => (existsSync(path) ? readFileSync(path, 'utf8') : '');
 
-  const readDoc = (d: (typeof docs)[number], values: Record<string, string>): PromptDocument => {
+  const readDoc = (d: Doc, values: Record<string, string>): PromptDocument => {
     const { readPath, origin } = sourceOf(d);
     const content = readSource(readPath);
     return {
@@ -598,9 +636,9 @@ function derivePrompts<C extends CoreConfig>(
     };
   };
   return {
-    list: async () => {
+    list: async (language) => {
       const values = await varValues();
-      return docs.map((d) => readDoc(d, values));
+      return docsOf(language).map((d) => readDoc(d, values));
     },
     prefix: () => assembleSystemSegments({
       persona: parts.persona,
@@ -609,16 +647,16 @@ function derivePrompts<C extends CoreConfig>(
       timezone,
       dirs,
     }),
-    write: (key, content, baseRevision) => {
-      const doc = byKey.get(key);
-      if (!doc) throw new Error(`未知提示词模板: ${key}`);
+    write: (key, content, baseRevision, language) => {
+      const t = botText(language).prompts;
+      const doc = docOf(key, language);
       if (packageReadOnly && doc.scope === 'persona' && !doc.deploymentPath) {
-        throw new Error(`${doc.title} 住在扩展包里,包内文件只读;要让它可改,bot 包在这份模板的声明里给出 deploymentPath。`);
+        throw new Error(t.packageReadOnly(doc.title));
       }
       const { readPath, writePath, origin } = sourceOf(doc);
       if (baseRevision) {
         const cur = revisionOf(readSource(readPath));
-        if (cur !== baseRevision) throw new Error(`${doc.title} 已在别处被修改,请重新载入后再保存`);
+        if (cur !== baseRevision) throw new PromptRevisionConflict(t.conflict(doc.title));
       }
       mkdirSync(dirname(writePath), { recursive: true });
       const tmp = `${writePath}.tmp-${Math.random().toString(36).slice(2, 10)}`;
@@ -629,16 +667,16 @@ function derivePrompts<C extends CoreConfig>(
         try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* 保留原始写入错误 */ }
         throw error;
       }
-      return origin ? `已保存 ${doc.title}(写入本 bot 的覆盖文件,World 自带的模板未动)` : `已保存 ${doc.title}`;
+      return origin ? t.savedOverride(doc.title) : t.saved(doc.title);
     },
-    reset: (key) => {
-      const doc = byKey.get(key);
-      if (!doc) throw new Error(`未知提示词模板: ${key}`);
+    reset: (key, language) => {
+      const t = botText(language).prompts;
+      const doc = docOf(key, language);
       const { writePath, origin } = sourceOf(doc);
-      if (!origin) throw new Error(`${doc.title} 不是 World 的环境提示词,没有 World 默认可恢复`);
-      if (origin === 'module') return `${doc.title} 本来就在用 World 默认`;
+      if (!origin) throw new Error(t.notEnvPrompt(doc.title));
+      if (origin === 'module') return t.alreadyDefault(doc.title);
       unlinkSync(writePath);
-      return `已删除本 bot 对 ${doc.title} 的覆盖,回到 World 默认`;
+      return t.reset(doc.title);
     },
   };
 }
@@ -664,6 +702,7 @@ export type WorldFacts =
 export function deriveWorldFacts(
   core: WorldVisibilityFacts,
   assembly: WorldAssembly,
+  language: Language,
 ): WorldFacts[] {
   const { visibility, driftedWorlds } = core.worldVisibility();
   const slots: WorldFacts[] = assembly.slots.map((slot) => {
@@ -671,7 +710,7 @@ export function deriveWorldFacts(
     // 控制台内容由 World 声明;框架不按 World id 分支。显示名也归它报,不报用定义里的。
     let decl;
     try {
-      decl = m.console?.();
+      decl = m.console?.(language);
     } catch {
       decl = undefined;
     }
@@ -698,7 +737,7 @@ export function deriveWorldFacts(
     status: 'missing' as const,
     label: m.label,
     declared: m.declared ?? true,
-    reason: m.reason,
+    reason: m.reason(language),
   }));
   return [...slots, ...missing];
 }
@@ -708,8 +747,9 @@ async function deriveWorldInfo(
   core: WorldVisibilityFacts,
   assembly: WorldAssembly,
   dirs: EnvPromptDirs,
+  language: Language,
 ): Promise<ConsoleWorldInfo[]> {
-  return Promise.all(deriveWorldFacts(core, assembly).map(async (facts) => {
+  return Promise.all(deriveWorldFacts(core, assembly, language).map(async (facts) => {
     if (facts.status !== 'active') return facts;
     return { ...facts, envPrompt: (await renderWorldEnvPrompt(assembly.slot(facts.id).instance, dirs)).text };
   }));
@@ -719,11 +759,11 @@ async function deriveWorldInfo(
  * 全部槽位的可清除存储。槽位实例会在停用/重启时重建,所以 stat/clear 每次都
  * 解析到当前实例上同 key 的那一项;装配期报过的 key 就是清单的全部。
  */
-function deriveSlotStorage(assembly: WorldAssembly): StoragePart[] {
+function deriveSlotStorage(assembly: WorldAssembly, language: Language): StoragePart[] {
   return assembly.slots.flatMap((slot) =>
-    (slot.instance.console?.()?.storage ?? []).map((part): StoragePart => {
+    (slot.instance.console?.(language)?.storage ?? []).map((part): StoragePart => {
       const current = (): StoragePart => {
-        const found = slot.instance.console?.()?.storage?.find((p) => p.key === part.key);
+        const found = slot.instance.console?.(language)?.storage?.find((p) => p.key === part.key);
         if (!found) throw new Error(`${slot.id} 的存储项 ${part.key} 在当前实例上不存在`);
         return found;
       };
@@ -767,8 +807,9 @@ export function ioPageContribution(
   label: string,
   info: WorldFacts | undefined,
   mod: World | undefined,
+  language: Language = 'zh',
 ): ConsolePageContribution {
-  const decl = mod?.console?.();
+  const decl = mod?.console?.(language);
   const declaredPanels = decl?.panels ?? [];
   const out: ConsolePageContribution = {
     id: pageIdFor('world', worldId),
@@ -817,8 +858,9 @@ export function personaPageContribution(
   botId: string,
   label: string,
   core: Persona,
+  language: Language = 'zh',
 ): ConsolePageContribution | null {
-  const decl = core.console?.();
+  const decl = core.console?.(language);
   if (!decl) return null;
   const declaredPanels = decl.panels ?? [];
   const out: ConsolePageContribution = {
@@ -916,32 +958,46 @@ export function deriveConsolePageSources(
    */
   bot?: { id: string; label: string; configGroups?: readonly ConfigGroup[] },
   /** 装配层追加的 bot 级控制台页(模型档位、存档点、统一重置这些部署绑定的)。 */
-  extra?: () => ConsolePageContribution[],
+  extra?: (language: Language) => ConsolePageContribution[],
 ): () => ConsolePageSource[] {
   const { assembly } = parts;
   const labelOf = (id: string): string => assembly.labelOf(id) ?? id;
   return () => {
-    // registry 枚举一轮后会对每个 source 各调一次 contribute();三态事实按轮共享,
+    // registry 枚举一轮后会对每个 source 各调一次 contribute();三态事实按轮、按语言共享,
     // 否则 N 个 World 要各算一遍全量事实。
     //
     // 这条路要的是三态与声明,**不是** envPrompt——灯走的就是这条路,而它按秒刷新。
-    let once: Map<string, WorldFacts> | null = null;
-    const infos = (): Map<string, WorldFacts> => {
-      once ??= new Map(deriveWorldFacts(core, assembly).map((i) => [i.id, i]));
-      return once;
+    const once = new Map<Language, Map<string, WorldFacts>>();
+    const infos = (language: Language): Map<string, WorldFacts> => {
+      let facts = once.get(language);
+      if (!facts) {
+        facts = new Map(deriveWorldFacts(core, assembly, language).map((i) => [i.id, i]));
+        once.set(language, facts);
+      }
+      return facts;
     };
     const instances = new Map<string, World>(assembly.slots.map((s) => [s.id, s.instance]));
     const ids = [...assembly.slots.map((s) => s.id), ...assembly.missing.map((m) => m.id)];
     const sources: ConsolePageSource[] = ids.map((id) => ({
       id: pageIdFor('world', id),
-      contribute: () =>
-        ioPageContribution(id, labelOf(id), infos().get(id), instances.get(id)),
+      contribute: (language) =>
+        ioPageContribution(id, labelOf(id), infos(language).get(id), instances.get(id), language),
     }));
 
     // Persona自报的那一个。没实现 console() 就没有,不是错误。
     const persona = parts.persona;
     const selfId = bot ? pageIdFor('persona', bot.id) : null;
-    const extras = extra?.() ?? [];
+    // bot 级的页按语言现算;一轮里同一语言只算一次。
+    const extrasByLanguage = new Map<Language, ConsolePageContribution[]>();
+    const extrasOf = (language: Language): ConsolePageContribution[] => {
+      let list = extrasByLanguage.get(language);
+      if (!list) {
+        list = extra?.(language) ?? [];
+        extrasByLanguage.set(language, list);
+      }
+      return list;
+    };
+    const extras = extrasOf('zh');
 
     /**
      * Persona自报的那半，与装配层贡献的**同 id** 那半，合成一页。
@@ -955,7 +1011,6 @@ export function deriveConsolePageSources(
      * 分量：那是包的组织问题，不是控制台的概念。
      */
     if (bot && selfId) {
-      const own = extras.filter((c) => c.id === selfId);
       // bot 级声明的旋钮也是这一页的:装配层写在别处只是代码组织,
       // 对控制台来说它们与Persona自报的那批同属一页。
       // 标了 settingsPage 的组不认领:注册照旧(createBot 已把它收进 /api/config),
@@ -966,19 +1021,19 @@ export function deriveConsolePageSources(
         : [];
       sources.push({
         id: selfId,
-        contribute: () => mergePersonaContributions(
+        contribute: (language) => mergePersonaContributions(
           selfId,
           bot.label,
-          persona ? personaPageContribution(bot.id, bot.label, persona) : null,
-          [...own, ...botConfig],
+          persona ? personaPageContribution(bot.id, bot.label, persona, language) : null,
+          [...extrasOf(language).filter((c) => c.id === selfId), ...botConfig],
         ),
       });
     }
     // 其余 bot 级的页各占一个 source,一个炸了不影响其余
-    // (隔离在 registry 里,按 source 逐个 try)。
+    // (隔离在 registry 里,按 source 逐个 try)。页的集合(id)不随语言变,文案随。
     for (const c of extras) {
       if (selfId && c.id === selfId) continue; // 已并入上面那条
-      sources.push({ id: c.id, contribute: () => c });
+      sources.push({ id: c.id, contribute: (language) => extrasOf(language).find((x) => x.id === c.id) ?? c });
     }
     return sources;
   };
@@ -1000,9 +1055,9 @@ export function createBot<C extends CoreConfig>(
     packageDir: loaded.packageDir ?? loaded.rootDir,
     deploymentDir: loaded.rootDir,
   };
-  // 控制台语言:config.json 的 language 赢,否则按进程读一次系统语言。整场固定。
+  // 控制台的默认语言:config.json 的 language 赢,否则按进程读一次系统语言。浏览器可以
+  // 改成另一种,之后每个请求自带语言;这里的值只管 <html lang> 与没带语言的调用方。
   const language = resolveLanguage(cfg.language);
-  const text = pick(language, BOT_TEXT);
   const assembly = new WorldAssembly(loaded, definition.worlds ?? [], definition.declares ?? []);
   const parts = definition.build(loaded, assembly.mounted);
   if (parts.worlds?.length) assembly.addPrebuilt(parts.worlds);
@@ -1026,15 +1081,16 @@ export function createBot<C extends CoreConfig>(
   });
 
   // 未激活槽位的配置组也收:参数要在激活前就能改(激活时才构造实例读它们)。
-  const configGroups: ConfigGroup[] = [
+  // 文案按界面语言现取;组的 id、owner 与键不随语言变。
+  const configGroups = (language: Language): ConfigGroup[] => [
     coreConfigGroup(language),
     ...(contribution.configGroups ?? []),
-    ...assembly.instances().flatMap((m) => m.console?.()?.config ?? []),
+    ...assembly.instances().flatMap((m) => m.console?.(language)?.config ?? []),
   ];
 
   // 端点表归全局(`<部署根>/providers/`),这份部署的 config.json 只留 activeProvider。
   const providerSettings = new ProviderSettings(cfg,core.providers,join(loaded.rootDir,'config.json'),loaded.providersDir ?? join(loaded.rootDir,'providers'));
-  const allConfigGroups = () => [...configGroups,...providerSettings.groups()];
+  const allConfigGroups = (language: Language) => [...configGroups(language),...providerSettings.groups(language)];
   const llmManagers = new Map<string,{stop():Promise<unknown>}>([['providers',{stop:()=>core.providers.stopAll()}]]);
 
   let webApp: WebApp | null = null;
@@ -1060,7 +1116,7 @@ export function createBot<C extends CoreConfig>(
 
   const beginShutdown = (
     reason: string,
-    opts: { closeWeb: boolean; exit: boolean },
+    opts: { closeWeb: boolean; exit: boolean; language?: Language },
   ): Promise<ShutdownReport> => {
     shutdownOnce ??= runShutdown({
       reason,
@@ -1071,7 +1127,7 @@ export function createBot<C extends CoreConfig>(
       // 控制台那条把控制台留到最后关:这份账还要经它回给正在看页面的人。
       webApp: opts.closeWeb ? webApp : null,
       log: core.runlog.logger('shutdown'),
-      language,
+      language: opts.language ?? language,
     }).then((report) => {
       instanceLock?.release();
       instanceLock = null;
@@ -1096,10 +1152,10 @@ export function createBot<C extends CoreConfig>(
      * 可清除存储清单在装配期生成一次，/api/storage 与 bot 的 consolePages 共用这些对象。
      * 贡献方须在 console().storage 中声明全部项目；stat 和 clear 可延迟执行，子进程代理也须在装配期提供完整声明。
      */
-    const consoleStorage: StoragePart[] = [
+    const consoleStorage = (language: Language): StoragePart[] => [
       ...deriveStorage(core, loaded.dataDir, language),
-      ...(parts.persona.console?.()?.storage ?? []),
-      ...deriveSlotStorage(assembly),
+      ...(parts.persona.console?.(language)?.storage ?? []),
+      ...deriveSlotStorage(assembly, language),
       ...(contribution.storage ?? []),
     ];
     webApp = new WebApp({
@@ -1112,18 +1168,18 @@ export function createBot<C extends CoreConfig>(
       storage: consoleStorage,
       usage: { aggregate: (opts) => aggregateUsage(core.usageLog.readAll(), opts), status: () => core.usageLog.status() },
       config: {
-        groups: () => allConfigGroups().map((group) => ({ group, values: group.owner.startsWith('provider:') ? providerSettings.values(group.id) : readGroupValues(cfg, group) })),
-        set: (groupId: string, values: ConfigValues) => {
-          const group = allConfigGroups().find((g) => g.id === groupId);
-          if (group?.owner.startsWith('provider:')) return providerSettings.setConfig(groupId,values);
-          if (!group) return `没有这一组配置: ${groupId}`;
+        groups: (language) => allConfigGroups(language).map((group) => ({ group, values: group.owner.startsWith('provider:') ? providerSettings.values(group.id, language) : readGroupValues(cfg, group) })),
+        set: (groupId: string, values: ConfigValues, language) => {
+          const group = allConfigGroups(language).find((g) => g.id === groupId);
+          if (group?.owner.startsWith('provider:')) return providerSettings.setConfig(groupId,values,language);
+          if (!group) return botText(language).config.unknownGroup(groupId);
           const root = cfg as unknown as Record<string, unknown>;
           for (const [path, v] of Object.entries(values)) setConfigPath(root, path, v);
-          return `${group.schema.title}已更新,已写回 ${persistConfig(loaded, values)}`;
+          return botText(language).config.updated(group.schema.title, persistConfig(loaded, values));
         },
         // 先问 bot(Persona自己那几组),再依次问 World 定义;第一个给出非空表的赢。
-        options: (kind) => {
-          const own = contribution.configOptions?.(kind);
+        options: (kind, language) => {
+          const own = contribution.configOptions?.(kind, language);
           if (own?.length) return own;
           for (const def of definition.worlds ?? []) {
             const opts = def.configOptions?.(kind, language);
@@ -1132,7 +1188,7 @@ export function createBot<C extends CoreConfig>(
           return [];
         },
       },
-      worlds: async () => deriveWorldInfo(core, assembly, promptDirs),
+      worlds: async (language) => deriveWorldInfo(core, assembly, promptDirs, language),
       // 控制台页的三路来源:World、Persona自报(认知绑定)、
       // 装配层追加(部署绑定)。三者在控制台眼里是同一种东西。
       consolePageSources: () => [...deriveConsolePageSources(
@@ -1145,21 +1201,22 @@ export function createBot<C extends CoreConfig>(
           ...(contribution.configGroups?.length ? { configGroups: contribution.configGroups } : {}),
         },
         contribution.consolePages
-          ? () => contribution.consolePages!({ storage: consoleStorage })
+          ? (language) => contribution.consolePages!({ storage: consoleStorage(language), language })
           : undefined,
       )(),...providerSettings.sources()],
       worldVisibility: {
         state: () => core.worldVisibility(),
-        set: (id, visible) => {
+        set: (id, visible, language) => {
           core.setWorldVisible(id, visible);
           notifyLifecycle({ kind: 'visibility', id, label: assembly.labelOf(id) ?? id, visible });
-          return visible ? text.visibility.shown(id) : text.visibility.hidden(id);
+          const t = botText(language).visibility;
+          return visible ? t.shown(id) : t.hidden(id);
         },
       },
       sessionControl: {
-        reloadPrefix: async () => {
+        reloadPrefix: async (language) => {
           await core.loop.reloadSystemPrefix();
-          return text.visibility.prefixReloaded(Math.max(0, core.session.records.length - 1));
+          return botText(language).visibility.prefixReloaded(Math.max(0, core.session.records.length - 1));
         },
       },
       run: {
@@ -1168,11 +1225,11 @@ export function createBot<C extends CoreConfig>(
         isPaused: () => core.bus.isPaused(),
         // 关机键。仪式在这里跑完并把逐步结果回给页面,**之后**才退进程——
         // 顺序反了的话操作员只会看到浏览器报"连接断开",不知道世界存没存上。
-        shutdown: () => beginShutdown('控制台关机键', { closeWeb: false, exit: true }),
+        shutdown: (language) => beginShutdown('控制台关机键', { closeWeb: false, exit: true, language }),
         // 标志先落盘再关机:关机途中被硬杀,启动器照样能读到标志把进程拉起来。
-        restart: () => {
+        restart: (language) => {
           requestRestart(loaded.dataDir);
-          return beginShutdown('控制台重启键', { closeWeb: false, exit: true });
+          return beginShutdown('控制台重启键', { closeWeb: false, exit: true, language });
         },
         supervised: isSupervised(),
       },
@@ -1221,8 +1278,8 @@ export function createBot<C extends CoreConfig>(
       prompts: derivePrompts(parts, assembly, contribution, cfg.timezone, promptDirs, opts.extensions?.bot !== undefined),
       // 激活/停用/重启全部热生效:槽位表按定义重建实例,core 连带重建前缀。
       worldActivation: {
-        set: (id, enabled) => (enabled ? assembly.activate(id) : assembly.deactivate(id)),
-        restart: (id) => assembly.restart(id),
+        set: (id, enabled, language) => (enabled ? assembly.activate(id, language) : assembly.deactivate(id, language)),
+        restart: (id, language) => assembly.restart(id, language),
       },
     });
   }

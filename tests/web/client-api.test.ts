@@ -98,6 +98,13 @@ describe('web client api —— 正常返回', () => {
     expect(calls[0]?.init.body).toBe('{"a":[1,2]}');
   });
 
+  it('每个请求都带界面语言头(没有印章的环境是中文)', async () => {
+    stubFetch(() => json({}));
+    await api.get('/api/x');
+    await api.post('/api/y', {});
+    for (const call of calls) expect(call.init.headers).toMatchObject({ 'x-cortico-language': 'zh' });
+  });
+
   it('fetchManifest 打的是协议规定的 manifest 路由', async () => {
     stubFetch(() => json({ protocolVersion: 1, providers: [], framework: { capabilities: {} } }));
     const m = await api.fetchManifest();

@@ -14,7 +14,7 @@ import {
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { updateJsonObject } from '../../config-file.ts';
-import { resolveLanguage, type Language } from '../../core/language.ts';
+import type { Language } from '../../core/language.ts';
 import type { ConsolePageContribution } from '../../web/shared/console-protocol.ts';
 import type { ConsolePageSource } from '../../web/console-pages.ts';
 import { providerModules, type ProviderRegistry } from '../registry.ts';
@@ -47,9 +47,12 @@ export function defaultPricing(): PriceDefinition[] {
 /** Probe budget: enough for a reasoning model to answer one word without an `incomplete` stop. */
 const PROBE_MAX_OUTPUT_TOKENS = 256;
 
+/**
+ * Every console-facing text here follows the language of the request that asked for it;
+ * `language` is therefore a parameter on each console entry point, defaulting to Chinese
+ * for callers that do not present anything to an operator.
+ */
 export class ProviderSettings {
-  /** Console language, resolved once from the deployment config and passed down as a value. */
-  private readonly language: Language;
   constructor(
     private readonly config: CoreConfig,
     private readonly registry: ProviderRegistry,
@@ -59,16 +62,11 @@ export class ProviderSettings {
     private readonly providersDir: string,
     private readonly modules: readonly ProviderModule[] = providerModules,
   ) {
-    this.language = resolveLanguage((config as { language?: unknown }).language);
     for (const [name, entry] of Object.entries(config.providers))
       config.providers[name] =
         this.modules
           .find((module) => module.id === entry.kind)
           ?.normalize?.(structuredClone(entry)) ?? entry;
-  }
-
-  private get text() {
-    return text(this.language);
   }
 
   private module(kind: string): ProviderModule {
@@ -82,19 +80,19 @@ export class ProviderSettings {
       .filter(([, entry]) => entry.kind === module.id)
       .map(([name, entry]) => ({ name, entry }));
   }
-  private declaredGroups() {
+  private declaredGroups(language: Language) {
     return this.modules.flatMap((module) =>
       this.entries(module).flatMap(({ name, entry }) =>
-        (module.config?.(name, entry, this.language) ?? []).map((group) => ({ name, group })),
+        (module.config?.(name, entry, language) ?? []).map((group) => ({ name, group })),
       ),
     );
   }
-  groups(): ConfigGroup[] {
-    return this.declaredGroups().map(({ group }) => group);
+  groups(language: Language = 'zh'): ConfigGroup[] {
+    return this.declaredGroups(language).map(({ group }) => group);
   }
 
-  values(groupId: string): ConfigValues {
-    const { name, group } = this.declaredGroups().find((value) => value.group.id === groupId)!;
+  values(groupId: string, language: Language = 'zh'): ConfigValues {
+    const { name, group } = this.declaredGroups(language).find((value) => value.group.id === groupId)!;
     const prefix = `providers.${name}.`;
     return readGroupValues(this.config, group, (path) =>
       getByPath(
@@ -104,20 +102,21 @@ export class ProviderSettings {
     );
   }
 
-  setConfig(groupId: string, values: ConfigValues): string {
-    const declared = this.declaredGroups().find((value) => value.group.id === groupId);
-    if (!declared) throw new Error(this.text.unknownGroup);
+  setConfig(groupId: string, values: ConfigValues, language: Language = 'zh'): string {
+    const S = text(language);
+    const declared = this.declaredGroups(language).find((value) => value.group.id === groupId);
+    if (!declared) throw new Error(S.unknownGroup);
     const { name, group } = declared;
-    const coerced = coerceGroupValues(group, values, this.language);
+    const coerced = coerceGroupValues(group, values, language);
     if ('error' in coerced) throw new Error(coerced.error);
     const next = structuredClone(this.config.providers[name]);
     const prefix = `providers.${name}.`;
     for (const [path, value] of Object.entries(coerced.values)) {
-      if (!path.startsWith(prefix)) throw new Error(this.text.groupOutOfScope);
+      if (!path.startsWith(prefix)) throw new Error(S.groupOutOfScope);
       setByPath(next as unknown as Record<string, unknown>, path.slice(prefix.length), value);
     }
-    this.persist(name, validateEntry(this.module(next.kind), next, this.language), this.config.activeProvider);
-    return this.text.saved;
+    this.persist(name, validateEntry(this.module(next.kind), next, language), this.config.activeProvider);
+    return S.saved;
   }
 
   /**
@@ -141,31 +140,33 @@ export class ProviderSettings {
     this.config.providerSchemaVersion = 3;
   }
 
-  save(name: string, entry: LLMProviderEntry): void {
+  save(name: string, entry: LLMProviderEntry, language: Language = 'zh'): void {
     const module = this.module(entry.kind);
     const prior = this.config.providers[name];
     if (prior && prior.kind !== entry.kind && this.modules.some((m) => m.id === prior.kind))
-      throw new Error(this.text.kindChange);
-    this.persist(name, validateEntry(module, entry, this.language), this.config.activeProvider);
+      throw new Error(text(language).kindChange);
+    this.persist(name, validateEntry(module, entry, language), this.config.activeProvider);
   }
 
   /**
    * 把某个实例设为当前端点。模型档整组归 Provider,所以启用的前提就是它自己
    * 有一份 —— 框架没有"Persona那份 baseline"可以拿来兜底了。
    */
-  activate(name: string, spec?: ModelSpec): void {
+  activate(name: string, spec?: ModelSpec, language: Language = 'zh'): void {
+    const S = text(language);
     const entry = this.config.providers[name];
-    if (!entry) throw new Error(this.text.unknownInstance);
+    if (!entry) throw new Error(S.unknownInstance);
     const requested = { ...entry, ...(spec ? { spec } : {}) };
-    if (!requested.spec) throw new Error(this.text.specRequired);
-    const next = validateEntry(this.module(entry.kind), requested, this.language);
+    if (!requested.spec) throw new Error(S.specRequired);
+    const next = validateEntry(this.module(entry.kind), requested, language);
     this.persist(name, next, name);
   }
 
   /** 删端点:它的目录整个走(config.json、密钥文件都归它)。当前端点不能删。 */
-  delete(name: string): void {
-    if (!this.config.providers[name]) throw new Error(this.text.unknownInstance);
-    if (name === this.config.activeProvider) throw new Error(this.text.deleteActive);
+  delete(name: string, language: Language = 'zh'): void {
+    const S = text(language);
+    if (!this.config.providers[name]) throw new Error(S.unknownInstance);
+    if (name === this.config.activeProvider) throw new Error(S.deleteActive);
     this.registry.invalidate(name);
     const { [name]: _dropped, ...rest } = this.config.providers;
     this.config.providers = rest;
@@ -182,11 +183,12 @@ export class ProviderSettings {
   }
 
   /** 把密钥值写进端点目录的 `.env`(同名行覆盖),并让实例重建以读到它。 */
-  setSecret(name: string, value: string): SecretStatus {
+  setSecret(name: string, value: string, language: Language = 'zh'): SecretStatus {
+    const S = text(language);
     const entry = this.config.providers[name];
-    if (!entry) throw new Error(this.text.unknownInstance);
-    if (!entry.secret) throw new Error(this.text.secretNameRequired);
-    if (!value.trim() || /\s/.test(value)) throw new Error(this.text.secretValueInvalid);
+    if (!entry) throw new Error(S.unknownInstance);
+    if (!entry.secret) throw new Error(S.secretNameRequired);
+    if (!value.trim() || /\s/.test(value)) throw new Error(S.secretValueInvalid);
     const dir = join(this.providersDir, name);
     mkdirSync(dir, { recursive: true });
     const file = join(dir, '.env');
@@ -201,11 +203,11 @@ export class ProviderSettings {
     return this.secretStatus(name, entry);
   }
 
-  private assertNewName(name: string): void {
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name)) throw new Error(this.text.nameFormat);
+  private assertNewName(name: string, language: Language): void {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name)) throw new Error(text(language).nameFormat);
     const existing = this.config.providers[name];
     // 一个没有模块认领的旧条目(被删掉的 kind)可以被同名新建覆盖;它的目录与密钥文件留用。
-    if (existing && this.modules.some((module) => module.id === existing.kind)) throw new Error(this.text.nameTaken);
+    if (existing && this.modules.some((module) => module.id === existing.kind)) throw new Error(text(language).nameTaken);
   }
 
   /** 端点目录里除 `config.json` 外还有什么(密钥、授权状态),删前给操作者看。 */
@@ -215,8 +217,8 @@ export class ProviderSettings {
     return readdirSync(dir).filter((file) => file !== 'config.json');
   }
 
-  private async probe(name: string) {
-    const S = this.text;
+  private async probe(name: string, language: Language) {
+    const S = text(language);
     const entry = this.config.providers[name];
     if (!entry) throw new Error(S.unknownInstance);
     if (!entry.spec) throw new Error(S.specRequired);
@@ -259,15 +261,15 @@ export class ProviderSettings {
   sources() {
     return this.modules.map((module) => ({
       id: `llm:${module.id}`,
-      contribute: () => this.contribute(module),
+      contribute: (language) => this.contribute(module, language),
     })) satisfies ConsolePageSource[];
   }
 
-  private contribute(module: ProviderModule): ConsolePageContribution {
-    const S = this.text;
+  private contribute(module: ProviderModule, language: Language): ConsolePageContribution {
+    const S = text(language);
     const entries = this.entries(module);
     const host: ProviderConsoleHost = {
-      language: this.language,
+      language,
       entries: () => this.entries(module),
       instance: (name) => {
         if (!this.entries(module).some((value) => value.name === name))
@@ -276,7 +278,7 @@ export class ProviderSettings {
       },
       save: (name, entry) => {
         if (entry.kind !== module.id) throw new Error(S.foreignInstance);
-        this.save(name, entry);
+        this.save(name, entry, language);
       },
     };
     const extra = module.console?.(host) ?? {};
@@ -308,7 +310,7 @@ export class ProviderSettings {
         ...(extra.panels ?? []),
       ],
       config: entries.flatMap(
-        ({ name, entry }) => module.config?.(name, entry, this.language) ?? [],
+        ({ name, entry }) => module.config?.(name, entry, language) ?? [],
       ),
       invoke: async (panel, method, args) => {
         if (panel !== 'settings') {
@@ -320,7 +322,7 @@ export class ProviderSettings {
           requestedServiceTier: null as string | null,
         };
         if (method === 'state') {
-          const localized = module.localize?.(this.language) ?? {};
+          const localized = module.localize?.(language) ?? {};
           return {
             active: this.config.activeProvider,
             reasoningTiers: localized.reasoningTiers ?? module.reasoningTiers,
@@ -355,24 +357,24 @@ export class ProviderSettings {
         if (typeof body.name !== 'string') throw new Error(S.nameRequired);
         const name = body.name;
         if (method === 'create') {
-          this.assertNewName(name);
+          this.assertNewName(name, language);
           this.save(name, {
             kind: module.id,
             baseUrl: String(body.baseUrl || module.defaultBaseUrl || ''),
             pricing: defaultPricing(),
-          });
+          }, language);
           return { ok: true };
         }
         const entry = this.config.providers[name];
         if (!entry || entry.kind !== module.id) throw new Error(S.foreignInstance);
-        if (method === 'activate') this.activate(name, body.spec as ModelSpec | undefined);
+        if (method === 'activate') this.activate(name, body.spec as ModelSpec | undefined, language);
         else if (method === 'save') {
           if (!body.spec || typeof body.spec !== 'object' || Array.isArray(body.spec))
             throw new Error(S.specRequired);
           const next: LLMProviderEntry = {
             ...entry,
             spec: body.spec as ModelSpec,
-            pricing: validatePrices(body.pricing, this.language),
+            pricing: validatePrices(body.pricing, language),
             serviceTier: typeof body.serviceTier === 'string' ? body.serviceTier : entry.serviceTier,
           };
           if (typeof body.baseUrl === 'string') next.baseUrl = body.baseUrl.trim();
@@ -386,22 +388,22 @@ export class ProviderSettings {
               throw new Error(S.optionsObject);
             next.options = body.options as Record<string, unknown>;
           }
-          this.save(name, next);
+          this.save(name, next, language);
         } else if (method === 'delete') {
-          this.delete(name);
+          this.delete(name, language);
         } else if (method === 'duplicate') {
           if (typeof body.as !== 'string') throw new Error(S.nameRequired);
-          this.assertNewName(body.as);
-          this.save(body.as, structuredClone(entry));
+          this.assertNewName(body.as, language);
+          this.save(body.as, structuredClone(entry), language);
         } else if (method === 'setSecret') {
           if (typeof body.value !== 'string') throw new Error(S.secretValueInvalid);
-          return { secretConfigured: this.setSecret(name, body.value) };
+          return { secretConfigured: this.setSecret(name, body.value, language) };
         } else if (method === 'models') {
           const instance = this.registry.resolve(name);
           if (!instance.listModels) throw new Error(S.modelsUnsupported);
           return { models: await instance.listModels() };
         } else if (method === 'probe') {
-          return this.probe(name);
+          return this.probe(name, language);
         } else if (method === 'extras') {
           return { files: this.directoryExtras(name) };
         } else throw new Error(S.unknownMethod);

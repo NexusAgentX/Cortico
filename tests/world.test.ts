@@ -27,6 +27,9 @@ class Probe implements World {
   async stop() { this.stopped++; this.host = null; }
 }
 
+/** 缺失清单的中文形态:reason 按语言给,断言时取中文那份。 */
+const missingOf = (assembly: WorldAssembly) => assembly.missing.map((m) => ({ ...m, reason: m.reason('zh') }));
+
 function probeDefinition(id: string, patch: Partial<WorldDefinition<ProbeSection>> = {}): WorldDefinition<ProbeSection> {
   return {
     id,
@@ -109,7 +112,7 @@ describe('槽位表', () => {
     const { assembly } = assemblyOf([probeDefinition('a'), probeDefinition('b')], ['a', 'b', { id: 'ghost', label: '幽灵', reason: '没装' }]);
     expect(assembly.mounted.map((m) => m.id)).toEqual(['a', 'b']);
     expect(assembly.slots.map((s) => [s.id, s.mounted, s.declared])).toEqual([['a', true, true], ['b', true, true]]);
-    expect(assembly.missing).toEqual([{ id: 'ghost', label: '幽灵', reason: '没装' }]);
+    expect(missingOf(assembly)).toEqual([{ id: 'ghost', label: '幽灵', reason: '没装' }]);
     expect(assembly.labelOf('a')).toBe('a 探针');
     expect(() => assembly.slot('ghost')).toThrow('未知 World');
   });
@@ -270,7 +273,8 @@ describe('构造隔离与生命周期', () => {
     const { assembly } = assemblyOf([probeDefinition('a'), boom, probeDefinition('extra')], ['a', 'boom']);
     expect(assembly.mounted.map((m) => m.id)).toEqual(['a']);
     expect(assembly.slots.map((s) => s.id)).toEqual(['a', 'extra']);
-    expect(assembly.missing).toEqual([{ id: 'boom', label: 'boom 探针', declared: true, reason: '构造失败: 端口被占' }]);
+    expect(missingOf(assembly)).toEqual([{ id: 'boom', label: 'boom 探针', declared: true, reason: '构造失败: 端口被占' }]);
+    expect(assembly.missing[0].reason('en')).toBe('Construction failed: 端口被占');
     expect(() => assembly.slot('boom')).toThrow('未知 World');
   });
 
@@ -323,7 +327,7 @@ describe('工具名全局唯一', () => {
     );
     expect(assembly.mounted.map((m) => m.id)).toEqual(['a', 'c']);
     expect(assembly.slots.map((s) => s.id)).toEqual(['a', 'c']);
-    expect(assembly.missing).toEqual([{ id: 'b', label: 'b 探针', declared: true, reason: '工具名与 a 探针 撞名,拒绝挂载: shared' }]);
+    expect(missingOf(assembly)).toEqual([{ id: 'b', label: 'b 探针', declared: true, reason: '工具名与 a 探针 撞名,拒绝挂载: shared' }]);
   });
 
   it('未激活的槽位不参与:同名只在两者都要挂载时才算撞', async () => {
@@ -368,7 +372,7 @@ describe('工具名全局唯一', () => {
     );
     expect(assembly.mounted.map((m) => m.id)).toEqual(['a', 'c']);
     expect(assembly.slots.map((s) => s.id)).toEqual(['a', 'c']);
-    expect(assembly.missing).toEqual([{ id: 'b', label: 'b 探针', declared: true, reason: '工具名已被 Core 或 Persona 占用,拒绝挂载: read_file' }]);
+    expect(missingOf(assembly)).toEqual([{ id: 'b', label: 'b 探针', declared: true, reason: '工具名已被 Core 或 Persona 占用,拒绝挂载: read_file' }]);
   });
 
   it('保留名:激活、重启、预建都拒', async () => {

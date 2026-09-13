@@ -1,14 +1,19 @@
 /**
- * Console language: a deployment fact, read once per process.
+ * Console language: a property of the browser session, not of the process.
  *
- * Precedence: `language` in `config.json` when it names a known language, then the
- * `CORTICO_LANGUAGE` environment variable, then the system locale, where anything that is
- * not Chinese counts as English. The value reaches IO worlds through `WorldContext`
- * and console extensions through `ConsolePanelContext`; each owner decides whether to carry
- * a second language at all, and a missing translation falls back to the owner's Chinese.
+ * The process resolves a default once: `language` in `config.json` when it names a known
+ * language, then the `CORTICO_LANGUAGE` environment variable, then the system locale, where
+ * anything that is not Chinese counts as English. The default is stamped on `<html lang>`;
+ * the browser may override it and sends its choice with every request (see
+ * `CONSOLE_LANGUAGE_HEADER` / `CONSOLE_LANGUAGE_QUERY` in the console protocol). Every
+ * server-side text meant for the console is rendered per request: `World.console(language)`,
+ * `Persona.console(language)`, provider config groups, receipts and validation messages.
+ * Panels read `ConsolePanelContext.language`. Each owner decides whether to carry a second
+ * language at all; a missing translation falls back to the owner's Chinese.
  *
- * Model-facing text is outside this value's reach: prompt templates and persona content
- * carry their own language, and the core's own context markers are fixed English.
+ * Model-facing text is outside this value's reach and is fixed English: prompt templates a
+ * World ships, tool receipts, event text and the core's own context markers. Persona content
+ * carries whatever language its author wrote.
  */
 export type Language = 'zh' | 'en';
 

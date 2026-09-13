@@ -64,7 +64,6 @@ export function fakeWorldContext<S extends WorldSection>(def: WorldDefinition<S>
     id: def.id,
     cfg,
     timezone: CORE_DEFAULTS.timezone,
-    language: opts.language ?? 'zh',
     botName: CORE_DEFAULTS.displayName,
     botDir,
     packageDir: opts.packageDir ?? botDir,
@@ -179,7 +178,7 @@ export async function dryMountWorld(def: WorldDefinition<WorldSection>, opts: Wo
 
   if (typeof world.console === 'function') {
     try {
-      const decl = world.console();
+      const decl = world.console(opts.language ?? 'zh');
       const panels = decl.panels ?? [];
       const panelIds = new Set<string>();
       for (const panel of panels) {
