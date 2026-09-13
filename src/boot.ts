@@ -1,47 +1,34 @@
 /**
- * 与启动器(`bin/cortico.mjs`)之间的那点协议:这次退出要不要被拉起来。
- *
- * 两条证据,启动器认任一条:
- *
- *  - **IPC 消息**。它是主路——启动器由此不必知道 data 目录在哪,也就不必在起进程之前
- *    先跑一趟完整的部署解析去问。
- *  - **标志文件**。它是兜底:请求重启的第一步就落盘,消息发出前被硬杀也还认得出。
- *
- * 裸 `pnpm start` 起的进程没有 IPC 通道,那时只落文件。
- *
- * 发消息前先看 `CORTICO_SUPERVISED`,**不能只看 `process.send` 在不在**:别的宿主也可能
- * 用 fork 起我们并把那条通道用作自己的协议(vitest 的 worker 就是),往里塞我们的消息会
- * 把对方的反序列化打死。那个变量是我们的启动器设的,认它才认得准。
+ * 向 bin/cortico.mjs 请求重启。先写标志文件，再发 IPC 消息，文件作为通知中断时的 fallback。
+ * 仅在 CORTICO_SUPERVISED 启用时使用 IPC；其他宿主可能将同一通道用于自己的协议。
  */
 import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const RESTART_FLAG_FILE = '.restart-request';
 
-/** 启动器起进程时设这个变量;控制台的重启键靠它判断「退出后会不会被拉起来」。 */
+/** 表示进程由支持重启的启动器监管。 */
 export const SUPERVISED_ENV = 'CORTICO_SUPERVISED';
 
-/** 想重启。与 bin/cortico.mjs 的 `RESTART_MESSAGE` 是同一个字面量。 */
+/** 与 bin/cortico.mjs 的 RESTART_MESSAGE 保持一致。 */
 export const RESTART_MESSAGE = 'cortico:restart';
-/** 报出自己的 data 目录,好让启动器找得到兜底的标志文件。同上,字面量两边对齐。 */
+/** 上报 data 目录；与 bin/cortico.mjs 的 READY_MESSAGE 保持一致。 */
 export const READY_MESSAGE = 'cortico:ready';
 
 export function isSupervised(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[SUPERVISED_ENV] === '1' || env[SUPERVISED_ENV] === 'true';
 }
 
-/** 只往我们自己的启动器发消息;别人用 fork 起我们时那条通道不归我们。 */
 function notifyLauncher(message: { type: string; dataDir?: string }, env = process.env): void {
   if (!isSupervised(env)) return;
   process.send?.(message);
 }
 
-/** 起来之后报一次 data 目录。没被启动器管着时什么都不做。 */
 export function announceDataDir(dataDir: string, env = process.env): void {
   notifyLauncher({ type: READY_MESSAGE, dataDir }, env);
 }
 
-/** 落下重启标志并告诉启动器。随后的规范关机退出进程,启动器把它拉回来。 */
+/** 请求重启后，由调用方执行关机。 */
 export function requestRestart(dataDir: string, env = process.env): void {
   writeFileSync(join(dataDir, RESTART_FLAG_FILE), new Date().toISOString() + '\n', 'utf8');
   notifyLauncher({ type: RESTART_MESSAGE }, env);
@@ -53,7 +40,7 @@ export function consumeBootFlags(dataDir: string): void {
     try {
       rmSync(restartFlag);
     } catch {
-      // 启动器才是这个标志的权威消费者;残留一份对裸 pnpm start 无害。
+      // 启动器也会删除此标志；直接启动时残留文件不触发重启。
     }
   }
 }

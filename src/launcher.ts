@@ -1,9 +1,6 @@
 /**
- * 通用启动器:`pnpm start -- <bot>`。
- *
- * 启动器从一份部署目录下的 `index.ts` 默认导出加载 `BotDefinition`。部署根由
- * src/paths.ts 解析(默认 `<主仓库>/deployments`)。bot 选择属于启动器的部署配置,
- * 不属于Persona。
+ * 读取部署的 deployment.json，加载其 bot 字段指定的 BotDefinition。
+ * 部署根由 src/paths.ts 解析，代码包来自 bots/ 或已安装的 bot 扩展。
  */
 import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
@@ -33,9 +30,7 @@ export function listBots(): string[] {
 }
 
 /**
- * 一份部署 → 它引用的代码包 → 包里的 `BotDefinition`。
- * 部署与包是两个目录:同一个包可以背好几份部署(直播一份、测试一份)。
- * 包在仓内 `bots/` 或装在 `extensions/` 下;`botPackage` 只在后一种情况给出。
+ * botPackage 仅在部署引用扩展 bot 包时返回。
  */
 async function loadBotDefinition(
   name: string,
@@ -43,7 +38,7 @@ async function loadBotDefinition(
   const deployDir = deploymentDir(name);
   const manifest = readDeploymentManifest(name);
   if (!manifest) {
-    throw new Error(`${resolve(deployDir, 'deployment.json')} 缺失或没有 bot 字段(它说这份部署用哪个代码包)`);
+    throw new Error(`${resolve(deployDir, 'deployment.json')} 缺失或没有 bot 字段`);
   }
   const location = locateBotPackage(repoRoot(), manifest.bot, packageDir(manifest.bot));
   const definition = await importBotDefinition(location, {
@@ -73,7 +68,7 @@ function pickBotName(): string {
   const fromArgv = process.argv.slice(2).find((a) => !a.startsWith('-'));
   const name = fromArgv || process.env.CORTICO_BOT || '';
   const available = listBots();
-  if (available.length === 0) throw new Error(`${deploymentRoot()} 下没有可启动的 bot(每个 bot 需要一个 index.ts)`);
+  if (available.length === 0) throw new Error(`${deploymentRoot()} 下没有含 deployment.json 的部署目录`);
   if (!name) {
     if (available.length === 1) return available[0];
     throw new Error(`请指定要启动哪个 bot:npm start -- <${available.join(' | ')}>`);
@@ -93,9 +88,7 @@ async function main(): Promise<void> {
   const botName = pickBotName();
   const { definition: loadedDefinition, deployDir: botDir, pkgDir, botPackage } = await loadBotDefinition(botName);
 
-  // World 实现一张表:仓内目录在前,扩展装的在后,同 id 时仓内的赢;provider 同理。
-  // provider 要在装配(`createBot`)之前进注册表,那时端点表才解析得出扩展的 kind。
-  // bot 包已经在上面 import 过,这里只对账。
+  // 扩展 provider 必须在 createBot 解析端点配置前注册。
   const extensions = await loadExtensions(repoRoot(), {
     reserved: BUILTIN_WORLDS.map((m) => m.id),
     reservedProviders: providerModules.map((m) => m.id),
@@ -107,7 +100,6 @@ async function main(): Promise<void> {
   const loaded = loadDeployment(definition, botDir, repoRoot(), pkgDir, providersRoot());
   const cfg = loaded.config;
 
-  // 启动器靠这一条知道兜底的重启标志落在哪,于是不必在起进程之前先跑一趟部署解析去问。
   announceDataDir(loaded.dataDir);
 
   // 日志落盘门槛:--log-level=<级别> > CORTICO_LOG > config.json
@@ -123,7 +115,6 @@ async function main(): Promise<void> {
   // 重启标志必须在装配与 session 加载之前处理
   consumeBootFlags(loaded.dataDir);
 
-  // 只有活跃 provider 声明了密钥名才硬性要求它存在:纯本地部署不被云端 key 卡死。
   const activeProvider = cfg.providers?.[cfg.activeProvider];
   if (!activeProvider) {
     console.error(
@@ -140,8 +131,7 @@ async function main(): Promise<void> {
 
   const bot = createBot(loaded, definition, { extensions });
 
-  // 启动即暂停(启动器默认这么起):在主循环开跑前把总线按住,不投递唤醒、
-  // 事件照常落库排队,去控制台点"继续"才上线。CORTICO_START_PAUSED=1 或 --paused 触发。
+  // 必须在启动主循环前暂停，避免首批事件提前投递。
   const startPaused =
     process.env.CORTICO_START_PAUSED === '1' ||
     process.env.CORTICO_START_PAUSED === 'true' ||
@@ -155,7 +145,7 @@ async function main(): Promise<void> {
     console.log(`  控制台:    http://127.0.0.1:${port}/`);
   }
   for (const slot of bot.assembly.slots) {
-    console.log(slot.mounted ? `  World:    ${slot.id}` : `  World:    ${slot.id} · 未激活(控制台「World」页可激活)`);
+    console.log(slot.mounted ? `  World:    ${slot.id}` : `  World:    ${slot.id} · 未激活`);
   }
   for (const entry of bot.assembly.missing) {
     console.log(`  World:    ${entry.id} ⚠ 未装上 — ${entry.reason}`);
@@ -169,24 +159,23 @@ async function main(): Promise<void> {
   }
   console.log(`  主模型:    ${bot.core.mainSessionSpec().model}`);
   if (startPaused) {
-    console.log('  ⏸ 已暂停启动: 事件照常落库排队,未投递。去控制台点"继续"才开始处理。');
+    console.log('  ⏸ 已暂停');
   }
   console.log('');
 
-  // 自动打开浏览器(启动器默认这么起,像 ComfyUI):此刻 web server 已 listening。
   const openBrowserFlag =
     process.env.CORTICO_OPEN_BROWSER === '1' ||
     process.env.CORTICO_OPEN_BROWSER === 'true' ||
     process.argv.includes('--open');
   if (openBrowserFlag && port !== null) openBrowser(`http://127.0.0.1:${port}/`);
 
-  // 外层收尾期限须覆盖引擎 shutdown RPC 与 MC 服务端存档的预算。分步期限由 bot.shutdown() 管理，此期限处理整个编排未返回的情况。
+  // 此时限覆盖整个关机流程；各步骤的时限由 bot.shutdown() 管理。
   const SHUTDOWN_GRACE_MS = 35_000;
   let shuttingDown = false;
   const shutdown = async (sig: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`\n收到${sig},正在按次序收尾…(session 已实时落盘)`);
+    console.log(`\n收到 ${sig}，正在关机…`);
     let code = 0;
     try {
       const report = await Promise.race([
@@ -194,7 +183,7 @@ async function main(): Promise<void> {
         new Promise<null>((r) => setTimeout(() => r(null), SHUTDOWN_GRACE_MS)),
       ]);
       if (!report) {
-        console.log(`  ⚠ 收尾超过 ${SHUTDOWN_GRACE_MS / 1000} 秒仍未回来,强制退出。`);
+        console.log(`  关机超过 ${SHUTDOWN_GRACE_MS / 1000} 秒，强制退出。`);
         code = 1;
       } else {
         for (const step of report.steps) {
@@ -211,7 +200,7 @@ async function main(): Promise<void> {
         if (!report.complete) code = 1;
       }
     } catch (e) {
-      console.error('收尾出错:', e instanceof Error ? e.message : e);
+      console.error('关机失败:', e instanceof Error ? e.message : e);
       code = 1;
     } finally {
       process.exit(code);
@@ -224,11 +213,9 @@ async function main(): Promise<void> {
   if (process.platform === 'win32') {
     process.on('SIGBREAK', () => void shutdown('SIGBREAK(Ctrl+Break)'));
   }
-  // 主进程的兜底:未捕获异常带栈落盘后走关机仪式(默认行为是不存档直接退出);
-  // 未处理的拒绝只记不退——主循环与 World 各有自己的失败路径。
   const processLog = bot.core.runlog.logger('process');
   process.on('uncaughtException', (err) => {
-    processLog.emit('error', '未捕获异常,按关机仪式退出', { event: 'uncaught-exception', err });
+    processLog.emit('error', '未捕获异常，正在关机', { event: 'uncaught-exception', err });
     void shutdown('uncaughtException');
   });
   process.on('unhandledRejection', (reason) => {
