@@ -45,8 +45,8 @@ const zh = {
 
 const en: typeof zh = {
   tagline: 'An event-driven persona bot',
-  groupPersonas: 'Personas',
-  groupWorlds: 'Worlds',
+  groupPersonas: 'Persona',
+  groupWorlds: 'World',
   moduleInstancesAria: 'World instances',
   navAria: 'Console navigation',
   settingsAria: 'Open settings',
