@@ -1,6 +1,6 @@
 # 控制台
 
-Owner: `src/web/server.ts`, `src/web/shared/console-protocol.ts`, `src/web/client/main.ts`
+Owner: `src/web/server.ts`, `src/web/shared/console-protocol.ts`, `src/web/client/main.ts`, `src/web/client/core/language.ts`, `src/web/client/features/settings/general.ts`
 
 每份部署起一个本机 Web 控制台:`http://127.0.0.1:<web.port>/`,端口被占时顺延(最多五次)。
 只绑 `127.0.0.1`;WebSocket 升级时跨站 Origin 直接断开。
