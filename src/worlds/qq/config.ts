@@ -32,7 +32,7 @@ export const QQ_CONFIG_GROUP: ConfigGroup = {
   schema: {
     type: 'object',
     title: 'QQ · 辅助视觉',
-    description: '本 World 自带的小 VLM:图片描述从这里来。描述会落进事件库,日后 grep 得到——所以它是记忆,不只是当场看图。',
+    description: '图片描述写入事件库。',
     properties: {
       'worlds.qq.vision.enabled': {
         type: 'boolean',
@@ -64,7 +64,8 @@ export const QQ_CONFIG_GROUP: ConfigGroup = {
         multipleOf: 100,
         'x-suffix': 'ms',
         'x-hot': true,
-        description: '消息渲染前愿意等这么久做"这张图是不是见过"的判定;命中就把结果直接写进消息,不走占位+异步事件。',
+        description: '消息渲染前检查图片是否重复的最长等待时间。命中时引用已有图片，下载失败时标记失败；'
+          + '新图片或超时先显示占位，识图结果另行投递。',
       },
       'worlds.qq.vision.maxImageBytes': {
         type: 'integer',
