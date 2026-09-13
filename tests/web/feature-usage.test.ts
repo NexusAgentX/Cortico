@@ -813,12 +813,15 @@ describe('用量页挂载', () => {
     expect(root.textContent).toContain('2026-08-01 ~ 2026-08-02 · 2 桶');
   });
 
-  it('空 series → 图里铺空态而不是一张空白画布', async () => {
+  it('空 series → 读数卡整排换成占位句,图里铺空态而不是一张空白画布', async () => {
     stubFetch({ '/api/usage': { currency: 'USD', bucket: 'day', from: null, to: null, series: [], totals: null, byRole: [], byModel: [] } });
     const { ctx, root } = await mkCtx({ usage: true });
     const { mountUsage } = (await import(USAGE)) as Any;
     mountUsage(ctx);
     await flush();
+    // 一张卡都不画:一排 0 读起来像数据坏了
+    expect(root.findAll('stat').length).toBe(0);
+    expect(root.find('usagecards')!.findAll('placeholder').length).toBe(1);
     expect(root.findAllTag('svg').length).toBe(0);
     expect(root.textContent).toContain('这个范围内没有调用记录');
     expect(root.textContent).toContain('暂无成本数据');
