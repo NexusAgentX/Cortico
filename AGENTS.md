@@ -138,7 +138,44 @@ deliberately when it becomes a tool.
   additive step and its migration are two commits.
 - Stage by explicit path. Other sessions may have uncommitted work in this tree, so
   `git add -A`, `git add .` and `git commit -a` are never used.
-- Subject line says what changed and why; bullets carry what the diff does not show (the
-  rejected alternative, the invariant relied on, what the tests now cover).
 - Committing is not pushing. Push, open pull requests or rewrite published history only when
   asked.
+
+### Message format
+
+Conventional Commits, `<type>(<scope>): <description>`, type and scope always lowercase ASCII.
+Commits made before this rule do not follow it and are not rewritten.
+
+| Type | Covers |
+|---|---|
+| `feat` | a capability the operator, the Persona or an extension author did not have |
+| `fix` | wrong behavior; the body names the root cause and what proves it gone |
+| `refactor` | same behavior, different shape: renames, extractions, deletions |
+| `perf` | measured; the body carries the before and the after |
+| `docs` | `docs/`, a README, AGENTS.md, PHILOSOPHY.md, or comments alone |
+| `test` | tests alone |
+| `build` | package.json, the lockfile, tsconfig, bundling |
+| `ci` | `.github/` |
+| `chore` | what the list above misses and a reader needs nothing from; rare |
+| `revert` | subject repeats the reverted subject, body is `This reverts commit <sha>.` |
+
+The scope is the unit the change lives in, written as its path with `src/` dropped: `core`,
+`worlds/pvz`, `providers/grok`, `extensions`, `bots/cortiv`, `console` for `src/web/`. A
+one-file change may use the file's own name (`package.json`, `ci.yml`). Omit the scope only for
+a repository-wide change; a commit that wants two scopes is two commits.
+
+The description says what changed and why, under 72 characters for the whole subject line, no
+trailing period. Its language is free; the type and the scope stay English. Body bullets carry
+what the diff does not show: the rejected alternative, the invariant relied on, what the tests
+now cover.
+
+A change to an on-disk layout, to a config key or to the meaning of already written content
+takes a `!` before the colon and a `BREAKING CHANGE:` footer naming the migration that ships
+with it.
+
+```
+feat(core)!: hardTokens moves to the Core config
+
+BREAKING CHANGE: persona.hardTokens is read from core.hardTokens. scripts/migrate-hard-tokens.ts
+rewrites a deployment's config in place; dry run by default, backup before writing.
+```
