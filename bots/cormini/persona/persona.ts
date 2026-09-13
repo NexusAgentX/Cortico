@@ -17,6 +17,7 @@ import { existsSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'node
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderSections, renderTemplate } from 'cortico/core/template.ts';
+import { pick, type Language } from 'cortico/core/language.ts';
 import { HANDOFF_NOTE_TYPE, handoffNoteStamp, renderHandoffNote } from './handoffNote.ts';
 import { saveBlobTool } from './blobs.ts';
 import { BLOBS_DIR, GitWorkspaceMemory, type WorkspaceBlobStore } from './memory.ts';
@@ -153,6 +154,40 @@ export interface CorminiOptions {
   blobsDir?: string;
 }
 
+/** 控制台文案,两种语言各一张表;`en: typeof zh` 由 tsc 保证键集一致。 */
+const CONSOLE_TEXT = {
+  zh: {
+    orientation: 'Persona的存在方式与元认知说明。',
+    constitution: '宪法:长期原则。这份文件她自己也会改——编辑前留意乐观锁提示。',
+    memoryNote: '记忆约定:她的档案怎么存、什么时候会自动浮现。',
+    workspaceLabel: '工作区(她自己写的记忆文件)',
+    workspaceNote: '宪法之外的全部工作区文件不可恢复地删除;宪法与人格检查点不动',
+    workspaceStat: (n: number) => `${n}个文件(宪法之外)`,
+    workspaceCleared: (n: number) => `已删除 ${n} 个工作区文件;宪法未动`,
+    firstTurnUser: '首轮·用户输入',
+    firstTurnUserDesc: '合成首轮对话的 user 消息。与回复任一为空则整轮不注入。',
+    firstTurnThinking: '首轮·思维链',
+    firstTurnThinkingDesc: '合成首轮 assistant 的思维链(reasoning_content);为空则该轮不带。注:openai-responses-compat 方言不回传思维链,这段在该类端点上不出线。',
+    firstTurnReply: '首轮·回复',
+    firstTurnReplyDesc: '合成首轮对话的 assistant 回复正文。',
+  },
+  en: {
+    orientation: 'How the Persona exists and its metacognition notes.',
+    constitution: 'Constitution: long-term principles. She edits this file herself; watch the optimistic-lock notice before editing.',
+    memoryNote: 'Memory conventions: how her files are stored and when they surface on their own.',
+    workspaceLabel: 'Workspace (memory files she wrote herself)',
+    workspaceNote: 'Every workspace file except the constitution is deleted irrecoverably; the constitution and persona checkpoints are untouched',
+    workspaceStat: (n: number) => `${n} file${n === 1 ? '' : 's'} (besides the constitution)`,
+    workspaceCleared: (n: number) => `Deleted ${n} workspace file${n === 1 ? '' : 's'}; the constitution is untouched`,
+    firstTurnUser: 'First turn · user input',
+    firstTurnUserDesc: 'The user message of the synthesized first turn. When either this or the reply is empty, the whole turn is not injected.',
+    firstTurnThinking: 'First turn · reasoning',
+    firstTurnThinkingDesc: 'The reasoning (reasoning_content) of the synthesized first assistant turn; empty = the turn carries none. The openai-responses-compat dialect does not return reasoning, so this part never goes on the wire for such endpoints.',
+    firstTurnReply: 'First turn · reply',
+    firstTurnReplyDesc: 'The assistant reply text of the synthesized first turn.',
+  },
+};
+
 export class Cormini implements Persona {
   readonly memoryDir: string;
   protected readonly caps: { soft: number; hard: number };
@@ -234,47 +269,49 @@ export class Cormini implements Persona {
    * Persona自报的控制面:只有两份静态前缀源——ORIENTATION 与宪法。
    * 它们是"这个人格是怎样的"的文本,归Persona卡;
    * 模型档位/provider 是部署的事,走框架的 /api/models,不在这里。
+   * 文案按 `language`(这次请求的界面语言);key、路径与清除动作不随语言变。
    */
-  console(): PersonaConsoleDecl {
+  console(language: Language = 'zh'): PersonaConsoleDecl {
+    const t = pick(language, CONSOLE_TEXT);
     return {
       promptDocs: [
         {
           key: 'orientation',
           title: 'ORIENTATION',
-          description: 'Persona的存在方式与元认知说明。',
+          description: t.orientation,
           path: this.orientationSource(),
           ...(this.orientationOverrideFile ? { deploymentPath: this.orientationOverrideFile } : {}),
         },
         {
           key: 'constitution',
           title: 'CONSTITUTION',
-          description: '宪法:长期原则。这份文件她自己也会改——编辑前留意乐观锁提示。',
+          description: t.constitution,
           path: join(this.memoryDir, CONSTITUTION_FILE),
         },
         ...(this.memoryNoteFile()
           ? [{
               key: 'memoryNote',
               title: 'MEMORY',
-              description: '记忆约定:她的档案怎么存、什么时候会自动浮现。',
+              description: t.memoryNote,
               path: this.memoryNoteFile() as string,
             }]
           : []),
-        ...this.firstTurnDocs(),
+        ...this.firstTurnDocs(language),
       ],
       // 工作区记忆跨场保留，但属于“清除所有数据”的范围。宪法由人格检查点管理，不随数据清除。
       storage: [
         {
           key: 'workspace',
-          label: '工作区(她自己写的记忆文件)',
+          label: t.workspaceLabel,
           kind: 'disk',
           location: 'workspace/',
           danger: true,
-          note: '宪法之外的全部工作区文件不可恢复地删除;宪法与人格检查点不动',
-          stat: () => `${this.workspaceFiles().length}个文件(宪法之外)`,
+          note: t.workspaceNote,
+          stat: () => t.workspaceStat(this.workspaceFiles().length),
           clear: () => {
             const files = this.workspaceFiles();
             for (const f of files) rmSync(join(this.memoryDir, f), { force: true });
-            return `已删除 ${files.length} 个工作区文件;宪法未动`;
+            return t.workspaceCleared(files.length);
           },
         },
       ],
@@ -426,26 +463,27 @@ export class Cormini implements Persona {
   }
 
   /** 首轮对话三份源文件的控制台声明(设置页「首轮对话」经 /api/prompts 读写)。 */
-  protected firstTurnDocs(): PromptDocDecl[] {
+  protected firstTurnDocs(language: Language = 'zh'): PromptDocDecl[] {
     const dir = this.firstTurnDir;
     if (!dir) return [];
+    const t = pick(language, CONSOLE_TEXT);
     return [
       {
         key: 'firstTurn.user',
-        title: '首轮·用户输入',
-        description: '合成首轮对话的 user 消息。与回复任一为空则整轮不注入。',
+        title: t.firstTurnUser,
+        description: t.firstTurnUserDesc,
         path: join(dir, FIRST_TURN_FILES.user),
       },
       {
         key: 'firstTurn.thinking',
-        title: '首轮·思维链',
-        description: '合成首轮 assistant 的思维链(reasoning_content);为空则该轮不带。注:openai-responses-compat 方言不回传思维链,这段在该类端点上不出线。',
+        title: t.firstTurnThinking,
+        description: t.firstTurnThinkingDesc,
         path: join(dir, FIRST_TURN_FILES.thinking),
       },
       {
         key: 'firstTurn.reply',
-        title: '首轮·回复',
-        description: '合成首轮对话的 assistant 回复正文。',
+        title: t.firstTurnReply,
+        description: t.firstTurnReplyDesc,
         path: join(dir, FIRST_TURN_FILES.reply),
       },
     ];

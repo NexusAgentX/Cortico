@@ -25,9 +25,9 @@ import type { SessionStats } from '../core/sessions.ts';
 import type { UsageAggregate, UsageBucketOption } from '../core/cost.ts';
 import { estimateMessagesTokens } from '../core/util.ts';
 import { coerceGroupValues } from '../core/config-schema.ts';
-import { pick, systemLanguage, type Language } from '../core/language.ts';
+import { isLanguage, pick, systemLanguage, type Language } from '../core/language.ts';
 
-/** 服务端直接回给操作者的几句话:运行控制回执与关机账的总结行。API 协议错误不在此列。 */
+/** 服务端直接回给操作者的几句话:运行控制回执与关机账的总结行,按请求的界面语言。API 协议错误不在此列。 */
 const SERVER_TEXT = {
   zh: {
     paused: '已暂停:事件照常落库排队,不投递唤醒',
@@ -58,7 +58,8 @@ import { logPredicate, readRunsIndex, readTailRecordsWhere } from './files.ts';
 import { ConsoleAssets, ConsolePageRegistry, type ConsolePageSource } from './console-pages.ts';
 import { EXTENSION_ASSET_PREFIX, extensionAssetSegment, type ExtensionConsoleAsset } from '../extensions/manifest.ts';
 import {
-  CONSOLE_LAMPS_ROUTE, CONSOLE_PROTOCOL_VERSION, isBinaryResult, isFileResult,
+  CONSOLE_LAMPS_ROUTE, CONSOLE_LANGUAGE_HEADER, CONSOLE_LANGUAGE_QUERY, CONSOLE_PROTOCOL_VERSION,
+  isBinaryResult, isFileResult,
   type ConsoleFileResult, type ConsoleStream,
 } from './shared/console-protocol.ts';
 import {
@@ -243,8 +244,8 @@ export interface WebAppShutdownReport {
 /** World 对 agent 的可见性(热开关;不影响 World 自身运行) */
 export interface WebAppWorldVisibilityDeps {
   state(): { visibility: Record<string, boolean>; driftedWorlds: string[] };
-  /** 返回一句结果描述 */
-  set(id: string, visible: boolean): string;
+  /** 返回一句结果描述,按 `language` */
+  set(id: string, visible: boolean, language: Language): string;
 }
 
 /**
@@ -252,10 +253,10 @@ export interface WebAppWorldVisibilityDeps {
  * 重建实例并挂进/撤出 core。未知 id 或前置检查失败抛错,信息原样给操作者。
  */
 export interface WebAppWorldActivationDeps {
-  /** 激活或停用;返回一句结果描述。 */
-  set(id: string, enabled: boolean): Promise<string>;
-  /** 停下当前实例、按定义重建并重新启动;返回一句结果描述。 */
-  restart(id: string): Promise<string>;
+  /** 激活或停用;返回一句结果描述,按 `language`。 */
+  set(id: string, enabled: boolean, language: Language): Promise<string>;
+  /** 停下当前实例、按定义重建并重新启动;返回一句结果描述,按 `language`。 */
+  restart(id: string, language: Language): Promise<string>;
 }
 
 /**
@@ -297,10 +298,12 @@ export interface PrefixSegmentView {
 }
 
 export interface WebAppPromptDeps {
-  list(): PromptDocument[] | Promise<PromptDocument[]>;
-  write(key: string, content: string, baseRevision?: string): string;
+  /** 标题与说明按 `language`;key、内容与 revision 不随语言变。 */
+  list(language: Language): PromptDocument[] | Promise<PromptDocument[]>;
+  /** 回执按 `language`。`baseRevision` 过期时抛 `PromptRevisionConflict`,控制台据此回 409。 */
+  write(key: string, content: string, baseRevision: string | undefined, language: Language): string;
   /** 删掉 bot 侧覆盖文件,这份模板回到 World 自带的默认。只对 `origin` 为 `bot` 的模板有事可做。 */
-  reset?(key: string): string;
+  reset?(key: string, language: Language): string;
   /**
    * 整条前缀的分段视图,**现拼**——不需要活 session。
    *
@@ -327,8 +330,13 @@ export interface WebAppToolSchemasDeps {
 }
 
 export interface WebAppSessionControlDeps {
-  /** 重读所有前缀源，只替换当前 session 的 system 消息。 */
-  reloadPrefix(): Promise<string>;
+  /** 重读所有前缀源，只替换当前 session 的 system 消息。回执按 `language`。 */
+  reloadPrefix(language: Language): Promise<string>;
+}
+
+/** `WebAppPromptDeps.write` 在 `baseRevision` 过期时抛的错;控制台回 409 并标 conflict。 */
+export class PromptRevisionConflict extends Error {
+  override readonly name = 'PromptRevisionConflict';
 }
 
 /**
@@ -384,12 +392,12 @@ export interface WebAppUsageDeps {
  * 声明来自 core / Persona / 各 World,装配层收集后交进来。
  */
 export interface WebAppConfigDeps {
-  /** 全部配置组(带 JSON Schema 与当前值) */
-  groups(): Array<{ group: ConfigGroup; values: ConfigValues }>;
-  /** 按组提交:只接受该组 schema 里声明过的键。改了就写回 config.json。 */
-  set(groupId: string, values: ConfigValues): string;
+  /** 全部配置组(带 JSON Schema 与当前值),标题与说明按 `language`;id、键与值不随语言变 */
+  groups(language: Language): Array<{ group: ConfigGroup; values: ConfigValues }>;
+  /** 按组提交:只接受该组 schema 里声明过的键。改了就写回 config.json。回执按 `language`。 */
+  set(groupId: string, values: ConfigValues, language: Language): string;
   /** `x-options` 下拉的活选项;缺席或 kind 不认识给空表 */
-  options?(kind: string): Array<{ value: string; label: string }>;
+  options?(kind: string, language: Language): Array<{ value: string; label: string }>;
 }
 
 /**
@@ -404,7 +412,11 @@ export interface ConsoleSurface {
   dataDir: string;
   /** bot 根目录。头像固定写入此目录的 avatar.png；未提供时不挂载头像写入面。 */
   botDir?: string;
-  /** 控制台语言(部署事实)。缺省按进程读一次系统语言。 */
+  /**
+   * 控制台的默认语言:印在 `<html lang>` 上,也是没带语言的请求用的那种。缺省按进程读一次
+   * 系统语言。每个请求可以经 `CONSOLE_LANGUAGE_HEADER`(WebSocket 握手经
+   * `CONSOLE_LANGUAGE_QUERY`)带自己的语言,服务端给控制台的文案按它取。
+   */
   language?: Language;
   /**
    * 监听地址。缺省 `127.0.0.1`:控制台没有身份认证,默认不对局域网露面。
@@ -417,16 +429,16 @@ export interface ConsoleSurface {
   debug?: WebAppDebugDeps;
   /** session观察(可选;不挂载时 /api/sessions 空、/ws/sessions 拒绝) */
   sessions?: WebAppSessionsDeps;
-  /** 可清除的存储部分清单(可选;不挂载时 /api/storage 空) */
-  storage?: StoragePart[];
+  /** 可清除的存储部分清单(可选;不挂载时 /api/storage 空)。标签与回执按 `language`;key 不随语言变。 */
+  storage?: (language: Language) => StoragePart[];
   /** 用量聚合(可选;不挂载时 /api/usage 空) */
   usage?: WebAppUsageDeps;
   /** 按 schema 声明的可调配置项(可选;不挂载时 /api/config 503) */
   config?: WebAppConfigDeps;
   /** 本机路径选择器。测试与嵌入环境可替换；缺省使用当前平台的原生对话框。 */
   pathPicker?: PathPicker;
-  /** 已挂载 World 清单(可选;不挂载时 /api/worlds 空)。async:envPrompt可能异步 */
-  worlds?: () => Promise<ConsoleWorldInfo[]> | ConsoleWorldInfo[];
+  /** 已挂载 World 清单(可选;不挂载时 /api/worlds 空)。async:envPrompt可能异步。显示名与理由按 `language` */
+  worlds?: (language: Language) => Promise<ConsoleWorldInfo[]> | ConsoleWorldInfo[];
   /** World 对 agent 的可见性开关(可选;不挂载时 /api/worlds/visibility 503) */
   worldVisibility?: WebAppWorldVisibilityDeps;
   /** World 激活开关(可选;不挂载时 /api/worlds/activation 503) */
@@ -445,12 +457,13 @@ export interface ConsoleSurface {
     pause(): void;
     resume(): void;
     isPaused(): boolean;
-    shutdown?(): Promise<WebAppShutdownReport>;
+    /** 账里的步骤名与总结行按 `language`。 */
+    shutdown?(language: Language): Promise<WebAppShutdownReport>;
     /**
      * 规范关机,退出前落下重启标志;启动器循环读到标志后重新拉起。没有启动器循环
      * (`supervised` 为 false)时它就是一次关机,页面上要说清楚。
      */
-    restart?(): Promise<WebAppShutdownReport>;
+    restart?(language: Language): Promise<WebAppShutdownReport>;
     supervised?: boolean;
   };
   /** 扩展装卸(可选;不挂载时 /api/extensions* 503)。 */
@@ -706,7 +719,7 @@ export class WebApp {
   /** 已加载扩展的浏览器端产物。进程生命期内不变(加载新扩展要重启),构造时算一次。 */
   private readonly extensionAssets: readonly ExtensionConsoleAsset[];
   private readonly webDistDir: string;
-  /** 页面 `<html lang>` 与服务端回执用的语言,构造时定死。 */
+  /** 默认语言:印在 `<html lang>` 上,没带语言的请求也用它。构造时定死。 */
   private readonly language: Language;
   private server: Server | null = null;
   private wss: WebSocketServer | null = null;
@@ -761,11 +774,25 @@ export class WebApp {
    * 这里**只有框架级表面**。各页自己的能力("有没有模型档位面板"这种)由
    * manifest 里有没有对应的页回答,不在中央留一份知识。
    */
+  /**
+   * 这个请求的界面语言:HTTP 看 `CONSOLE_LANGUAGE_HEADER`,WebSocket 握手看 URL 里的
+   * `CONSOLE_LANGUAGE_QUERY`;缺席或不认识 = 默认语言。
+   */
+  private languageOf(req: { headers: Record<string, unknown>; url?: string }): Language {
+    const header = req.headers[CONSOLE_LANGUAGE_HEADER];
+    if (isLanguage(header)) return header;
+    let fromQuery: string | null = null;
+    try {
+      fromQuery = new URL(req.url ?? '', 'http://localhost').searchParams.get(CONSOLE_LANGUAGE_QUERY);
+    } catch { /* 坏 URL:当没带 */ }
+    return isLanguage(fromQuery) ? fromQuery : this.language;
+  }
+
   private frameworkCapabilities(): Record<string, boolean> {
     return {
       debug: !!this.deps.debug,
       sessions: !!this.deps.sessions,
-      storage: (this.deps.storage ?? []).length > 0,
+      storage: (this.deps.storage?.(this.language) ?? []).length > 0,
       usage: !!this.deps.usage,
       config: !!this.deps.config,
       worlds: !!this.deps.worlds,
@@ -789,7 +816,8 @@ export class WebApp {
    */
   private async respondPowerAction(
     res: Response,
-    action: (() => Promise<WebAppShutdownReport>) | undefined,
+    language: Language,
+    action: ((language: Language) => Promise<WebAppShutdownReport>) | undefined,
     unavailable: string,
     logLine: string,
     trailer: string,
@@ -797,12 +825,12 @@ export class WebApp {
     if (!action) { res.status(503).json({ error: unavailable }); return; }
     this.deps.log.warn(logLine);
     try {
-      const report = await action();
+      const report = await action(language);
       const skipped = report.steps.filter((s) => !s.ok);
       const localComplete = report.localComplete ?? skipped.length === 0;
       const externalChecks = report.externalChecks ?? [];
       const unverified = externalChecks.filter((check) => check.status !== 'verified-ended');
-      const t = pick(this.language, SERVER_TEXT);
+      const t = pick(language, SERVER_TEXT);
       const localResult = !localComplete
         ? t.shutdownSkipped(skipped.length, skipped.map((s) => s.label))
         : t.shutdownComplete(report.steps.length);
@@ -959,10 +987,10 @@ export class WebApp {
    * "连接莫名其妙断了"。照 /ws/debug 未挂载的做法,先发一帧说明再按约定 code 关——
    * `no-surface` 对应 HTTP 的 503(1013),其余对应 404(1008)。
    */
-  private handleConsolePageStream(ws: WebSocket, pageId: string, panelId: string): void {
+  private handleConsolePageStream(ws: WebSocket, pageId: string, panelId: string, language: Language): void {
     // 先包再解析:解析要 await,期间对端可能已经发帧,适配器会替那一页攒着
     const socket = toConsoleStream(ws, this.deps.log, this.deps.streamHeartbeatMs ?? STREAM_HEARTBEAT_MS);
-    void this.consolePages.resolveStream(pageId, panelId).then(
+    void this.consolePages.resolveStream(pageId, panelId, language).then(
       (out) => {
         if (!out.ok) {
           this.closeStreamWith(
@@ -1075,7 +1103,7 @@ export class WebApp {
         }
         wss.handleUpgrade(req, socket, head, (ws) => {
           if (stream) {
-            this.handleConsolePageStream(ws, stream.pageId, stream.panelId);
+            this.handleConsolePageStream(ws, stream.pageId, stream.panelId, this.languageOf(req));
             return;
           }
           if (pathname === '/ws/debug') {
@@ -1290,8 +1318,8 @@ export class WebApp {
     }));
 
     // 存储部分清单:落盘/内存各部分的规模与说明(清除按钮的数据源)
-    app.get('/api/storage', wrap((_req, res) => {
-      const parts = (this.deps.storage ?? []).map((p) => {
+    app.get('/api/storage', wrap((req, res) => {
+      const parts = (this.deps.storage?.(this.languageOf(req)) ?? []).map((p) => {
         let stat = '';
         try { stat = p.stat(); } catch (err) { stat = `统计失败: ${String(err)}`; }
         return {
@@ -1307,7 +1335,7 @@ export class WebApp {
       void (async () => {
         const key = strParam(req.query.key);
         if (!key) { res.status(400).json({ error: '缺少key参数' }); return; }
-        const part = (this.deps.storage ?? []).find((p) => p.key === key);
+        const part = (this.deps.storage?.(this.languageOf(req)) ?? []).find((p) => p.key === key);
         if (!part) { res.status(404).json({ error: `没有这个存储部分: ${key}` }); return; }
         try {
           const result = await part.clear();
@@ -1321,9 +1349,9 @@ export class WebApp {
     });
 
     // 一键清空:按order升序清除全部存储部分(session最后);逐项结果返回
-    app.post('/api/storage/clear-all', (_req: Request, res: Response) => {
+    app.post('/api/storage/clear-all', (req: Request, res: Response) => {
       void (async () => {
-        const parts = [...(this.deps.storage ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        const parts = [...(this.deps.storage?.(this.languageOf(req)) ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
         if (!parts.length) { res.status(404).json({ error: '服务端未挂载存储清单' }); return; }
         const results: Array<{ key: string; ok: boolean; result: string }> = [];
         for (const part of parts) {
@@ -1339,20 +1367,20 @@ export class WebApp {
     });
 
     // 暂停/继续:暂停=事件照常落库排队但不投递唤醒;继续=积压一次性投递
-    app.post('/api/run/pause', wrap((_req, res) => {
+    app.post('/api/run/pause', wrap((req, res) => {
       const run = this.deps.run;
       if (!run) { res.status(503).json({ error: '运行控制不可用' }); return; }
       run.pause();
       this.deps.log.warn('运行已暂停(人工操作)');
-      res.json({ ok: true, paused: true, result: pick(this.language, SERVER_TEXT).paused });
+      res.json({ ok: true, paused: true, result: pick(this.languageOf(req), SERVER_TEXT).paused });
     }));
 
-    app.post('/api/run/resume', wrap((_req, res) => {
+    app.post('/api/run/resume', wrap((req, res) => {
       const run = this.deps.run;
       if (!run) { res.status(503).json({ error: '运行控制不可用' }); return; }
       run.resume();
       this.deps.log.warn('运行已继续(人工操作)');
-      res.json({ ok: true, paused: false, result: pick(this.language, SERVER_TEXT).resumed });
+      res.json({ ok: true, paused: false, result: pick(this.languageOf(req), SERVER_TEXT).resumed });
     }));
 
     /**
@@ -1362,27 +1390,28 @@ export class WebApp {
      *
      * 编排、每步的钟、退不退进程全在装配层;这一层只转交并把账原样发出去。
      */
-    app.post('/api/run/shutdown', (_req: Request, res: Response) => {
+    app.post('/api/run/shutdown', (req: Request, res: Response) => {
       void this.respondPowerAction(
-        res, this.deps.run?.shutdown, '关机控制不可用', '收到关机请求(人工操作)', '进程即将退出',
+        res, this.languageOf(req), this.deps.run?.shutdown, '关机控制不可用', '收到关机请求(人工操作)', '进程即将退出',
       );
     });
 
     // 重启 = 落下重启标志 + 规范关机。有没有启动器循环把它拉起来,回执里说明。
-    app.post('/api/run/restart', (_req: Request, res: Response) => {
+    app.post('/api/run/restart', (req: Request, res: Response) => {
       const supervised = this.deps.run?.supervised === true;
+      const language = this.languageOf(req);
       void this.respondPowerAction(
-        res, this.deps.run?.restart, '重启控制不可用', '收到重启请求(人工操作)',
-        supervised ? pick(this.language, SERVER_TEXT).exitSupervised : pick(this.language, SERVER_TEXT).exitUnsupervised,
+        res, language, this.deps.run?.restart, '重启控制不可用', '收到重启请求(人工操作)',
+        supervised ? pick(language, SERVER_TEXT).exitSupervised : pick(language, SERVER_TEXT).exitUnsupervised,
       );
     });
 
     // 已挂载 World 清单(前端"World"层的卡片数据源)
-    app.get('/api/worlds', (_req: Request, res: Response) => {
+    app.get('/api/worlds', (req: Request, res: Response) => {
       void (async () => {
         try {
           const src = this.deps.worlds;
-          const worlds = src ? await src() : [];
+          const worlds = src ? await src(this.languageOf(req)) : [];
           res.json({ worlds });
         } catch (err) {
           this.deps.log.error('API错误 /api/worlds', { error: String(err) });
@@ -1400,7 +1429,7 @@ export class WebApp {
       if (!id) { res.status(400).json({ error: '缺少 World id' }); return; }
       if (typeof body.visible !== 'boolean') { res.status(400).json({ error: 'visible 必须是布尔' }); return; }
       try {
-        const result = src.set(id, body.visible);
+        const result = src.set(id, body.visible, this.languageOf(req));
         res.json({ ok: true, result, ...src.state() });
       } catch (err) {
         res.status(400).json({ error: String(err) });
@@ -1417,7 +1446,7 @@ export class WebApp {
       if (!id) { res.status(400).json({ error: '缺少 Worldid' }); return; }
       if (typeof body.enabled !== 'boolean') { res.status(400).json({ error: 'enabled 必须是布尔' }); return; }
       try {
-        const result = await src.set(id, body.enabled);
+        const result = await src.set(id, body.enabled, this.languageOf(req));
         this.deps.log.warn('World 激活状态已改', { id, enabled: body.enabled });
         res.json({ ok: true, result });
       } catch (err) {
@@ -1433,7 +1462,7 @@ export class WebApp {
       const id = typeof body.id === 'string' ? body.id : '';
       if (!id) { res.status(400).json({ error: '缺少 Worldid' }); return; }
       try {
-        const result = await src.restart(id);
+        const result = await src.restart(id, this.languageOf(req));
         this.deps.log.warn('World 已重启', { id });
         res.json({ ok: true, result });
       } catch (err) {
@@ -1497,10 +1526,10 @@ export class WebApp {
       }
     }));
 
-    app.get('/api/prompts', wrap(async (_req, res) => {
+    app.get('/api/prompts', wrap(async (req, res) => {
       const src = this.deps.prompts;
       if (!src) { res.status(503).json({ error: '提示词模板编辑不可用' }); return; }
-      res.json({ prompts: await src.list() });
+      res.json({ prompts: await src.list(this.languageOf(req)) });
     }));
 
     /** 整条前缀的分段视图。现拼,不依赖活 session(见 WebAppPromptDeps.prefix)。 */
@@ -1526,14 +1555,15 @@ export class WebApp {
           key,
           body.content,
           typeof body.baseRevision === 'string' ? body.baseRevision : undefined,
+          this.languageOf(req),
         );
         this.deps.log.warn('固定提示词已编辑(人工)', { key });
         res.json({ ok: true, result, revision: revisionOf(body.content) });
       } catch (err) {
-        const message = String(err);
-        res.status(message.includes('已在别处被修改') ? 409 : 400).json({
-          error: message,
-          ...(message.includes('已在别处被修改') ? { conflict: true } : {}),
+        const conflict = err instanceof PromptRevisionConflict;
+        res.status(conflict ? 409 : 400).json({
+          error: String(err),
+          ...(conflict ? { conflict: true } : {}),
         });
       }
     });
@@ -1545,7 +1575,7 @@ export class WebApp {
       const key = typeof body.key === 'string' ? body.key.trim() : '';
       if (!key) { res.status(400).json({ error: '缺少 key' }); return; }
       try {
-        const result = src.reset(key);
+        const result = src.reset(key, this.languageOf(req));
         this.deps.log.warn('固定提示词已恢复 World 默认(人工)', { key });
         res.json({ ok: true, result });
       } catch (err) {
@@ -1559,12 +1589,12 @@ export class WebApp {
       res.json({ tools: src.list() });
     }));
 
-    app.post('/api/session/reload-prefix', (_req: Request, res: Response) => {
+    app.post('/api/session/reload-prefix', (req: Request, res: Response) => {
       void (async () => {
         const src = this.deps.sessionControl;
         if (!src) { res.status(503).json({ error: 'session前缀重载不可用' }); return; }
         try {
-          const result = await src.reloadPrefix();
+          const result = await src.reloadPrefix(this.languageOf(req));
           this.deps.log.warn('当前session系统前缀已重载(人工)');
           res.json({ ok: true, result });
         } catch (err) {
@@ -1576,8 +1606,8 @@ export class WebApp {
 
     // ---- Console Page API:World 与 bot 的控制面唯一通道。----
 
-    app.get('/api/console/manifest', (_req: Request, res: Response) => {
-      void this.consolePages.manifest().then(
+    app.get('/api/console/manifest', (req: Request, res: Response) => {
+      void this.consolePages.manifest(this.languageOf(req)).then(
         (manifest) => { if (!res.headersSent) res.json(manifest); },
         (err) => {
           this.deps.log.error('API错误 /api/console/manifest', { error: String(err) });
@@ -1601,8 +1631,8 @@ export class WebApp {
      *
      * 失败给 200 + 空表:一次取灯失败不该让导航变成一排问号,下一拍自然会补上。
      */
-    app.get(CONSOLE_LAMPS_ROUTE, (_req: Request, res: Response) => {
-      void this.consolePages.lamps().then(
+    app.get(CONSOLE_LAMPS_ROUTE, (req: Request, res: Response) => {
+      void this.consolePages.lamps(this.languageOf(req)).then(
         (lamps) => { if (!res.headersSent) res.json({ lamps }); },
         (err) => {
           this.deps.log.error(`API错误 ${CONSOLE_LAMPS_ROUTE}`, { error: String(err) });
@@ -1620,7 +1650,7 @@ export class WebApp {
       const panel = String(req.params.panel ?? '');
       const method = String(req.params.method ?? '');
       const transport = req.method === 'GET' || req.method === 'HEAD' ? 'get' : 'post';
-      void this.consolePages.invoke(page, panel, method, args, transport).then(
+      void this.consolePages.invoke(page, panel, method, args, transport, this.languageOf(req)).then(
         async (out) => {
           if (res.headersSent) return;
           if (!out.ok) {
@@ -1684,17 +1714,17 @@ export class WebApp {
     }));
 
     // 新旋钮只在所属配置组的 schema 中声明。
-    app.get('/api/config', wrap((_req, res) => {
+    app.get('/api/config', wrap((req, res) => {
       const src = this.deps.config;
       if (!src) { res.status(503).json({ error: '配置项声明不可用' }); return; }
-      res.json({ groups: src.groups() });
+      res.json({ groups: src.groups(this.languageOf(req)) });
     }));
 
     app.get('/api/config/options/:kind', wrap((req, res) => {
       const src = this.deps.config;
       if (!src) { res.status(503).json({ error: '配置项声明不可用' }); return; }
       const kind = typeof req.params.kind === 'string' ? req.params.kind : '';
-      res.json({ options: src.options?.(kind) ?? [] });
+      res.json({ options: src.options?.(kind, this.languageOf(req)) ?? [] });
     }));
 
     app.post(PATH_PICKER_ROUTE, express.json({ limit: '16kb' }), (req: Request, res: Response) => {
@@ -1729,16 +1759,17 @@ export class WebApp {
       if (!src) { res.status(503).json({ error: '配置项声明不可用' }); return; }
       const body = (req.body ?? {}) as Record<string, unknown>;
       const groupId = typeof body.group === 'string' ? body.group : '';
-      const entry = src.groups().find((g) => g.group.id === groupId);
+      const language = this.languageOf(req);
+      const entry = src.groups(language).find((g) => g.group.id === groupId);
       if (!entry) { res.status(400).json({ error: `未知配置组: ${groupId}` }); return; }
       const values = (body.values ?? {}) as Record<string, unknown>;
       // 校验完全按声明走:schema 里没声明的键一律忽略,控制台不能靠猜往配置里塞东西
-      const parsed = coerceGroupValues(entry.group, values, this.language);
+      const parsed = coerceGroupValues(entry.group, values, language);
       if ('error' in parsed) { res.status(400).json({ error: parsed.error }); return; }
       try {
-        const result = src.set(groupId, parsed.values);
+        const result = src.set(groupId, parsed.values, language);
         this.deps.log.warn('配置项已修改', { group: groupId });
-        res.json({ ok: true, result, groups: src.groups() });
+        res.json({ ok: true, result, groups: src.groups(language) });
       } catch (err) {
         res.status(500).json({ error: String(err) });
       }

@@ -139,12 +139,12 @@ describe('终端对话经 provider 流式通道的整条链路', () => {
     }
     // 回执带投递事实(发到哪、几个连接在线):见 worlds-terminal-console.test.ts
     expect(String(result).startsWith('[sent] ')).toBe(true);
-    expect(result).toContain('2 个连接在线');
+    expect(result).toContain('2 connections online');
 
     const self = host.pushed.find((p) => p.e.type === 'terminal.self');
     expect(self).toBeDefined();
     expect(self!.opts?.deliver).toBe(false);
-    expect(self!.e.text).toMatch(/^\[\d{2}:\d{2}\] 你: 我在。$/);
+    expect(self!.e.text).toMatch(/^\[\d{2}:\d{2}\] you: 我在。$/);
 
     a.ws.close();
     b.ws.close();

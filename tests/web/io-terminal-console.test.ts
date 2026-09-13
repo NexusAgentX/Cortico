@@ -167,28 +167,28 @@ describe('TerminalWorld 的流式通道', () => {
     await mod.start(host);
     const send = mod.tools().find((t) => t.name === 'terminal_send')!;
 
-    // 一个人都没连:回执要说清没人看到,而不是一句干巴巴的 [sent]
+    // 一个人都没连:回执要说清没人看到,而不是一句干巴巴的 [sent]。给模型的文本固定英文。
     const alone = String(await send.handler({ text: '有人在吗' }, toolCtx));
-    expect(alone).toContain('控制台「终端」页');
-    expect(alone).toContain('一个连接都没有');
-    expect(alone).toContain('没有人看到');
+    expect(alone).toContain('"Terminal" page');
+    expect(alone).toContain('no connection is open');
+    expect(alone).toContain('nobody sees this');
     // 不越界:不说"没人读过",也不谈直播在不在线
-    expect(alone).not.toContain('读过');
-    expect(alone).not.toContain('直播');
+    expect(alone).not.toMatch(/read it|has read/);
+    expect(alone).not.toMatch(/stream is|live/);
 
     const sock = new FakeStream();
     mod.stream('chat', sock);
     sock.feed(JSON.stringify({ type: 'hello', name: '小北' }));
     const withPeer = String(await send.handler({ text: '我在。' }, toolCtx));
-    expect(withPeer).toContain('1 个连接在线');
+    expect(withPeer).toContain('1 connection online');
     expect(withPeer).toContain('小北');
     // 第二条起要带上一条隔了多久、此后终端上有没有人说过话
-    expect(withPeer).toContain('分钟前发出');
-    expect(withPeer).toContain('没有人说过话');
+    expect(withPeer).toMatch(/went out \d+ minutes? ago/);
+    expect(withPeer).toContain('nobody has said anything');
 
     sock.feed(JSON.stringify({ type: 'msg', text: '在的' }));
     const afterReply = String(await send.handler({ text: '好' }, toolCtx));
-    expect(afterReply).toContain('有 1 条人发来的消息');
+    expect(afterReply).toContain('1 message from people');
     await mod.stop();
   });
 
@@ -268,9 +268,9 @@ describe('终端消息附图', () => {
     expect(Buffer.from(host.blob(msg.e.blobs![0].handle)!.bytes).equals(PNG)).toBe(true);
     // 正文后每张一行 [blob 句柄 mime 名字] 文本形态,与模型吃不吃图无关
     const [h1, h2] = msg.e.blobs!.map((b) => b.handle);
-    expect(msg.e.text).toBe(`${msg.e.text.split('\n')[0]}\n[blob ${h1} image/png shot.png] 阿明 发来的图片 1/2\n[blob ${h2} image/jpeg] 阿明 发来的图片 2/2`);
+    expect(msg.e.text).toBe(`${msg.e.text.split('\n')[0]}\n[blob ${h1} image/png shot.png] image 1/2 from 阿明\n[blob ${h2} image/jpeg] image 2/2 from 阿明`);
     expect(msg.e.text.split('\n')[0]).toMatch(/^\[\d{2}:\d{2}\] 阿明: 看看这个$/);
-    expect(msg.e.blobs![0].fallbackText).toBe('阿明 发来的图片 1/2');
+    expect(msg.e.blobs![0].fallbackText).toBe('image 1/2 from 阿明');
     // 回显与回放素材只带句柄,不带字节
     const echo = sock.frames().find((f) => f.type === 'msg')!;
     expect(echo.text).toBe('看看这个');
@@ -291,7 +291,7 @@ describe('终端消息附图', () => {
     sock.feed(JSON.stringify({ type: 'msg', text: '', images: [{ mime: 'image/png', base64: PNG.toString('base64') }] }));
     await settle();
     const msg = host.pushed.find((p) => p.e.type === 'terminal.message')!;
-    expect(msg.e.text).toMatch(/^\[\d{2}:\d{2}\] 阿明: \n\[blob log:\S+ image\/png\] 阿明 发来的图片 1\/1$/);
+    expect(msg.e.text).toMatch(/^\[\d{2}:\d{2}\] 阿明: \n\[blob log:\S+ image\/png\] image 1\/1 from 阿明$/);
     expect(msg.e.origin).toBe('internal');
     expect(msg.opts?.trigger).toBe('flush');
     expect(sock.frames().some((f) => f.type === 'sys' && String(f.text).includes('不接收图像'))).toBe(false);
@@ -405,7 +405,7 @@ describe('控制台通道', () => {
     const mod = new TerminalWorld({ timezone: 'Asia/Shanghai', cfg: section('406193') });
     await mod.start(host);
     const msg = await speak(mod, host, '别念后台的话');
-    expect(msg.e.text).toMatch(/^\[控制台\|PIN:406193\] \[\d{2}:\d{2}\] 操作员: 别念后台的话$/);
+    expect(msg.e.text).toMatch(/^\[console\|PIN:406193\] \[\d{2}:\d{2}\] 操作员: 别念后台的话$/);
     expect(msg.e.origin).toBe('internal');
     // 前端那条对话线上不该出现口令:回显发的是原文,回放读的是 meta.body
     const echo = new FakeStream();
@@ -451,7 +451,7 @@ describe('控制台通道', () => {
     sock.feed(JSON.stringify({ type: 'msg', text: '二' }));
     const texts = host.pushed.filter((p) => p.e.type === 'terminal.message').map((p) => p.e.text);
     expect(texts[0]).not.toContain('PIN');
-    expect(texts[1]).toContain('[控制台|PIN:406193]');
+    expect(texts[1]).toContain('[console|PIN:406193]');
     await mod.stop();
   });
 
@@ -533,17 +533,40 @@ describe('stream 按局部 panel id 分派', () => {
 
 // ── 5. 整条链路真的接上了 ────────────────────────────────────────────────
 
-describe('控制台语言', () => {
-  it('英文部署下 World 按语言报显示名与面板文案,装配层的槽位名仍是定义里的', () => {
-    const zh = new TerminalWorld({ timezone: 'Asia/Shanghai' });
-    const en = new TerminalWorld({ timezone: 'Asia/Shanghai', language: 'en' });
-    expect(zh.console().label).toBe('终端对话');
-    expect(en.console().label).toBe('Terminal chat');
-    expect(en.console().panels?.[0]?.title).toBe('Chat');
-    expect(en.console().config?.[0]?.schema.title).not.toMatch(/[一-鿿]/);
+describe('界面语言', () => {
+  it('同一个实例按请求的语言报显示名与面板文案,装配层的槽位名仍是定义里的', () => {
+    const mod = new TerminalWorld({ timezone: 'Asia/Shanghai' });
+    expect(mod.console().label).toBe('终端对话');
+    expect(mod.console('en').label).toBe('Terminal chat');
+    expect(mod.console('en').panels?.[0]?.title).toBe('Chat');
+    expect(mod.console('en').config?.[0]?.schema.title).not.toMatch(/[一-鿿]/);
     // 控制台 provider 的显示名跟实例走;定义里的中文名只在实例没报时兜底。
-    expect(ioPageContribution('terminal', '终端对话', undefined, en).label).toBe('Terminal chat');
-    expect(ioPageContribution('terminal', '终端对话', undefined, undefined).label).toBe('终端对话');
+    expect(ioPageContribution('terminal', '终端对话', undefined, mod, 'en').label).toBe('Terminal chat');
+    expect(ioPageContribution('terminal', '终端对话', undefined, undefined, 'en').label).toBe('终端对话');
+  });
+
+  it('流上的系统提示按各自握手时的语言;给模型的口令标记与回执不随语言变', async () => {
+    const host = new FakeHost();
+    const mod = new TerminalWorld({ timezone: 'Asia/Shanghai', cfg: { ...TERMINAL_DEFAULTS, enabled: true, pin: '406193' } });
+    await mod.start(host);
+    const zh = new FakeStream();
+    const en = new FakeStream();
+    mod.console('zh').stream!('chat', zh);
+    mod.console('en').stream!('chat', en);
+    expect(String(zh.frames()[0].text)).toContain('报上名字');
+    expect(String(en.frames()[0].text)).toContain('introduce yourself');
+    zh.feed(JSON.stringify({ type: 'hello', name: '阿明' }));
+    en.feed(JSON.stringify({ type: 'hello', name: 'Bob' }));
+    // 同一件事,两条流各看各的语言
+    expect(zh.frames().some((f) => f.text === 'Bob 进入了对话')).toBe(true);
+    expect(en.frames().some((f) => f.text === '阿明 joined the chat')).toBe(true);
+
+    en.feed(JSON.stringify({ type: 'msg', text: 'hi' }));
+    await settle();
+    const msg = host.pushed.find((p) => p.e.type === 'terminal.message')!;
+    expect(msg.e.text).toMatch(/^\[console\|PIN:406193\] \[\d{2}:\d{2}\] Bob: hi$/);
+    await expect(async () => mod.console('en').invoke!('chat', 'other', [])).rejects.toThrow('Unknown method');
+    await mod.stop();
   });
 });
 

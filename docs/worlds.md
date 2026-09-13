@@ -56,9 +56,10 @@ World 是 Bot 与一个外部环境之间的唯一边界:把环境变化描述�
 
 `WorldDefinition`(`src/world.ts`):`id`、`label`、`defaults()`(配置段默认值,`enabled` 恒
 false,由 bot 的 `declares` 置 true)、`preflight?`、`configOptions?`、`create(ctx)`。
-`WorldContext` 给 `create`:`cfg`(活引用)、`timezone`、`language`、`botName`、`botDir` /
+`WorldContext` 给 `create`:`cfg`(活引用)、`timezone`、`botName`、`botDir` /
 `packageDir` / `dataDir` / `repoRoot`、`secret()` / `storeSecret()`、`persist()`(写回
-`worlds.<id>`)、`restart()`。
+`worlds.<id>`)、`restart()`。界面语言不在其中:它是每个请求的属性,`console(language)` 与
+`configOptions(kind, language)` 每次传入(见 [console.md](console.md))。
 
 仓内的定义列在 `src/worlds/index.ts`;启动器把它们与扩展装进来的并成一张表交给 bot 定义
 (`withWorlds()`)。bot 的 `index.ts` 只把它为之设计的渠道 id 列进 `declares`:声明过的默认启用,

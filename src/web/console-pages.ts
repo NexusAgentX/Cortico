@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { Logger } from '../core/types.ts';
 import { extensionAssetUrl, type ExtensionConsoleAsset } from '../extensions/manifest.ts';
+import type { Language } from '../core/language.ts';
 import {
   CONSOLE_PROTOCOL_VERSION,
   assetKeyForPage,
@@ -44,7 +45,11 @@ import {
 export interface ConsolePageSource {
   /** 仅用于出错时说清"是谁炸了"；正式 id 以 `contribute()` 返回的为准 */
   id: string;
-  contribute():
+  /**
+   * `language` 是发起这次请求的浏览器的界面语言:贡献里的文案、`invoke` 与 `stream`
+   * 闭包回给操作员的话都按它。页的 id、面板 id 与能力不随语言变。
+   */
+  contribute(language: Language):
     | ConsolePageContribution
     | null
     | Promise<ConsolePageContribution | null>;
@@ -205,12 +210,12 @@ export class ConsolePageRegistry {
    * 逐个 source 取贡献。**隔离在这里**：一个 source 抛错只丢它自己，
    * 其余照常进 manifest。
    */
-  private async collect(): Promise<ConsolePageContribution[]> {
+  private async collect(language: Language): Promise<ConsolePageContribution[]> {
     const sources = this.safeSources();
     const out: ConsolePageContribution[] = [];
     for (const src of sources) {
       try {
-        const c = await src.contribute();
+        const c = await src.contribute(language);
         if (c) out.push(c);
       } catch (err) {
         this.deps.log.error(`provider 贡献失败,已跳过: ${src.id}`, { error: String(err) });
@@ -232,8 +237,8 @@ export class ConsolePageRegistry {
    * 组装 manifest。校验不通过的页**整个丢掉**并记一条日志——
    * 半页坏的上线，前端会以一种很难查的方式坏掉。
    */
-  async manifest(): Promise<ConsoleManifest> {
-    const collected = await this.collect();
+  async manifest(language: Language = 'zh'): Promise<ConsoleManifest> {
+    const collected = await this.collect(language);
     const problems = validateContributions(collected);
     const rejected = new Set<string>();
     for (const p of problems) {
@@ -285,9 +290,9 @@ export class ConsolePageRegistry {
    * 声明不合法的页在这里不会被丢掉（校验属于 manifest 那条路）：id 拼错的
    * 页本来就没有一行导航能挂灯，多报一颗没人读的灯不构成问题。
    */
-  async lamps(): Promise<Record<string, ConsoleLamp[]>> {
+  async lamps(language: Language = 'zh'): Promise<Record<string, ConsoleLamp[]>> {
     const out: Record<string, ConsoleLamp[]> = {};
-    for (const c of await this.collect()) {
+    for (const c of await this.collect(language)) {
       const lamps = sanitizeLamps(c.lamps);
       if (lamps.length) out[c.id] = lamps;
     }
@@ -295,11 +300,11 @@ export class ConsolePageRegistry {
   }
 
   /** 按 id 找当前的贡献。找不到返回 null。 */
-  private async find(pageId: string): Promise<ConsolePageContribution | null> {
+  private async find(pageId: string, language: Language): Promise<ConsolePageContribution | null> {
     for (const src of this.safeSources()) {
       let c: ConsolePageContribution | null;
       try {
-        c = await src.contribute();
+        c = await src.contribute(language);
       } catch (err) {
         this.deps.log.error(`provider 贡献失败: ${src.id}`, { error: String(err) });
         continue;
@@ -316,11 +321,12 @@ export class ConsolePageRegistry {
   private async resolvePanel(
     pageId: string,
     panelId: string,
+    language: Language,
   ): Promise<
     | { ok: true; contribution: ConsolePageContribution; panel: NonNullable<ConsolePageContribution['panels']>[number] }
     | { ok: false; failure: InvokeFailure }
   > {
-    const c = await this.find(pageId);
+    const c = await this.find(pageId, language);
     if (!c) {
       return { ok: false, failure: { kind: 'no-provider', message: `没有这个 provider: ${pageId}` } };
     }
@@ -346,8 +352,9 @@ export class ConsolePageRegistry {
     method: string,
     args: unknown[],
     transport: 'get' | 'post' = 'post',
+    language: Language = 'zh',
   ): Promise<{ ok: true; value: unknown } | { ok: false; failure: InvokeFailure }> {
-    const found = await this.resolvePanel(pageId, panelId);
+    const found = await this.resolvePanel(pageId, panelId, language);
     if (!found.ok) return found;
     if (transport === 'get' && found.panel.getMethods && !found.panel.getMethods.includes(method)) {
       return {
@@ -375,11 +382,12 @@ export class ConsolePageRegistry {
   async resolveStream(
     pageId: string,
     panelId: string,
+    language: Language = 'zh',
   ): Promise<
     | { ok: true; open: (socket: ConsoleStream) => void }
     | { ok: false; failure: InvokeFailure }
   > {
-    const found = await this.resolvePanel(pageId, panelId);
+    const found = await this.resolvePanel(pageId, panelId, language);
     if (!found.ok) return found;
     const c = found.contribution;
     const stream = c.stream;

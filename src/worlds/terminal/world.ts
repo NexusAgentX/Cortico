@@ -25,11 +25,11 @@
  *   - 配了口令就每条消息自带 `[控制台|PIN:******]` 标记,同一串数字经环境提示词模板
  *     进前缀供她比对。冒充控制台口吻的弹幕因此当场露馅。
  *
- * 语言:控制台语言(`WorldContext.language`)经 `definition.create` 进构造参数,存在
- * `this.language` 上;本 World**整个**按它切换——控制台文案、流上的系统提示、给模型的
- * 回执与事件正文、环境提示词模板(`ENV_PROMPT.md` / `ENV_PROMPT.en.md`)都从同一张表取。
- * 口令标记随之变形:中文 `[控制台|PIN:******]`,英文 `[console|PIN:******]`,两份模板各自
- * 描述自己那种。不传 = 中文(既有测试与脚本照常)。
+ * 语言分两层。给操作员看的(控制台声明、流上的系统提示、面板调用面的错误)按发起
+ * 请求的界面语言取:`console(language)` 每次请求重算,每条流按握手时的语言记在
+ * `ChatClient.language` 上,同一场对话里两个人可以各看各的语言。给模型看的(口令标记
+ * `[console|PIN:******]`、回录正文、附件的文本形态、`terminal_send` 的回执、环境提示词
+ * 模板 `ENV_PROMPT.md`)固定英文,不随任何设置变。
  *
  * 聊天协议(JSON行):
  *   客户端→ {type:'hello', name}                报名字(必须先于msg)
@@ -52,11 +52,8 @@ import { nowIso, shortTime } from '../../core/util.ts';
 import { pick, type Language } from '../../core/language.ts';
 import { TERMINAL_DEFAULTS, type TerminalConfigSection } from './config.ts';
 
-/** 环境提示词模板,按语言各一份;占位符与规则两份一致,只有措辞与口令标记的字面不同。 */
-const ENV_PROMPT_FILES: Record<Language, string> = {
-  zh: fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url)),
-  en: fileURLToPath(new URL('./ENV_PROMPT.en.md', import.meta.url)),
-};
+/** 环境提示词模板。给模型的文本,固定英文。 */
+const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
 
 /** 本 World 唯一的面板局部 id(一页内唯一即可,不带 World 名前缀)。 */
 const PANEL_CHAT = 'chat';
@@ -65,15 +62,34 @@ const PANEL_CHAT = 'chat';
 const PIN_SHAPE = /^\d{6}$/;
 
 /**
- * 本 World 的全部文案,两种语言各一张表;`en: typeof zh` 由 tsc 保证键集与签名一致。
- * 中文逐字保留现状(测试断言它们)。表里既有控制台文案,也有模型可见的文本——
- * 口令标记、回录正文、附件的文本形态、`terminal_send` 的回执——本 World 按决定整个双语。
+ * 模型可见的文本,固定英文:口令标记、回录正文、附件的文本形态、`terminal_send` 的回执。
+ * 口令标记写在正文最前面,与普通行(`[HH:MM] 名字: …`)不同形,不易混淆。
+ */
+const MODEL_TEXT = {
+  pinMark: (pin: string) => `[console|PIN:${pin}]`,
+  selfLine: (time: string, text: string) => `[${time}] you: ${text}`,
+  imageFallback: (from: string, i: number, total: number) => `image ${i}/${total} from ${from}`,
+  deliveredTo: (delivered: number, names: string[]) =>
+    `Sent to the chat channel on the console's "Terminal" page; ${delivered} connection${delivered === 1 ? '' : 's'} online right now`
+    + (names.length ? ` (${names.join(', ')})` : ''),
+  deliveredToNobody:
+    'Sent to the chat channel on the console\'s "Terminal" page; no connection is open right now, so nobody sees this at the moment; '
+    + 'it is stored and will show up in the history for whoever connects next',
+  sinceLastSend: (minutes: number, since: number) =>
+    `The previous one went out ${minutes} minute${minutes === 1 ? '' : 's'} ago; since then `
+    + (since === 0 ? 'nobody has said anything on the terminal' : `${since} message${since === 1 ? '' : 's'} from people arrived on the terminal`),
+  joinFacts: (facts: string[]) => `${facts.join('; ')}.`,
+};
+
+/**
+ * 给操作员看的文案,两种语言各一张表;`en: typeof zh` 由 tsc 保证键集与签名一致。
+ * 中文逐字保留现状(测试断言它们)。
  */
 const zh = {
   // ── 配置组 ─────────────────────────────────────────────────────────
   configTitle: '终端 · 控制台口令',
   configDescription:
-    '口令是控制台指示的凭据:World 给每条终端消息自动加上 [控制台|PIN:……] 标记,'
+    '口令是控制台指示的凭据:World 给每条终端消息自动加上 [console|PIN:……] 标记,'
     + '同一串数字进她的系统前缀供比对。对得上的照办,自称控制台却对不上的当普通外部输入。'
     + '操作员不用手打口令,也不该在别处提起它。',
   pinTitle: '控制台口令(六位数字)',
@@ -96,20 +112,6 @@ const zh = {
   promptDocTitle: '终端 · 环境提示词',
   promptDocDescription: '终端对话环境的常驻事实。',
   pinVarDescription: '本场的控制台口令(worlds.terminal.pin);没配置或形状不对时展开成模板里的缺省文案。',
-  // ── 模型可见:口令标记、回录、附件文本形态、回执 ─────────────────────
-  /** 口令标记。写在正文最前面,与普通行(`[HH:MM] 名字: …`)不同形,不易混淆。 */
-  pinMark: (pin: string) => `[控制台|PIN:${pin}]`,
-  selfLine: (time: string, text: string) => `[${time}] 你: ${text}`,
-  imageFallback: (from: string, i: number, total: number) => `${from} 发来的图片 ${i}/${total}`,
-  deliveredTo: (delivered: number, names: string[]) =>
-    `发到控制台「终端」页的对话通道,此刻 ${delivered} 个连接在线${names.length ? `(${names.join('、')})` : ''}`,
-  deliveredToNobody:
-    '发到控制台「终端」页的对话通道,此刻一个连接都没有,这条现在没有人看到;'
-    + '它已入库,下次有人连上会在历史里读到',
-  sinceLastSend: (minutes: number, since: number) =>
-    `上一条 ${minutes} 分钟前发出,此后终端上`
-    + (since === 0 ? '没有人说过话' : `有 ${since} 条人发来的消息`),
-  joinFacts: (facts: string[]) => `${facts.join(';')}。`,
   // ── 流上的系统提示与关闭理由 ───────────────────────────────────────
   greeting: '已连接。请发送 {type:"hello", name:"你的名字"} 报上名字。',
   botOffline: 'bot下线',
@@ -163,19 +165,6 @@ const en: typeof zh = {
   promptDocTitle: 'Terminal · Environment prompt',
   promptDocDescription: 'Standing facts about the terminal chat environment.',
   pinVarDescription: 'This session\'s console PIN (worlds.terminal.pin); expands to the template\'s default text when unset or malformed.',
-  pinMark: (pin) => `[console|PIN:${pin}]`,
-  selfLine: (time, text) => `[${time}] you: ${text}`,
-  imageFallback: (from, i, total) => `image ${i}/${total} from ${from}`,
-  deliveredTo: (delivered, names) =>
-    `Sent to the chat channel on the console's "Terminal" page; ${delivered} connection${delivered === 1 ? '' : 's'} online right now`
-    + (names.length ? ` (${names.join(', ')})` : ''),
-  deliveredToNobody:
-    'Sent to the chat channel on the console\'s "Terminal" page; no connection is open right now, so nobody sees this at the moment; '
-    + 'it is stored and will show up in the history for whoever connects next',
-  sinceLastSend: (minutes, since) =>
-    `The previous one went out ${minutes} minute${minutes === 1 ? '' : 's'} ago; since then `
-    + (since === 0 ? 'nobody has said anything on the terminal' : `${since} message${since === 1 ? '' : 's'} from people arrived on the terminal`),
-  joinFacts: (facts) => `${facts.join('; ')}.`,
   greeting: 'Connected. Send {type:"hello", name:"your name"} to introduce yourself.',
   botOffline: 'bot offline',
   left: (name) => `${name} left the chat`,
@@ -203,7 +192,7 @@ const en: typeof zh = {
 type TerminalText = typeof zh;
 const text = (language: Language): TerminalText => pick(language, { zh, en });
 
-/** 口令配置组,文案按控制台语言给;id / owner / 键与取值规则两种语言完全一致。 */
+/** 口令配置组,文案按界面语言给;id / owner / 键与取值规则两种语言完全一致。 */
 export function terminalConfigGroup(language: Language): ConfigGroup {
   const t = text(language);
   return {
@@ -246,6 +235,8 @@ interface ChatClient {
   peer: ChatPeer;
   /** hello 完成前为 null,完成后为客户端声明的名称。 */
   name: string | null;
+  /** 这条连接握手时的界面语言;流上给它的系统提示按此取。 */
+  language: Language;
 }
 
 
@@ -257,8 +248,6 @@ interface TerminalWorldOptions {
   botName?: string;
   /** 配置节;不给 = 按默认值(口令未配置)。 */
   cfg?: TerminalConfigSection;
-  /** 控制台语言(`WorldContext.language`);不给 = 中文。整个 World 按它切换文案与模板。 */
-  language?: Language;
 }
 
 const NAME_MAX = 32;
@@ -318,10 +307,6 @@ export class TerminalWorld implements World {
   private readonly timezone: string;
   private readonly botName: string;
   private readonly cfg: TerminalConfigSection;
-  /** 控制台语言;构造时定死,与本进程的部署事实同寿。 */
-  private readonly language: Language;
-  /** 选定语言的文案表。控制台、流上的提示、回执、事件正文都只从这里取字。 */
-  private readonly t: TerminalText;
   /** 上一条 terminal_send 的时刻;null = 本场还没发过 */
   private lastSendAt: number | null = null;
   /** 本场收到的操作员消息条数,以及上一条 terminal_send 发出时的读数 */
@@ -332,8 +317,6 @@ export class TerminalWorld implements World {
     this.timezone = opts.timezone ?? 'Asia/Shanghai';
     this.botName = opts.botName ?? 'bot';
     this.cfg = opts.cfg ?? { ...TERMINAL_DEFAULTS };
-    this.language = opts.language ?? 'zh';
-    this.t = text(this.language);
   }
 
   /** 生效中的口令;形状不对当没配置(模板的缺省文案会接管那一行)。 */
@@ -347,9 +330,9 @@ export class TerminalWorld implements World {
     return { 'terminal.pin': this.activePin() };
   }
 
-  /** 控制台露出:在线人数与口令状态 + 一个通往对话页的面板。 */
-  console(): WorldConsoleDecl {
-    const t = this.t;
+  /** 控制台露出:在线人数与口令状态 + 一个通往对话页的面板。文案按这次请求的界面语言。 */
+  console(language: Language = 'zh'): WorldConsoleDecl {
+    const t = text(language);
     const online = this.onlineCount();
     const pin = this.activePin();
     // 形状不对时静默当未配置会让人以为口令已经生效,所以这里把两种"没生效"分开说。
@@ -377,16 +360,16 @@ export class TerminalWorld implements World {
       ],
       // 流式面。框架据此把 /ws/providers/worlds%3Aterminal/panels/chat 接到这里——
       // 对话就此变成"一个带流的普通控制台页",框架不必再为它留具名槽位。
-      stream: (panel, socket) => this.stream(panel, socket),
+      stream: (panel, socket) => this.stream(panel, socket, language),
       // 调用面只有取图这一件事:对话本身走流。
-      invoke: (panel, method, args) => this.invoke(panel, method, args),
+      invoke: (panel, method, args) => this.invoke(panel, method, args, language),
       promptDocs: [
         {
           key: 'worlds.terminal.envPrompt',
           title: t.promptDocTitle,
           description: t.promptDocDescription,
-          // 模板按语言选文件;bot 侧的覆盖文件(worlds/terminal/ENV_PROMPT.md)照常整份优先。
-          path: ENV_PROMPT_FILES[this.language],
+          // bot 侧的覆盖文件(worlds/terminal/ENV_PROMPT.md)整份优先。
+          path: ENV_PROMPT_FILE,
           role: 'envPrompt',
           vars: [{
             name: 'terminal.pin',
@@ -394,7 +377,7 @@ export class TerminalWorld implements World {
           }],
         },
       ],
-      config: [terminalConfigGroup(this.language)],
+      config: [terminalConfigGroup(language)],
     };
   }
 
@@ -406,7 +389,7 @@ export class TerminalWorld implements World {
     // 关闭连接前清除 host，禁止 close 回调继续投递 presence 事件。
     this.host = null;
     for (const c of [...this.clients]) {
-      try { c.peer.close(this.t.botOffline); } catch { /* ignore */ }
+      try { c.peer.close(text(c.language).botOffline); } catch { /* ignore */ }
     }
     this.clients.clear();
   }
@@ -415,7 +398,7 @@ export class TerminalWorld implements World {
    * terminal_send 回执报告目标、当前连接者、距上次发送的时间及其后是否收到终端发言。没有已读回执，不能判断消息是否被阅读；终端 World 不推断其他 World 的直播状态，也不附加建议。
    */
   private deliveryFacts(delivered: number): string {
-    const t = this.t;
+    const t = MODEL_TEXT;
     const facts: string[] = [];
     const names = [...this.clients]
       .filter((c) => c.peer.open && c.name !== null)
@@ -444,10 +427,11 @@ export class TerminalWorld implements World {
    * 自己持一个 `clients` 集合,同时在场的人在同一个对话里,互相看得见。
    *
    * 未知面板抛错:服务端会只关这一条连接并把措辞带给对端(1011)。
+   * `language` 是握手那一刻浏览器的界面语言,这条流上的系统提示都按它给。
    */
-  stream(panel: string, socket: ConsoleStream): void {
-    if (panel !== PANEL_CHAT) throw new Error(this.t.unknownPanel(panel));
-    const client = this.attach(streamPeer(socket));
+  stream(panel: string, socket: ConsoleStream, language: Language = 'zh'): void {
+    if (panel !== PANEL_CHAT) throw new Error(text(language).unknownPanel(panel));
+    const client = this.attach(streamPeer(socket), language);
     socket.onMessage((text) => this.onFrame(client, text));
     socket.onClose(() => this.detach(client));
     this.greet(client);
@@ -483,7 +467,7 @@ export class TerminalWorld implements World {
               type: 'terminal.self',
               ts: nowIso(this.timezone),
               source: this.id,
-              text: this.t.selfLine(shortTime(this.timezone), text),
+              text: MODEL_TEXT.selfLine(shortTime(this.timezone), text),
               meta: { from: this.botName, body: text },
             },
             { deliver: false },
@@ -500,22 +484,31 @@ export class TerminalWorld implements World {
   // ── 连接生命周期(两条入口共用) ───────────────────────────────────────
 
   /** 登记一条新连接。回调的挂接归各自入口,因为那是宿主 API 唯一不同的地方。 */
-  private attach(peer: ChatPeer): ChatClient {
-    const client: ChatClient = { peer, name: null };
+  private attach(peer: ChatPeer, language: Language): ChatClient {
+    const client: ChatClient = { peer, name: null, language };
     this.clients.add(client);
     return client;
   }
 
   /** 开场白在全部回调挂载后发送。 */
   private greet(client: ChatClient): void {
-    this.sendJson(client.peer, { type: 'sys', text: this.t.greeting });
+    this.sendJson(client.peer, { type: 'sys', text: text(client.language).greeting });
   }
 
   /** 连接结束:出名单、给还在场的人一句提示。进出不打扰bot。 */
   private detach(client: ChatClient): void {
     this.clients.delete(client);
     if (client.name === null || !this.host) return;
-    this.broadcast({ type: 'sys', text: this.t.left(client.name) });
+    const name = client.name;
+    this.broadcastSys((t) => t.left(name), null);
+  }
+
+  /** 给在场的每条流一句系统提示,各按自己的语言;`except` 那条不发。 */
+  private broadcastSys(line: (t: TerminalText) => string, except: ChatClient | null): void {
+    for (const c of [...this.clients]) {
+      if (c === except || !c.peer.open) continue;
+      this.sendJson(c.peer, { type: 'sys', text: line(text(c.language)) });
+    }
   }
 
   // ── 协议(两条入口共用的唯一一份) ───────────────────────────────────
@@ -525,7 +518,7 @@ export class TerminalWorld implements World {
    * 流式通道的 `string` 在各自入口就已经归一成文本,到这里两条路完全同一份代码。
    */
   private onFrame(client: ChatClient, raw: string): void {
-    const t = this.t;
+    const t = text(client.language);
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -549,14 +542,8 @@ export class TerminalWorld implements World {
       client.name = name;
       this.sendJson(client.peer, { type: 'sys', text: t.hello(name) });
       if (firstHello) this.replayHistory(client);
-      if (firstHello) {
-        // 给其他在场客户端一条提示;进出不打扰bot
-        for (const c of this.clients) {
-          if (c !== client && c.peer.open) {
-            this.sendJson(c.peer, { type: 'sys', text: t.joined(name) });
-          }
-        }
-      }
+      // 给其他在场客户端一条提示;进出不打扰bot
+      if (firstHello) this.broadcastSys((tt) => tt.joined(name), client);
       return;
     }
 
@@ -584,7 +571,7 @@ export class TerminalWorld implements World {
         bytes: img.bytes,
         mime: img.mime,
         ...(img.name ? { name: img.name } : {}),
-        fallbackText: t.imageFallback(from, i + 1, total),
+        fallbackText: MODEL_TEXT.imageFallback(from, i + 1, total),
       }));
       // 操作员消息:落库 + internal 投递(进 user 区)+ flush(跳过合批安静窗口)。
       // 口令标记由 World 加,操作员不打;meta.from/body 供 hello 时历史回放还原,图片从落库的 blobs 取。
@@ -600,7 +587,7 @@ export class TerminalWorld implements World {
           ts: nowIso(this.timezone),
           source: this.id,
           origin: 'internal',
-          text: pin ? `${t.pinMark(pin)} ${line}` : line,
+          text: pin ? `${MODEL_TEXT.pinMark(pin)} ${line}` : line,
           senderKey: client.name,
           meta: { from: client.name, body: text },
           ...(blobs.length ? { blobs } : {}),
@@ -644,12 +631,13 @@ export class TerminalWorld implements World {
    * 面板调用面。`blob(handle)` 按句柄回附件字节,回显与回放里的图都从这里取。
    * 句柄来自本 World 自己投出去的帧;不合形状或已不在库里的句柄抛错(404 语义归框架)。
    */
-  private invoke(panel: string, method: string, args: unknown[]): Promise<unknown> {
-    if (panel !== PANEL_CHAT) throw new Error(this.t.unknownPanel(panel));
-    if (method !== 'blob') throw new Error(this.t.unknownMethod(method));
+  private invoke(panel: string, method: string, args: unknown[], language: Language): Promise<unknown> {
+    const t = text(language);
+    if (panel !== PANEL_CHAT) throw new Error(t.unknownPanel(panel));
+    if (method !== 'blob') throw new Error(t.unknownMethod(method));
     const handle = typeof args[0] === 'string' ? args[0] : '';
     const got = this.host?.blob(handle) ?? null;
-    if (!got) throw new Error(this.t.noSuchBlob(handle));
+    if (!got) throw new Error(t.noSuchBlob(handle));
     return Promise.resolve({ $binary: { mime: got.mime, base64: Buffer.from(got.bytes).toString('base64') } });
   }
 

@@ -19,6 +19,7 @@ import type {
   CoreApi, World, MemoryAssemblyContext, PersonaConsoleDecl,
   SessionDecl, SystemPrefixContext, ToolDef, ToolSpec, ContextHandoffResult,
 } from 'cortico/core/types.ts';
+import type { Language } from 'cortico/core/language.ts';
 import type { BotConfig } from '../index.ts';
 import { hourIn } from 'cortico/core/util.ts';
 import { renderTemplate } from 'cortico/core/template.ts';
@@ -380,12 +381,12 @@ export class CortiSoulmate extends Cormini {
    * 部署绑定的(存档点 / 统一重置 / 强制入梦)在 bots/corti-soulmate/console-page.ts。
    * 工作区归版本历史管,不进「删除全部数据」。
    */
-  override console(): PersonaConsoleDecl {
+  override console(language: Language = 'zh'): PersonaConsoleDecl {
     return personaConsoleDecl({
       memory: this.memory,
       memo: this.memo,
       emergences: () => this.emergences(),
-      firstTurnDocs: this.firstTurnDocs(),
+      firstTurnDocs: this.firstTurnDocs(language),
       texts: { path: (name) => this.textFile(name), writePath: (name) => this.textWritePath(name) },
     });
   }

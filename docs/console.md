@@ -54,10 +54,17 @@ World、Persona 与 provider 各自贡献自己的页,页 id `world:<id>` / `per
 
 ## 语言
 
-`zh` / `en`。优先级:`config.json` 的 `language` > `CORTICO_LANGUAGE` > 系统区域(非中文即英文)。
-部署语言在进程起来时读一次,写进 `<html lang>`;面板经 `ctx.language` 读到,自己决定带不带第二套文案。
-设置 → 通用提供「简体中文 / English」按钮。选择保存在当前浏览器,覆盖页面默认语言;确认后刷新页面,未保存编辑会丢失。无需重启 Bot。服务端生成的消息与配置组文案仍使用部署语言。
-Settings → General offers Simplified Chinese / English buttons. The browser remembers the choice and reloads after confirmation; unsaved edits are lost. The bot keeps running. Server-generated messages and configuration labels retain the deployment language.
+界面语言是浏览器的属性,`zh` / `en`。默认值进程起来时读一次:`config.json` 的 `language` >
+`CORTICO_LANGUAGE` > 系统区域(非中文即英文),写进 `<html lang>`。设置 → 通用的「简体中文 /
+English」把选择存在当前浏览器里,刷新页面生效,不重启 bot。
+
+之后每个请求自带语言(HTTP 头 `x-cortico-language`,WebSocket 握手查询串 `language`),服务端给
+控制台的文案都按它现取:`World.console(language)`、`Persona.console(language)`、provider 的配置组、
+回执、校验报错、关机账。面板经 `ctx.language` 读到同一个值。贡献方自己决定带不带第二套文案,
+没有的那种给中文。
+
+发给模型的文本不看它:World 自带的环境提示词模板、工具回执、事件正文固定英文;Persona 的文本
+是作者写成什么语言就是什么语言。
 
 中文界面里 Core、Persona、Memory、World 是专名,不翻译。
 

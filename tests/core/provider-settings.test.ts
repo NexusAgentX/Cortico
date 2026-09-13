@@ -158,7 +158,7 @@ describe('Provider 配置事务', () => {
   it('端点表面板认领内核内置实现:每个模块只出数据面,界面不归它', () => {
     const { settings } = fixture();
     for (const source of settings.sources()) {
-      const panel = source.contribute().panels!.find((p) => p.id === 'settings')!;
+      const panel = source.contribute('zh').panels!.find((p) => p.id === 'settings')!;
       expect([source.id, panel.builtin]).toEqual([source.id, 'llm-settings']);
     }
   });
@@ -193,7 +193,7 @@ describe('Provider 配置事务', () => {
 
 describe('Provider 数据面:建、删、复制、密钥、模型列表、探测', () => {
   const invoke = (settings: ProviderSettings, method: string, body: Record<string, unknown>) =>
-    settings.sources().find((source) => source.id === 'llm:openai-responses-compat')!.contribute().invoke!('settings', method, [body]);
+    settings.sources().find((source) => source.id === 'llm:openai-responses-compat')!.contribute('zh').invoke!('settings', method, [body]);
   it('新建只吃名字与地址:缺地址落模块默认,报价默认 0 美元;同名只有在旧条目无模块认领时才能覆盖', async () => {
     const { cfg, settings, endpoint } = fixture();
     cfg.providers.ghost = { kind: 'deleted-module', baseUrl: 'https://ghost.test' };

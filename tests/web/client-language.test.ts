@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readLanguage, saveLanguage } from '../../src/web/client/core/language.ts';
+import { readLanguage, saveLanguage, withLanguage } from '../../src/web/client/core/language.ts';
 
 beforeEach(() => {
   localStorage.clear();
@@ -30,6 +30,11 @@ describe('console language preference', () => {
   it('uses the server default when storage is blocked', () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
     expect(readLanguage(document)).toBe('en');
+  });
+
+  it('attaches the language to a WebSocket path as a query parameter', () => {
+    expect(withLanguage('/ws/x')).toMatch(/^\/ws\/x\?language=(zh|en)$/);
+    expect(withLanguage('/ws/x?a=1')).toMatch(/^\/ws\/x\?a=1&language=(zh|en)$/);
   });
 
   it('reports storage failure instead of silently losing the choice', () => {

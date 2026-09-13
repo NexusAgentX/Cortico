@@ -10,7 +10,7 @@ Owner: `src/paths.ts`, `src/launcher.ts`, `src/core/secrets.ts`
 | `CORTICO_START_PAUSED` | `src/launcher.ts` | `1` / `true`:启动即暂停 |
 | `CORTICO_OPEN_BROWSER` | `src/launcher.ts` | `1` / `true`:起来后打开控制台 |
 | `CORTICO_SUPERVISED` | `src/boot.ts` | 由 `bin/cortico.mjs` 设置;控制台据此把「重启进程」标成会回来,子进程也据此才往 IPC 通道发消息 |
-| `CORTICO_LANGUAGE` | `src/core/language.ts` | 控制台语言,次于 `config.json` 的 `language` |
+| `CORTICO_LANGUAGE` | `src/core/language.ts` | 控制台默认语言,次于 `config.json` 的 `language` |
 | 任意密钥名 | `src/core/secrets.ts` | 进程环境里有就用它,否则读对应 `.env` |
 
 密钥按持有者分三处,读法都是「进程环境优先,否则读文件一次」:

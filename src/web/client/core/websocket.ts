@@ -4,6 +4,7 @@
  */
 
 import type { ConsoleStreamHandle } from '../../shared/client-panel.ts';
+import { withLanguage } from './language.ts';
 import type { Lifecycle } from './lifecycle.ts';
 import { openStream, type SocketLike } from './stream.ts';
 
@@ -34,7 +35,7 @@ export function wsUrlOf(loc: LocationLike, path: string): string {
  */
 export function browserSocketEnv(win: Window & typeof globalThis): SocketEnv {
   return {
-    wsUrl: (path) => wsUrlOf(win.location, path),
+    wsUrl: (path) => wsUrlOf(win.location, withLanguage(path)),
     createSocket: (url) => new win.WebSocket(url) as unknown as SocketLike,
     setTimer: (fn, ms) => win.setTimeout(fn, ms),
     clearTimer: (id) => win.clearTimeout(id),
