@@ -1,4 +1,4 @@
-# 跑的就是 AGENTS.md §6 那几条命令,只是在两个操作系统上各跑一遍。
+# 提交前要求跑绿的同一套命令,在两个操作系统上各跑一遍。
 name: CI
 
 on:
@@ -6,23 +6,23 @@ on:
     branches: [master]
   pull_request:
 
-# 同一分支上的新推送顶掉还没跑完的那次。
+# 同一分支的新推送取消仍在跑的旧运行。
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  # corepack 按 package.json 的 packageManager 取 pnpm,别停下来问人。
+  # corepack 下载 pnpm 前会请求确认,CI 里无人应答。
   COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
 
 jobs:
   check:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    # Windows runner 比 ubuntu 慢一截;整套本机约 100 秒,留足余量。
+    # Windows runner 比 ubuntu 慢一截;本机全套约 100 秒,30 分钟足够。
     timeout-minutes: 30
     strategy:
-      # 一边红不掐掉另一边:跨平台问题往往只在一边现形,两边的结果都要看到。
+      # 两个 OS 都要跑完:跨平台问题往往只在一侧现形。
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -35,13 +35,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # engines.node 是 >=22。Node 25 起不再自带 corepack,那时这一步要改。
+          # engines.node 要求 >=22;Node 25 起不再附带 corepack,升级时这一步要跟着改。
           node-version: 22
           cache: pnpm
 
       - name: Install dependencies
-        # 锁文件是在 Windows 上生成的,但 pnpm 把各平台的可选包全记在里面
-        # (@rollup/rollup-linux-x64-gnu、@esbuild/linux-x64 等),冻结锁在 ubuntu 上装得起来。
+        # 锁文件在 Windows 上生成,但 pnpm 把各平台的可选包都记在里面
+        # (@rollup/rollup-linux-x64-gnu、@esbuild/linux-x64 等),ubuntu 上冻结安装不受影响。
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck (Node)
