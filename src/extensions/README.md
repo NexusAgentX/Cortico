@@ -1,10 +1,12 @@
 # src/extensions
 
-Owner: `src/extensions/manifest.ts`, `src/extensions/runtime.ts`, `src/extensions.ts`
+Owner: `src/extensions/manifest.ts`, `src/extensions/runtime.ts`, `src/extensions/dry-mount.ts`, `src/extensions.ts`
 
 扩展是装在 `extensions/` 下的 npm 包,给框架补一个 World、一个 provider 或一个 bot。
 三类共用一份 manifest 与一条装载线;按 `kind` 分叉的只有默认导出的形状校验、id 命名空间
-和控制台页前缀。
+和控制台页前缀。`dry-mount.ts` 把装载之后、`start()` 之前那段在假部署里做一遍
+(World `create()` / `tools()` / `console()`,provider `create()`,bot `build()`),只给
+`pnpm check:extension` 用。
 
 ## manifest
 

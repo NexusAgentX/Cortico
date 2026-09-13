@@ -4,7 +4,8 @@
  * 走的是启动时那条装载线本身(同一份 manifest 解析、同一个入口解析、同一套形状校验),
  * 所以这里报通过,框架启动时就会加载它。每条不合格都指出改哪里;有一条不合格即退出码 1。
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -14,6 +15,13 @@ import {
   type ExtensionPackageJson,
 } from '../src/extensions/manifest.ts';
 import { registerFrameworkResolver } from '../src/extensions/runtime.ts';
+import { collectToolNames, dryMountBot, dryMountProvider, dryMountWorld, type DryMountReport } from '../src/extensions/dry-mount.ts';
+import { BUILTIN_WORLDS } from '../src/worlds/index.ts';
+import { providerModules } from '../src/providers/registry.ts';
+import type { BotDefinition } from '../src/bot.ts';
+import type { CoreConfig } from '../src/core/types.ts';
+import type { WorldDefinition, WorldSection } from '../src/world.ts';
+import type { ProviderModule } from '../src/providers/base.ts';
 import {
   EXTENSION_PAGE_KIND,
   isBotDefinition,
@@ -106,16 +114,11 @@ async function main(): Promise<void> {
   ok(`默认导出符合 ${manifest.kind} 的形状;id = ${id}`);
   if (manifest.kind === 'bot') {
     console.log('    bot id 不得与仓内 bots/ 下任一目录同名;deployment.json 的 bot 字段填包名即启用。');
-    try {
-      const defaults = (exported as { defaults: () => unknown }).defaults();
-      if (!defaults || typeof defaults !== 'object') fail('defaults() 没有返回对象:装配时的四层合并从它开始。');
-      else ok('defaults() 能跑,返回对象。');
-    } catch (error) {
-      fail(`defaults() 抛错: ${error instanceof Error ? error.message : String(error)}`);
-    }
     console.log('    包目录只读:promptDocs 里没给 deploymentPath 的模板在控制台里显示但不能保存。');
   } else {
     console.log(`    ${noun} id 在整份部署里唯一,与内建的或别的扩展撞名就不会装上。`);
+    const builtin = manifest.kind === 'world' ? BUILTIN_WORLDS.map((w) => w.id) : providerModules.map((p) => p.id);
+    if (builtin.includes(id)) fail(`${noun} id「${id}」与内建的撞名,装载器不装它。`);
   }
 
   if (manifest.consoleClient === undefined) {
@@ -133,6 +136,34 @@ async function main(): Promise<void> {
       if (extensionPackageFile(pkgDir, manifest.consoleStyle)) ok(`浏览器端样式: ${manifest.consoleStyle}`);
       else warn(`cortico.consoleStyle 指的 ${manifest.consoleStyle} 不在包里:面板按无样式发。`);
     }
+  }
+
+  // 干装载:装载器在 import 之后、start() 之前会做的事,在假部署里做一遍。
+  console.log('');
+  console.log('干装载(假部署、默认配置、无密钥,不起进程):');
+  const scratchDir = mkdtempSync(join(tmpdir(), 'cortico-check-'));
+  try {
+    const dryOpts = {
+      scratchDir,
+      packageDir: pkgDir,
+      repoRoot: resolve(import.meta.dirname, '..'),
+      hasConsoleClient: manifest.consoleClient !== undefined,
+    };
+    let report: DryMountReport;
+    if (manifest.kind === 'world') {
+      const { taken, skipped } = collectToolNames(BUILTIN_WORLDS, dryOpts);
+      for (const s of skipped) warn(`内建 World 在假环境下构造失败,撞名对照缺它: ${s}`);
+      report = await dryMountWorld(exported as WorldDefinition<WorldSection>, { ...dryOpts, takenToolNames: taken });
+    } else if (manifest.kind === 'provider') {
+      report = dryMountProvider(exported as ProviderModule, dryOpts);
+    } else {
+      report = dryMountBot(exported as BotDefinition<CoreConfig>, dryOpts);
+    }
+    for (const m of report.ok) ok(m);
+    for (const m of report.warnings) warn(m);
+    for (const m of report.failures) fail(m);
+  } finally {
+    rmSync(scratchDir, { recursive: true, force: true });
   }
 
   verdict();
