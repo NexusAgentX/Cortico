@@ -251,7 +251,12 @@ export class WorkspaceGit {
       ...this.authorArgs(AUTHOR_OPERATOR),
       'commit', '--allow-empty', '-m', 'checkpoint0:出厂/重置后的干净状态',
     ]);
-    this.run(['tag', '-a', 'checkpoint0', '-m', '出厂/重置后的干净状态(init 自动)']);
+    // annotated tag 的 tagger 同样取 user.name/user.email:机器上没配全局身份时
+    // (干净的 CI runner 就是)不带这两条,git tag -a 会以「Committer identity unknown」直接失败。
+    this.run([
+      ...this.authorArgs(AUTHOR_OPERATOR),
+      'tag', '-a', 'checkpoint0', '-m', '出厂/重置后的干净状态(init 自动)',
+    ]);
     return { created: true };
   }
 
@@ -464,7 +469,7 @@ export class WorkspaceGit {
       throw new Error(`checkpoint 已存在:${name}`);
     }
     this.commitAll(`checkpoint「${name}」`, author);
-    this.run(['tag', '-a', name, '-m', message || name]);
+    this.run([...this.authorArgs(author), 'tag', '-a', name, '-m', message || name]);
   }
 
   deleteTag(name: string): void {
