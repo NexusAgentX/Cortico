@@ -38,6 +38,11 @@ pull request is closed.
 ## Before opening a pull request
 
 - Open an issue first for anything larger than a local fix.
+- Every pull request must explain its changes in plain language, with at least one paragraph
+  in Chinese and one in English.
+- All submitted natural-language content, including descriptions, UI copy, prompts,
+  documentation, code comments and commit messages, must be written and reviewed against the
+  [AI slop checklist](AGENTS.md#ai-slop-checklist) before submission.
 - Both green, and browser changes also need the third:
 
 ```bash
