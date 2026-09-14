@@ -14,7 +14,7 @@ function internal(text = 'tick'): WakeItem {
   return { event: { cursor: 0, type: 'tick', ts: '2026-07-17T10:00:00+08:00', source: 'persona', origin: 'internal', text } };
 }
 
-/** 投递成文项(挂单):正文在发车刻才渲染 */
+/** 正文在投递时生成的延迟渲染项。 */
 function deferred(type = 'bilibili.audience', render: () => string | null = () => '读数'): WakeItem {
   return { deferred: { type, source: 'bilibili', origin: 'external', render } };
 }
@@ -43,8 +43,8 @@ function candidate(n: number, text = `c${n}`): WakeItem {
 }
 
 describe('WakeBus 投递时刻:四条判据', () => {
-  it('地板:细水长流的事件源不再每条各叫醒一次', async () => {
-    // 间隔 30ms 大于安静窗 20ms —— 只有防抖时这三条会各自成批(三次唤醒)
+  it("minBatchAge 将间隔超过 quietGap 的事件合并投递", async () => {
+    // 事件间隔超过 quietGap；minBatchAge 仍应阻止逐条投递。
     const bus = new WakeBus({ quietGapMs: 20, minBatchAgeMs: 150, maxBatchAgeMs: 5000, maxBatchSize: 100 });
     const delivered = vi.fn();
     const p = bus.nextBatch();
@@ -62,7 +62,7 @@ describe('WakeBus 投递时刻:四条判据', () => {
     expect(batch.map((b) => (b.event?.origin === 'external' ? b.event!.cursor : -1))).toEqual([1, 2, 3]);
   });
 
-  it('地板从首件起算:安静下来也要等够,不提前投', async () => {
+  it("minBatchAge 从首项到达起算，quietGap 到期不提前投递", async () => {
     const bus = new WakeBus({ quietGapMs: 10, minBatchAgeMs: 200, maxBatchAgeMs: 5000, maxBatchSize: 100 });
     const delivered = vi.fn();
     const p = bus.nextBatch();
@@ -75,15 +75,15 @@ describe('WakeBus 投递时刻:四条判据', () => {
     expect(await p).toEqual([evt(1)]);
   });
 
-  it('地板过了还在说话:防抖接着等,取两者之晚', async () => {
+  it("minBatchAge 到期后仍等待 quietGap", async () => {
     const bus = new WakeBus({ quietGapMs: 120, minBatchAgeMs: 50, maxBatchAgeMs: 5000, maxBatchSize: 100 });
     const delivered = vi.fn();
     const p = bus.nextBatch();
     void p.then(delivered);
     const t0 = Date.now();
     bus.push(evt(1));
-    await vi.advanceTimersByTimeAsync(80); // 地板已过
-    bus.push(evt(2)); // 末件重置防抖
+    await vi.advanceTimersByTimeAsync(80); // 已超过 minBatchAge。
+    bus.push(evt(2));
     await vi.advanceTimersByTimeAsync(119);
     expect(delivered).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
@@ -140,19 +140,19 @@ describe('WakeBus 投递时刻:四条判据', () => {
     expect(await batch).toEqual([candidate(1), candidate(2)]);
   });
 
-  it('搭车项自己不触发投递,也不推迟别人:随下一批一起带出', async () => {
+  it("piggyback 随下一批投递，不启动或延后计时器", async () => {
     const bus = new WakeBus({ quietGapMs: 40, minBatchAgeMs: 0, maxBatchAgeMs: 5000, maxBatchSize: 100 });
     const delivered = vi.fn();
     const p = bus.nextBatch();
     void p.then(delivered);
     bus.push(evt(1), { trigger: 'piggyback' });
     bus.push(evt(2), { trigger: 'piggyback' });
-    // 只有搭车项时没有任何钟在走
+    // 仅有 piggyback 时不启动计时。
     await vi.advanceTimersByTimeAsync(150);
     expect(delivered).not.toHaveBeenCalled();
     expect(bus.pending()).toBe(2);
     const t0 = Date.now();
-    bus.push(evt(3)); // 常规项起表,搭车的跟着走
+    bus.push(evt(3)); // 其他事件触发投递时包含 piggyback。
     await vi.advanceTimersByTimeAsync(39);
     expect(delivered).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
@@ -162,16 +162,16 @@ describe('WakeBus 投递时刻:四条判据', () => {
     expect(batch.map((b) => (b.event?.origin === 'external' ? b.event!.cursor : -1))).toEqual([1, 2, 3]);
   });
 
-  it('搭车项遇到 flush 也一并带走', async () => {
+  it("flush 触发时包含队列中的 piggyback", async () => {
     const bus = new WakeBus({ quietGapMs: 10_000, minBatchAgeMs: 10_000, maxBatchAgeMs: 60_000, maxBatchSize: 100 });
     const p = bus.nextBatch();
     bus.push(evt(1), { trigger: 'piggyback' });
-    bus.push(internal()); // 内部唤醒一律冲洗
+    bus.push(internal()); // 内部事件默认 flush。
     const batch = await p;
     expect(batch).toHaveLength(2);
   });
 
-  it('搭车项不占攒批条数:凑不出一批,别让状态帧替真事件按下发车键', async () => {
+  it("piggyback 不计入批次大小上限", async () => {
     const bus = new WakeBus({ quietGapMs: 10_000, minBatchAgeMs: 10_000, maxBatchAgeMs: 60_000, maxBatchSize: 3 });
     const delivered = vi.fn();
     const p = bus.nextBatch();
@@ -179,13 +179,13 @@ describe('WakeBus 投递时刻:四条判据', () => {
     bus.push(evt(1), { trigger: 'piggyback' });
     bus.push(evt(2), { trigger: 'piggyback' });
     bus.push(evt(3), { trigger: 'piggyback' });
-    bus.push(evt(4)); // 队列已 4 条,但只有这 1 条算数
+    bus.push(evt(4)); // 四项中只有一个外部非 piggyback 事件参与计数。
     await vi.advanceTimersByTimeAsync(150);
     expect(delivered).not.toHaveBeenCalled();
     expect(bus.pending()).toBe(4);
   });
 
-  it('搭车项不算积压的即时项:空闲判定不被停放的状态帧压住', () => {
+  it("空闲判定不计 piggyback 项", () => {
     const bus = new WakeBus({ quietGapMs: 10_000, minBatchAgeMs: 0, maxBatchAgeMs: 60_000, maxBatchSize: 100 });
     bus.push(evt(1), { trigger: 'piggyback' });
     bus.push(deferred(), { trigger: 'piggyback' });
@@ -195,7 +195,7 @@ describe('WakeBus 投递时刻:四条判据', () => {
     expect(bus.pendingImmediate()).toBe(1);
   });
 
-  it('投递之后地板与上限从下一条重新起算', async () => {
+  it("投递后 minBatchAge 和 maxBatchAge 从下一项重新计时", async () => {
     const bus = new WakeBus({ quietGapMs: 10, minBatchAgeMs: 100, maxBatchAgeMs: 5000, maxBatchSize: 100 });
     const delivered = vi.fn();
     const first = bus.nextBatch();
@@ -238,7 +238,7 @@ describe('WakeBus', () => {
   });
 
   it('opts是活引用:构造后就地改quietMs,下一次push即用新值(web热改路径)', async () => {
-    // 模拟 core 传 cfg.batching 引用:改对象字段,不重建 bus
+    // 修改共享配置对象，保持同一个 bus 实例。
     const opts = { quietGapMs: 10_000, minBatchAgeMs: 0, maxBatchAgeMs: 60_000, maxBatchSize: 100 };
     const bus = new WakeBus(opts);
     const delivered = vi.fn();
@@ -253,7 +253,7 @@ describe('WakeBus', () => {
     expect(await p).toEqual([evt(1)]);
   });
 
-  it('urgent立即投递,不等安静窗口', async () => {
+  it('flush 立即投递，不等安静窗口', async () => {
     const bus = new WakeBus({ quietGapMs: 10_000, minBatchAgeMs: 0, maxBatchAgeMs: 60_000, maxBatchSize: 100 });
     const delivered = vi.fn();
     const p = bus.nextBatch();
@@ -330,7 +330,7 @@ describe('WakeBus', () => {
     expect(preempts).toBe(1);
   });
 
-  it('internal item一律按urgent处理', async () => {
+  it('内部事件默认使用 flush', async () => {
     const bus = new WakeBus({ quietGapMs: 10_000, minBatchAgeMs: 0, maxBatchAgeMs: 60_000, maxBatchSize: 100 });
     const delivered = vi.fn();
     const p = bus.nextBatch();
@@ -461,7 +461,7 @@ describe('WakeBus', () => {
     expect(await second).toEqual([evt(4)]);
   });
 
-  it('闸门的两条出口都不认搭车项:关键词不命中、溢出不计数', async () => {
+  it("piggyback 不参与 gate 关键词或溢出判定", async () => {
     const bus = new WakeBus({ quietGapMs: 20, minBatchAgeMs: 0, maxBatchAgeMs: 5000, maxBatchSize: 100 });
     let matches = 0;
     let overflows = 0;
@@ -475,7 +475,7 @@ describe('WakeBus', () => {
     const delivered = vi.fn();
     const waiting = bus.nextBatch();
     void waiting.then(delivered);
-    bus.push(evt(2), { trigger: 'piggyback' }); // 正文含关键词,但搭车项不叫醒
+    bus.push(evt(2), { trigger: 'piggyback' }); // piggyback 不参与关键词匹配。
     bus.push(evt(3), { trigger: 'piggyback' });
     bus.push(evt(4), { trigger: 'piggyback' });
     await vi.advanceTimersByTimeAsync(60);
@@ -484,7 +484,7 @@ describe('WakeBus', () => {
     expect(overflows).toBe(0);
     expect(bus.isDeliveryBlocked()).toBe(true);
 
-    // 解闸也不为它们发车;下一个真唤醒项来了才整批 FIFO 放行,一条不丢
+    // 解除 gate 不单独投递 piggyback，后续事件触发时仍按 FIFO 顺序投递。
     bus.clearDeliveryGate('gate-piggyback');
     bus.push(evt(5));
     await vi.advanceTimersByTimeAsync(19);
@@ -494,7 +494,7 @@ describe('WakeBus', () => {
     expect(await waiting).toEqual([evt(2), evt(3), evt(4), evt(5)]);
   });
 
-  it('解闸时只剩搭车项:不发车,等下一个真唤醒项把它们带走', async () => {
+  it("解除 gate 后仅剩 piggyback 时等待其他项触发投递", async () => {
     const bus = new WakeBus({ quietGapMs: 20, minBatchAgeMs: 0, maxBatchAgeMs: 5000, maxBatchSize: 100 });
     bus.setDeliveryGate({ id: 'g', overflowLimit: 100, onKeyword: () => {}, onOverflow: () => {} });
     const delivered = vi.fn();
@@ -514,7 +514,7 @@ describe('WakeBus', () => {
     expect(await waiting).toEqual([evt(1), evt(2)]);
   });
 
-  it('继续时只剩搭车项:暂停解除同样不为它们单独发一趟车', async () => {
+  it("恢复投递后仅剩 piggyback 时继续等待", async () => {
     const bus = new WakeBus({ quietGapMs: 20, minBatchAgeMs: 0, maxBatchAgeMs: 5000, maxBatchSize: 100 });
     bus.setPaused(true);
     bus.push(evt(1), { trigger: 'piggyback' });
@@ -580,11 +580,8 @@ describe('WakeBus', () => {
       expect(bus.pending()).toBe(0);
     });
 
-    /**
-     * 控制台「数据」页的「待投递事件」清空调用的正是这个方法。
-     * 不清会导致暂停期间的积压在继续后原样涌出。
-     */
-    it('暂停期间清空积压:继续之后不再涌出来', async () => {
+    /** 控制台清空待投递事件使用此方法。 */
+    it("暂停时清空待投递事件，恢复后不投递已清除项", async () => {
       const bus = new WakeBus({ quietGapMs: 20, minBatchAgeMs: 0, maxBatchAgeMs: 5000, maxBatchSize: 100 });
       bus.setPaused(true);
       bus.push(evt(1));
@@ -599,7 +596,7 @@ describe('WakeBus', () => {
       const waiting = bus.nextBatch();
       void waiting.then(delivered);
       bus.setPaused(false);
-      // 恢复之后不该有任何东西投递:队列空了,ready 与攒批定时器也一并归零
+      // 清空后队列、ready 和合批计时器均应重置。
       await vi.advanceTimersByTimeAsync(80);
       expect(delivered).not.toHaveBeenCalled();
 
@@ -612,10 +609,7 @@ describe('WakeBus', () => {
       expect(await waiting).toEqual([evt(3)]);
     });
 
-    /**
-     * 挂单正文在发车时渲染；render 同时复位 World 的挂单标记。
-     * 控制台清空只丢已成文积压，须保留挂单的渲染与复位机会。
-     */
+    /** 延迟 render 同时重置 World 的待渲染标志；清空即时事件时需保留它。 */
     it('挂单不随控制台清空被抽走:只丢已成文的积压', () => {
       const bus = new WakeBus({ quietGapMs: 10_000, minBatchAgeMs: 0, maxBatchAgeMs: 60_000, maxBatchSize: 100 });
       bus.push(evt(1));
@@ -626,15 +620,12 @@ describe('WakeBus', () => {
       expect(dropped).toHaveLength(2);
       expect(dropped.every((it) => it.event !== undefined)).toBe(true);
 
-      // 留在队列里的正是那条挂单,它的正文还没渲染过
+      // 延迟项仍在队列，render 尚未调用。
       const left = bus.drainPending(() => true);
       expect(left.map((it) => it.deferred?.type)).toEqual(['bilibili.audience']);
     });
 
-    /**
-     * 搭车项自己不驱动投递(push 时不下计时器)。抽空事件后若因队列非空而不复位,
-     * ready 与攒批计时器会留在原地,下一个消费者为一条不该独自发车的挂单空跑一趟。
-     */
+    /** 仅剩 piggyback 时需重置 ready 与计时器，不能触发独立投递。 */
     it('只剩挂单时同样复位 ready 与计时器', async () => {
       const bus = new WakeBus({ quietGapMs: 20, minBatchAgeMs: 0, maxBatchAgeMs: 5000, maxBatchSize: 100 });
       bus.push(evt(1));
@@ -642,10 +633,10 @@ describe('WakeBus', () => {
       await vi.advanceTimersByTimeAsync(20);
 
       expect(bus.drainPending((it) => it.event !== undefined)).toHaveLength(1);
-      expect(bus.pending()).toBe(1); // 挂单还在
-      expect(bus.takeIfReady()).toBeNull(); // 但它不该独自发车
+      expect(bus.pending()).toBe(1);
+      expect(bus.takeIfReady()).toBeNull(); // piggyback 不能独立投递。
 
-      // 下一条真事件来了,挂单顺路搭车一起走
+      // 后续事件触发整批投递。
       bus.push(evt(2));
       await vi.advanceTimersByTimeAsync(20);
       const batch = await bus.nextBatch();
@@ -653,8 +644,8 @@ describe('WakeBus', () => {
       expect(batch.some((it) => it.deferred?.type === 'bilibili.audience')).toBe(true);
     });
 
-    /** 复位的判据是搭车与否,不是成没成文:已成文的搭车事件同样不该独自发车。 */
-    it('只剩已成文的搭车事件时也复位', async () => {
+    /** 已生成正文的 piggyback 也不单独投递，队列状态同样重置。 */
+    it("仅剩即时 piggyback 事件时重置投递状态", async () => {
       const bus = new WakeBus({ quietGapMs: 20, minBatchAgeMs: 0, maxBatchAgeMs: 5000, maxBatchSize: 100 });
       bus.push(evt(1));
       bus.push(evt(2), { trigger: 'piggyback' });

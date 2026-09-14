@@ -1,7 +1,7 @@
 /**
- * 子进程的 Logger:记录序列化成 IPC note 回主进程,由主进程按同一契约落盘。
- * 锚点在子进程侧从异步上下文取(工具调用期间由 withAnchors 建立),时刻带 epoch
- * 毫秒过界,主进程按 cfg.timezone 渲染,两侧只有一个时基。
+ * 子进程通过 IPC 发送 LogNote，父进程写入日志。
+ * 日志关联字段在子进程的异步作用域读取；时间使用子进程的 epoch 毫秒值，
+ * 由父进程按配置时区格式化。
  */
 import type { LogAnchorFields, LogEmitOptions, LogError, Logger, LogLevel } from './types.ts';
 import { currentAnchors } from './log-context.ts';

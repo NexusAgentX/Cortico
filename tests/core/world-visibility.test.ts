@@ -1,18 +1,13 @@
 /**
- * World 对 agent 的可见性。
- *
- * 可见性开关撤下 agent 侧三要素,但保持 World 运行。断言覆盖这两个方向。
- *
- * 另一条要守住的性质是生效时机分两半:
- *  - 事件投递立即生效(不进请求,零缓存代价);
- *  - 环境提示词与工具等下一次前缀重建(两者同属缓存前缀,必须一起换)。
+ * 隐藏 World 后立即停止事件投递，仍保持运行与归档。
+ * 环境前缀和工具表在下一次前缀重建时一起更新。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-/** 探针 World 的环境提示词模板也走真文件——不给测试留绕开模板的捷径 */
+/** 探针 World 通过文件声明环境模板。 */
 const PROBE_TEMPLATE_DIR = mkdtempSync(join(tmpdir(), 'bot-probe-tpl-'));
 import { Core } from "./fixture-core.ts";
 import { CORE_DEFAULTS, type LoadedConfig } from '../../src/core/config.ts';
@@ -22,9 +17,8 @@ import { FakeLLM, makeCfg, makeFakePersona, sleep } from './helpers.ts';
 class ProbeWorld implements World {
   host: WorldHost | null = null;
   stopped = false;
-  /** World 自己关掉半边功能:环境提示词与工具一起交空 */
+  /** 关闭功能后返回空环境描述与工具表。 */
   featureOff = false;
-  /** 模板与真 World 同路径同形态,内容就是断言里认的那句 */
   readonly templatePath: string;
   constructor(readonly id: string) {
     this.templatePath = join(PROBE_TEMPLATE_DIR, `${id}.md`);
@@ -65,7 +59,6 @@ class ProbeWorld implements World {
   async stop(): Promise<void> {
     this.stopped = true;
   }
-  /** World 自己的日常活动:推一条事件进来 */
   emit(text: string) {
     return this.host!.pushEvent({
       ts: new Date().toISOString(),
@@ -102,13 +95,13 @@ beforeEach(async () => {
   // 挂载表是Persona与 core 共用的同一个数组:运行中挂载/卸载两边同时看到
   const worlds = [probe];
   core = new Core(loaded, {
-    // Persona要把 World 工具并进主 session 的工具表,可见性过滤才有东西可减
+    // 测试 Persona 将 World 工具加入主 session 声明。
     persona: makeFakePersona([], { cfg: config, worlds: worlds }),
     worlds: worlds,
     llm: new FakeLLM(),
   });
   await core.start();
-  // 让 run() 走完 bootstrap,前缀与工具表都已按初始可见性烘好
+  // 等待 bootstrap 完成，初始前缀与工具表已生成。
   await sleep(50);
 });
 
@@ -127,7 +120,7 @@ describe('World 对 agent 的可见性', () => {
     expect(core.isWorldVisible('probe')).toBe(true);
   });
 
-  it('隐藏后事件立即不再投递,但照常落库(经历不丢)', async () => {
+  it("隐藏后事件立即停止投递，仍写入事件库", async () => {
     const before = core.store.latestCursor();
     core.setWorldVisible('probe', false);
     probe.emit('隐藏期间说的话');
@@ -162,7 +155,7 @@ describe('World 对 agent 的可见性', () => {
 
   it('World 自己撤下工具也算前缀漂移,重载后环境提示词与工具一起跟上', async () => {
     probe.featureOff = true;
-    // 可见性没动,但它交出的东西变了:前缀里那份已经不是现在这份
+    // 可见性相同但工具表已变化，应提示前缀重载。
     expect(core.worldVisibility().driftedWorlds).toEqual(['probe']);
     expect(systemPrefix()).toContain('[probe 的环境提示词]');
     expect(toolNames()).toContain('send_probe');
@@ -197,8 +190,8 @@ describe('World 对 agent 的可见性', () => {
     probe.emit('第二条');
     const lines = readFileSync(join(core.run.dir, 'log.jsonl'), 'utf8')
       .split('\n')
-      .filter((l) => l.includes('事件只归档不投递'));
-    // 第一条就报,之后十分钟内不再刷屏
+      .filter((l) => l.includes('隐藏 World 的事件仅归档'));
+    // 首条立即报告，其后十分钟内限频。
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain('probe');
   });
@@ -242,7 +235,7 @@ describe('运行中挂载与卸载', () => {
     await expect(core.unmountWorld('nope')).rejects.toThrow('未挂载');
   });
 
-  it('stop 超时或抛错只记账,World 照样出表', async () => {
+  it("stop 超时或抛错仍卸载 World，并记录失败结果", async () => {
     const bad = new ProbeWorld('bad');
     bad.stop = async () => { throw new Error('停不下来'); };
     await core.mountWorld(bad);

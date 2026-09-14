@@ -9,10 +9,9 @@ export type UsageBucketOption = UsageBucketUnit | 'auto';
 export type UsageGroupBy = 'role' | 'model' | 'none';
 
 /**
- * 一个累计单元:总量 + 成本三档拆分。
- * series 点、按角色/模型分组、以及每桶内的子拆分共用此形,前端可任选维度堆叠。
- *   - cost = costCacheHit + costCacheMiss + costOutput + costOther(成本按"钱花在哪"三分)
- *   - reasoningTokens 是 completionTokens 的子集(只观察,不单独计费)
+ * 用量与费用合计，供时间序列及角色、模型分组使用。
+ * cost = costCacheHit + costCacheMiss + costOutput + costOther。
+ * reasoningTokens 是 completionTokens 的子集；费用采用记录内的 charges。
  */
 export interface UsageAccum {
   calls: number;
@@ -39,24 +38,14 @@ export interface UsageSeriesPoint extends UsageAccum {
   byRole: Record<string, UsageAccum>;
   /** 本桶内按模型的子拆分(键=模型);用于堆叠"按模型"视图 */
   byModel: Record<string, UsageAccum>;
-  /**
-   * 本桶内按 角色×模型 的交叉子拆分(byRoleModel[role][model])。
-   * 前端据此可任意组合 类型/角色/模型 三维堆叠:类型档从任一 accum 的成本/token 分量取,
-   * 角色×模型 组合从这里寻址,单角色/单模型仍走 byRole/byModel。
-   */
+  /** 按角色与模型交叉分组，键为 byRoleModel[role][model]。 */
   byRoleModel: Record<string, Record<string, UsageAccum>>;
 }
 
 /** 按 role / model 分组的合计 */
 export interface UsageGroupStat extends UsageAccum {
   key: string;
-  /**
-   * 人话名,来自声明方(`UsageRecord.label`)。
-   *
-   * 控制台**不许**自己拿 key 查一张中文名表:role 是「Persona定义的不透明字符串」
-   * (见 `UsageRecord.role` 的注释),换个Persona那批名字就全变了。拿不到时前端
-   * 印 key 原文,不猜。与 key 相同时省略。
-   */
+  /** 声明方提供的 UsageRecord.label；与 key 相同时省略。缺失时显示 key，不推断角色名称。 */
   label?: string;
   cacheHitRate: number | null;
 }
@@ -165,9 +154,8 @@ function daySpan(from?: string | null, to?: string | null): number {
 }
 
 /**
- * 自适应粒度:按范围跨度挑一个"桶数适中"的粒度。
- *   ≤2 天→时 / ≤62 天→天 / ≤366 天→周 / 更长→月。
- * 范围开放(缺 from/to)时保守用天。分钟粒度只由用户显式选择(auto 不会挑它)。
+ * 自动粒度：跨度 ≤2 天用小时，≤62 天用天，≤366 天用周，其余用月。
+ * 缺少 from/to 时用天；分钟需显式选择。
  */
 export function resolveBucket(from?: string | null, to?: string | null): UsageBucketUnit {
   const span = daySpan(from, to);
@@ -179,10 +167,8 @@ export function resolveBucket(from?: string | null, to?: string | null): UsageBu
 }
 
 /**
- * 聚合原始记录:按 from/to(日期前缀 YYYY-MM-DD,含端)筛选,
- * 按 bucket 粒度出时间序列,并给出总计 + 按角色/模型分组。
- * 每条记录的成本按其 model 单独取价,混用模型也准。
- * 每个 series 点额外带 byRole/byModel 子拆分与成本三档,供前端任选维度堆叠。
+ * 按包含端点的日期范围筛选，按时间、角色和模型聚合用量。
+ * 费用从记录内的 charges 按币种和计价基础选择，再按 meter 归入四类成本。
  */
 export function aggregateUsage(
   records: UsageRecord[],
@@ -192,7 +178,7 @@ export function aggregateUsage(
   const unit: UsageBucketUnit = opts.bucket === 'auto' ? resolveBucket(from, to) : opts.bucket;
   const series = new Map<string, { total: UsageAccum; roles: Map<string, UsageAccum>; models: Map<string, UsageAccum>; roleModels: Map<string, Map<string, UsageAccum>> }>();
   const roles = new Map<string, UsageAccum>();
-  /** role → 声明方给的人话名;同 role 出现多次时以最后一条为准。 */
+  /** 同一 role 的 label 使用最后一条记录提供的值。 */
   const roleLabels = new Map<string, string>();
   const models = new Map<string, UsageAccum>();
   const totals = zero();

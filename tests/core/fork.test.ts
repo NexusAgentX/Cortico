@@ -1,7 +1,5 @@
 import { FixtureClient } from './fixture-protocol.ts';
-/**
- * runForkLoop 的回合契约：声明的 soft 收尾提醒与硬上限撞顶标记。
- */
+/** runForkLoop 的软提醒与硬轮数上限。 */
 import { describe, expect, it } from 'vitest';
 import { runForkLoop } from "./fixture-fork.ts";
 import { nullLogger } from '../../src/core/util.ts';
@@ -47,7 +45,7 @@ function toolTexts(seen: ChatMessage[][]): string[] {
 }
 
 describe('runForkLoop 回合契约', () => {
-  it('收尾提醒落在声明的 soft 轮,不再写死 maxRounds-1', async () => {
+  it("收尾提醒出现在声明的 soft 轮", async () => {
     const llm = new ScriptedLLM(10);
     await runForkLoop({
       id: 'dream',
@@ -65,7 +63,7 @@ describe('runForkLoop 回合契约', () => {
     expect(hinted.slice(0, 5)).toEqual([false, false, true, false, false]);
   });
 
-  it('不给 soft 时落回最后一轮之前(接线前的行为)', async () => {
+  it("未指定 soft 时在 maxRounds-1 轮提醒", async () => {
     const llm = new ScriptedLLM(10);
     await runForkLoop({
       id: 'dream',
@@ -82,7 +80,7 @@ describe('runForkLoop 回合契约', () => {
     expect(hinted).toEqual([false, false, true]);
   });
 
-  it('撞满硬上限:返回正文带上 capNote,半截活不会被当成结论', async () => {
+  it("达到硬轮数上限时在返回正文中加入 capNote", async () => {
     const llm = new ScriptedLLM(99);
     const out = await runForkLoop({
       id: 'dream',
@@ -113,7 +111,7 @@ describe('runForkLoop 回合契约', () => {
     expect(out).toBe('整理完了');
   });
 
-  it('一轮里的多个调用逐个执行并按序配对(并行调用是梦的常态)', async () => {
+  it("一轮中的多个工具调用逐个执行并按序配对", async () => {
     const calls: string[] = [];
     const many: FixtureClient = {
       async chat(_s, _m, _t, _o): Promise<LLMResult> {

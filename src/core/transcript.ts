@@ -1,8 +1,7 @@
 /**
- * transcript:主 session 的只追加副本,`data/runs/<run>/transcript.jsonl`。
- *
- * session-main.jsonl 是上下文,交接与前缀重载会整文件重写;这里每次 append 一行,
- * 交接、清空、前缀重载各写一条边界记录。思维链与工具回执全文只在这里按墙钟连续。
+ * 主 session 的追加记录，保存在 data/runs/<run>/transcript.jsonl。
+ * session-main.jsonl 会在上下文替换时重写；本文件保留每次追加的正文，
+ * 并在交接、清空和前缀重载时写入边界记录。
  */
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';

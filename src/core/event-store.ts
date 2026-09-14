@@ -89,11 +89,11 @@ export class JsonlEventStore implements EventStore {
   /** 下一条事件拿到的 cursor */
   private next = 1;
   /**
-   * 当前分片此刻应有的字节数。写盘前对不上 = 有别人也在写同一个事件库。
-   * 用 size 而不是行数:statSync 每次 append 都要跑,数行要整读一遍文件。
+   * 本实例记录的分片字节数；写入前的大小变化可能来自其他写入方。
+   * 用 stat 比较大小，避免每次追加都读取全部文件。
    */
   private expectedSize = 0;
-  /** 并发写入的 error 只报一次,不刷屏。 */
+  /** 文件大小不符的错误只报告一次。 */
   private concurrencyReported = false;
   private appendListeners: Array<(e: EventEnvelope) => void> = [];
 
@@ -182,10 +182,7 @@ export class JsonlEventStore implements EventStore {
     return envelope;
   }
 
-  /**
-   * 写盘前核一次:文件字节数与本实例的记号对不上,说明另一个进程也在往同一个
-   * 分片追加。此处只报,不拒写——真正的单实例守卫在 instanceLock。
-   */
+  /** 大小与本实例记录不符时报告文件变化，仍继续写入；独占检查由 instanceLock 负责。 */
   private checkExclusiveWrite(): void {
     if (this.concurrencyReported) return;
     let onDisk = 0;
@@ -201,11 +198,10 @@ export class JsonlEventStore implements EventStore {
       onDiskSize: onDisk,
       file: this.current.file,
     });
-    // 记号跟上盘面,否则后续每次 append 都要重复比对
     this.expectedSize = onDisk;
   }
 
-  /** 实时观察接缝(web调试界面用) */
+  /** 事件追加订阅，供控制台实时观察。 */
   onAppend(cb: (e: EventEnvelope) => void): void {
     this.appendListeners.push(cb);
   }
@@ -281,7 +277,7 @@ export class JsonlEventStore implements EventStore {
         if (q.fromTs !== undefined && e.ts < q.fromTs) continue;
         if (q.toTs !== undefined && e.ts > q.toTs) continue;
         if (!e.text.toLowerCase().includes(kw)) continue;
-        // 上下文窗口(不过滤,群聊语境要完整;窗口重叠不合并)
+        // 邻近记录不经过筛选；重叠窗口保持分开。
         hits.push({ hitCursor: e.cursor, events: this.around(e.cursor, ctx, ctx) });
         if (q.limit !== undefined && hits.length >= q.limit) return hits;
       }

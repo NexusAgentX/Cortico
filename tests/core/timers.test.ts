@@ -79,7 +79,7 @@ describe('TimerStore', () => {
     expect(left[0].id).toBe('wk2');
   });
 
-  it('无人认领的到期项只记日志丢弃,不炸', async () => {
+  it("没有 handler 的到期项记录日志后丢弃", async () => {
     const ts = new TimerStore(tmp.dir);
     ts.set(new Date(Date.now() + 40).toISOString(), {});
     ts.start();

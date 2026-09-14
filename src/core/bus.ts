@@ -1,30 +1,11 @@
 /**
- * WakeBus:合批事件总线。
- *
- * 一条事件按 TriggerMode 分四档:preempt 请求取消尚未外化的在途模型轮并立即
- * 投递、flush 到达即投递、debounce 参与计时、piggyback 只入队等下一班车。
- *
- * debounce 那一批的投递时刻由四条判据合成:不早于首件到达 + minBatchAge(地板)、
- * 不早于末件到达 + quietGap(防抖)、不晚于首件到达 + maxBatchAge(上限)、
- * 积压事件到 maxBatchSize 立即投递。满足条件就尽早投。
- *
- * 防抖等待输入安静，地板为小批量设置最早投递时间。两者共同约束低频事件的
- * 逐条投递与突发事件的过早分批。
- *
- * **全序不变式**:队列 FIFO,任何投递都是整个队列——没有任何路径能让后到的
- * 唤醒项先离开总线。总线是 agent 经历的时间线,上下文序 = 投递序 = 到达序。
- * 队列里有三种项:即时成文事件、投递成文观察与候选票据。观察没有发生时刻,
- * 不参与关键词、攒批与闸门溢出。候选票据代表已发生的外部动静,按即时外部项参与
- * 发车与溢出；它的 `gateText` 只用于关键词闸门。
- *
- * **搭车项一条路都不发车。** piggyback 不下计时器、不计入攒批与闸门溢出、
- * 不参与关键词命中,队列里只剩它们时 deliver() 既不投递也不置 ready。它们
- * 唯一的出场方式是被别的唤醒项带走——包括心跳这类周期性内部项,所以积压不会
- * 无限期停在总线上。
- *
- * 两个闸门都扣一切:paused 是操作者暂停,任何自动机制不能解除;投递闸门
- * (DeliveryGate,Persona经 CoreApi 安装)的出口只有解除、关键词命中与
- * 积压溢出,三条出口都整批放行。单消费者:nextBatch() 取走全部积压。
+ * WakeBus 按到达顺序向单个消费者交付整个队列。触发模式及默认值见 types.ts 的 TriggerMode。
+ * debounce 的投递时间为 min(首件 + maxBatchAge, max(首件 + minBatchAge, 末件 + quietGap))；
+ * 可计数外部事件达到 maxBatchSize 时立即投递。
+ * 队列包含即时事件、延迟渲染项与候选项。延迟渲染项不参与关键词匹配或外部事件计数；
+ * 候选项按外部事件计数，关键词只检查 gateText。
+ * piggyback 不触发计时、关键词或溢出，也不单独获得投递许可；需要其他项触发投递。
+ * 人工暂停阻止所有投递。DeliveryGate 解除、关键词回调授权或溢出授权均放行整批。
  */
 import type { DeliveryGate, EventOrigin, Logger, TriggerMode, WakeItem } from './types.ts';
 import { nullLogger } from './util.ts';
@@ -40,9 +21,9 @@ export interface WakeBusOptions {
   maxBatchSize: number;
 }
 
-// opts 在每次 push 时读取;活配置对象的就地更新立即生效,bus 实例保持不变。
+// 每次 push 读取同一个配置对象，原位修改在下一次 push 生效。
 
-/** 队列元素:唤醒项本身,加上入队时定下的档位里唯一有后效的那一位。 */
+/** 入队时固定 piggyback 标志，后续计数与调度沿用该值。 */
 interface Queued {
   item: WakeItem;
   piggyback: boolean;
@@ -80,7 +61,6 @@ export class WakeBus {
 
   push(item: WakeItem, opts?: { trigger?: TriggerMode }): void {
     const origin = originOf(item);
-    // 档位由推的人定;不表态时按来源取默认——内部项通常是"现在就该叫醒她"
     const trigger: TriggerMode =
       opts?.trigger ?? (origin === 'internal' ? 'flush' : 'debounce');
     const piggyback = trigger === 'piggyback';
@@ -88,9 +68,9 @@ export class WakeBus {
     const gate = this.gate;
     if (gate) {
       this.clearTimers();
-      // 搭车项在闸门下同样不发车:两条出口(关键词、溢出)都跳过它。
+      // piggyback 不参与关键词或溢出判定。
       if (piggyback) return;
-      // 投递成文项此刻没有正文,关键词无从命中。
+      // 延迟渲染项没有可用于关键词匹配的正文。
       const gateText = textForGate(item);
       if (origin === 'external' && gate.keyword !== undefined && gateText?.includes(gate.keyword)) {
         gate.onKeyword();
@@ -107,7 +87,7 @@ export class WakeBus {
         return;
       }
       if (origin === 'external' && this.pendingEventCount() > gate.overflowLimit) {
-        // 先获准整批放行:onOverflow 回调里注入的溢出通知随批同行,不拆成两个回合
+        // 回调可能同步注入事件；先设置许可，使注入项仍属于当前批。
         this.bypassGateOnce = true;
         this.log.emit('debug', '闸门下积压越过溢出线,整批放行', { event: 'gate-overflow', data: { gate: gate.id, pending: this.pendingEventCount(), limit: gate.overflowLimit } });
         gate.onOverflow();
@@ -127,12 +107,11 @@ export class WakeBus {
       this.deliver();
       return;
     }
-    // 搭车项保持排队,不启动或延后批次计时器。
+    // piggyback 不启动或延后批次计时器。
     if (piggyback) return;
     const now = Date.now();
     if (this.firstAt === null) this.firstAt = now;
     this.lastAt = now;
-    // 攒够一批就别再等钟了
     if (this.pendingEventCount() >= this.opts.maxBatchSize) {
       this.deliver();
       return;
@@ -140,10 +119,7 @@ export class WakeBus {
     this.arm();
   }
 
-  /**
-   * 按四条判据算出这一批该在什么时刻投递,重下定时器。
-   * 每次 push 都重算:opts 是活引用,控制台热改的新值下一次 push 即生效。
-   */
+  /** 重新计算投递时间；配置修改在下一次 push 生效。 */
   private arm(): void {
     if (this.firstAt === null) return;
     const { quietGapMs, minBatchAgeMs, maxBatchAgeMs } = this.opts;
@@ -218,10 +194,7 @@ export class WakeBus {
     return this.queue.length;
   }
 
-  /**
-   * 积压中的即时项条数(空闲判定用)。长期停放、等着搭车的项不算"还有事没处理"
-   * ——它不该压着空闲钩子(onIdle)不放。
-   */
+  /** 供空闲判定使用：不计延迟渲染项和 piggyback 项。 */
   pendingImmediate(): number {
     let n = 0;
     for (const q of this.queue) {
@@ -230,10 +203,7 @@ export class WakeBus {
     return n;
   }
 
-  /**
-   * 同步抽走队列中所有满足pred的项并按原序返回(消费一次,不再投递);
-   * 纯同步:不await、不投递、不碰waiter/ready/定时器(draft工具中途窥取用)。
-   */
+  /** 按原序取出匹配项，消费后不再投递。同步完成，不触发消费者或改变投递许可和计时器。 */
   drainPending(pred: (item: WakeItem) => boolean): WakeItem[] {
     const drained: WakeItem[] = [];
     const kept: Queued[] = [];
@@ -242,8 +212,7 @@ export class WakeBus {
       else kept.push(q);
     }
     this.queue = kept;
-    // 搭车项自己不驱动投递,只剩它们时也该复位:留着 ready 与计时器会让下一个
-    // 消费者为一批不该独自发车的挂单空跑一趟。
+    // 仅剩 piggyback 项时清除 ready 和计时器，避免触发空批次。
     if (!this.hasWakingItem()) {
       this.ready = false;
       this.bypassGateOnce = false;
@@ -254,9 +223,8 @@ export class WakeBus {
   }
 
   /**
-   * 已达投递标准就同步取走一批,否则返回null。不挂起、不等待。
-   * 主循环在工具调用链途中用它:模型仍在连续行动时没有消费者在等 nextBatch,
-   * 到点的批只会把 ready 置真;这个入口让本轮的工具结果之后就能接上通知。
+   * 仅在满足投递条件时同步取走整批，否则返回 null。
+   * 供工具调用链在没有 nextBatch 消费者时接收已就绪的通知。
    */
   takeIfReady(): WakeItem[] | null {
     if (!this.ready || this.queue.length === 0 || this.blocked()) return null;
@@ -264,7 +232,7 @@ export class WakeBus {
     return this.take();
   }
 
-  /** 取走全部积压并清空;没货时挂起等待。单消费者。 */
+  /** 取走整个队列；尚不可投递时等待。只允许一个等待中的消费者。 */
   nextBatch(): Promise<WakeItem[]> {
     if (this.waiter) throw new Error('WakeBus只支持单消费者');
     if (this.ready && this.queue.length > 0 && !this.blocked()) {
@@ -278,16 +246,15 @@ export class WakeBus {
 
   private deliver(bypassGate = false): void {
     this.clearTimers();
-    // 只剩搭车项:不投递也不置 ready,等下一个能自己发车的唤醒项来带走它们。
+    // piggyback 需要其他项触发投递。
     if (this.queue.length > 0 && !this.hasWakingItem()) return;
     if (bypassGate) this.bypassGateOnce = true;
     if (this.blocked()) {
-      // 积压保留,解除时投递
       this.ready = true;
       return;
     }
     if (this.queue.length === 0) {
-      // 放行许可没有对象就作废——那一批已经走了,许可不能留给下一条被扣项
+      // 许可仅用于当前批，不能沿用到下一批。
       this.bypassGateOnce = false;
       return;
     }
@@ -310,10 +277,7 @@ export class WakeBus {
     return batch;
   }
 
-  /**
-   * 返回积压中的外部即时事件数。批次判据和闸门上限不计内部事件,也不计投递成文项
-   * 与搭车项(尚未成文的观察、以及等着搭车的状态帧,都不算积压的动静)。
-   */
+  /** 供批次大小与闸门上限使用：只计外部即时事件和候选项，不计 piggyback。 */
   private pendingEventCount(): number {
     let count = 0;
     for (const q of this.queue) {
@@ -326,7 +290,6 @@ export class WakeBus {
     return count;
   }
 
-  /** 队列里有没有能自己发车的项。 */
   private hasWakingItem(): boolean {
     return this.queue.some((q) => !q.piggyback);
   }

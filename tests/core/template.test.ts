@@ -27,7 +27,7 @@ describe('renderTemplate', () => {
 
   it('未知占位符原样保留——静默吞成空串会让人以为改生效了', () => {
     expect(renderTemplate('前{{qq.typo}}后', {})).toBe('前{{qq.typo}}后');
-    // 连缺省文案一起原样留着:名字没人认领时,缺省文案也不该顶上
+    // 未声明变量时保留完整占位符，包括缺省文案。
     expect(renderTemplate('{{qq.typo | 兜底}}', {})).toBe('{{qq.typo | 兜底}}');
   });
 

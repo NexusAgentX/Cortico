@@ -25,7 +25,7 @@ Persona 声明,Core 只把 `role` 当分类标签。
 ## 上下文与交接
 
 Core 的输入上限为 `hardTokens = max(0, 生效窗口 − (spec.maxTokens ?? 0))`。生效窗口取服务探测值与配置的
-`contextWindow` 中的较小者；两者都缺失时不设置此上限。达到上限或服务拒绝超长输入时，
+`contextWindow` 中的较小者；两者都缺失时不设置此上限。超过上限或服务拒绝超长输入时，
 Core 调用 `Persona.onHandoff(snapshot, { hardTokens })`。Persona 决定保留的上下文和交接笔记，
 Core 重建 system 前缀、按容量截断保留内容并重置 session。
 

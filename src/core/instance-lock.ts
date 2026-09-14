@@ -12,7 +12,6 @@ import { nullLogger } from './util.ts';
 
 export const INSTANCE_LOCK_FILE = 'instance.lock';
 
-/** 运行期自检的巡查周期。锁失守到被说出来最多隔这么久。 */
 const VERIFY_INTERVAL_MS = 60_000;
 
 interface LockPayload {
@@ -24,34 +23,32 @@ interface LockPayload {
 export interface InstanceLock {
   /** 锁文件路径(诊断用) */
   readonly file: string;
-  /** 这把锁归不归我。被 --force-second-instance 放行的第二个实例不拥有它。 */
+  /** 使用 force 跳过占用检查时不取得锁所有权。 */
   readonly owns: boolean;
   /**
-   * 运行期自检:锁文件还在不在、还认不认我。被删了补写回来,被别人接管了只报事实。
-   * 同一次失守只报一条 error,恢复正常后重新武装。
+   * 锁缺失时尝试重写；所有权记录变化时仅报告。
+   * 同一异常状态只报一次，恢复后允许再次报告。
    */
   verify(): void;
   /** 释放:只删自己写的那把锁 */
   release(): void;
 }
 
-/** 那个 pid 还活着吗。signal 0 只做权限与存在性检查,不真的发信号。 */
+/** signal 0 检查进程存在性和权限，不发送实际信号。 */
 function isAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
   } catch (e) {
-    // EPERM = 进程在,只是不归我管——照样算活着
+    // EPERM 说明进程存在，但当前进程无权向其发送信号。
     return (e as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 
 /**
- * 这把锁是不是"上一个还活着的实例"写的。
- *
- * pid 活着还不够:整机重启之后 pid 会被复用。锁自报的启动时刻早于本机开机时刻,
- * 那个 pid 就必然是别人 —— 按陈旧锁处理。时刻读不出来时退回只看 pid(宁可多拦)。
+ * 启动时刻早于本机开机时刻时，存活的同号 PID 也不视为原锁所有者。
+ * 无法解析启动时刻时仅检查 PID。
  */
 function ownerStillRunning(p: LockPayload): boolean {
   if (!isAlive(p.pid)) return false;
@@ -75,7 +72,7 @@ function readPayload(file: string): LockPayload | null {
   }
 }
 
-/** 排他创建。返回 false = 文件已经在了(别人先到)。其余错误照抛。 */
+/** 排他创建；仅 EEXIST 返回 false，其他错误抛出。 */
 function createExclusive(file: string, payload: LockPayload): boolean {
   let fd: number;
   try {
@@ -92,10 +89,7 @@ function createExclusive(file: string, payload: LockPayload): boolean {
   return true;
 }
 
-/**
- * 接管一把陈旧锁:写临时文件再 rename 顶上去,然后**读回来核对**。
- * 两个进程同时接管同一把陈旧锁时,后 rename 的那个赢,读回不是自己就认输。
- */
+/** 通过临时文件替换陈旧锁；读回 PID 核对所有权，替换或核对失败返回 false。 */
 function takeOver(file: string, payload: LockPayload): boolean {
   const tmp = `${file}.${payload.pid}.tmp`;
   try {
@@ -109,11 +103,8 @@ function takeOver(file: string, payload: LockPayload): boolean {
 }
 
 /**
- * 取锁。已经有一个活着的实例占着就 **throw**,错误里带对方的 pid 与启动时刻。
- *
- * `force` 是显式逃生口(命令行 `--force-second-instance`):越过守卫,但仍留一条
- * error 说明是谁放行的——两个实例同时跑的后果不会因为是故意的就变小。被放行的
- * 这个**不拥有锁**:锁仍归第一个实例,它退出时也不去动那个文件。
+ * 占用锁对应的进程仍存在时拒绝启动，错误包含 PID 与启动时刻。
+ * force 可跳过检查并记录错误；该进程不取得锁所有权，退出时不删除锁。
  */
 export function acquireInstanceLock(
   dataDir: string,
@@ -133,35 +124,35 @@ export function acquireInstanceLock(
     if (existing && ownerStillRunning(existing)) {
       if (!opts.force) {
         throw new Error(
-          `同一个数据目录已经有一个实例在跑(pid ${existing.pid},启动于 ${existing.startedAt})。` +
-          `先把它停掉;确实要并存就加 --force-second-instance。锁文件:${file}`,
+          `数据目录的锁记录指向运行中的进程(pid ${existing.pid},记录的启动时刻 ${existing.startedAt})。` +
+          `请检查锁记录及对应进程；需跳过占用检查时使用 --force-second-instance。锁文件:${file}`,
         );
       }
-      log.error('已有实例在跑,按 --force-second-instance 强行并存(锁仍归对方)', {
+      log.error("锁记录对应的进程仍存在；已按 --force-second-instance 跳过检查，未取得锁所有权", {
         otherPid: existing.pid,
         otherStartedAt: existing.startedAt,
         file,
       });
     } else {
-      // 陈旧锁:写锁的进程已经不在,或那个 pid 是整机重启后被复用的。
+      // 锁无法读取，或其记录不满足存活所有者条件。
       owns = takeOver(file, mine);
       if (owns) {
-        log.warn('接管陈旧的实例锁:写锁的进程已经不在了(上一次没退干净)', {
+        log.warn("已接管无法读取或已失效的实例锁", {
           stalePid: existing?.pid ?? null,
           staleStartedAt: existing?.startedAt ?? null,
           unreadable: existing === null,
           file,
         });
       } else {
-        // 接管这一步输给了另一个同时启动的进程 —— 那就是活着的第一个实例。
+        // 替换或读回核对失败，当前进程未获得锁所有权。
         const winner = readPayload(file);
         if (!opts.force) {
           throw new Error(
-            `同一个数据目录已经有一个实例在跑(pid ${winner?.pid ?? '未知'},抢锁时被它先落定)。` +
-            `先把它停掉;确实要并存就加 --force-second-instance。锁文件:${file}`,
+            `未取得数据目录的锁所有权(当前锁记录 PID: ${winner?.pid ?? '未知'})。` +
+            `请检查锁记录及对应进程；需跳过占用检查时使用 --force-second-instance。锁文件:${file}`,
           );
         }
-        log.error('抢锁时被另一个同时启动的实例先落定,按 --force-second-instance 强行并存', {
+        log.error("获取实例锁失败；已按 --force-second-instance 跳过检查，未取得锁所有权", {
           otherPid: winner?.pid ?? null,
           file,
         });
@@ -170,7 +161,7 @@ export function acquireInstanceLock(
   }
 
   let released = false;
-  /** 同一次失守只报一条 error;锁恢复正常后重新武装。 */
+  /** 同一异常状态只报告一次；所有权恢复后重置。 */
   let breachReported = false;
 
   const verify = (): void => {
@@ -183,16 +174,16 @@ export function acquireInstanceLock(
     if (breachReported) return;
     breachReported = true;
     if (now === null) {
-      // 补写回来:守卫没了,下一个启动的进程就会一路畅通。
+      // 缺失或无法读取的锁尝试重写，结果随日志报告。
       const rewritten = createExclusive(file, mine) || takeOver(file, mine);
-      log.error('实例锁在运行期消失了,已补写回来。这段时间里第二个实例可以无阻拦启动', {
+      log.error("实例锁缺失或无法读取，已尝试重写；结果见 rewritten", {
         file,
         rewritten,
       });
       return;
     }
-    // 不抢回来:互相覆盖只会让两个实例都以为自己是唯一那个。
-    log.error('实例锁在运行期被别的进程接管了,说明有第二个实例带着同一个数据目录在跑', {
+    // 不覆盖已变化的所有权记录。
+    log.error("实例锁的所有权记录已变化", {
       minePid: mine.pid,
       nowPid: now.pid,
       nowStartedAt: now.startedAt,
@@ -207,17 +198,16 @@ export function acquireInstanceLock(
     if (released) return;
     released = true;
     if (timer) clearInterval(timer);
-    // 摘掉自己的退出钩子:acquire 反复调用时(测试、以及 bot 重启不重进程的路径)
-    // 钩子会一直挂在 process 上累积。
+    // 释放时移除退出钩子，避免重复获取锁时累积监听器。
     process.off('exit', release);
     if (!owns) return;
-    // 只删自己那把:锁被别人接管过之后,不该由先退的那个删掉。
+    // 仅删除仍记录当前 PID 的锁。
     const now = existsSync(file) ? readPayload(file) : null;
     if (now?.pid !== mine.pid) return;
     try {
       rmSync(file);
     } catch {
-      // 删不掉只会留一把陈旧锁,下次启动能自动接管
+      // 删除失败后由下次启动检查该锁。
     }
   };
   process.on('exit', release);

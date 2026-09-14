@@ -3,22 +3,12 @@ import { hasRole, textOf, withoutPastReasoning, responseRequest, usageCounters }
 import type { Response, StreamEvent } from '../protocol/open-responses/index.ts';
 import { GenerationError, type ResponseClient, type TokenMeters } from './generation.ts';
 /**
- * MainLoop:接收事件投递的那个常驻session的循环(Persona声明里
- * receivesEvents=true 的那一个)。
- *
- * 内部系统文本(boot/tick/闹钟/Persona注入)一律走 user 消息。外部正文落在哪个区
- * 由 session 声明的 eventDelivery 决定,两种都在 deliverBatch 里:
- *  - `tool`(默认):补一对伪造的 external_event_frame 调用/回执,正文落在回执里。
- *    user 区因此只装内部系统文本;外部正文无法进入 system role。
- *  - `user`:正文当场打包进同一条 user 消息(Persona显式放弃上面那条边界)。
- *
- * 没有tool_calls的assistant响应自然结束回合,主循环挂起等下一批;声明了
- * endsTurn 的工具执行完同样结束回合——显式收工(工具由Persona自行声明)。
- *
- * 上下文交接在这里只保留机械半:物理钳制(估算越过预算即强制交接)、
- * 稳定回合边界取快照、事务期间不投递、尾部配对修复与预算钳制、原子重写、
- * 并发请求合并为单次事务。压力预警与"何时主动交接"是Persona在 onBatchEnd
- * 时机里的裁量;"在那个边界上做什么"由 persona.onHandoff 决定。
+ * MainLoop 执行 receivesEvents=true 的常驻 session。
+ * 内部文本进入 user 消息；外部正文按 eventDelivery 进入合成工具回执（默认）
+ * 或同一条 user 消息，不进入 system role。无工具调用的响应或已执行的 endsTurn 工具结束本轮。
+ * 交接在稳定回合边界取快照，期间不投递事件；并发交接请求共用事务。
+ * Persona 提供交接内容与主动触发策略；Core 在超过模型容量时强制交接，
+ * 修复工具配对、限制保留内容大小并重写上下文。
  */
 import type {
   CandidateEventSpec,
@@ -74,14 +64,8 @@ import { nowIso, prefixFingerprint, renderEventLines } from './util.ts';
 
 
 /**
- * 已挂载 World 的实时视图。
- *
- * 可见性只关系到**对 agent 的三要素**(前缀环境提示词 / 工具 / 事件投递),不关系到
- * World 进不进程——被隐藏的 World 照常运行,连接和自带 loop 都不断。
- *
- * 前两项同属每次请求的**缓存前缀**,必须在重建前缀时一起更新。单独移除工具会使
- * 前缀继续描述已不存在的工具。
- * 第三项(投递)不进请求,立即生效且没有缓存代价。
+ * 已挂载 World 的当前状态。隐藏不停止 World；事件投递立即停止，
+ * 环境前缀与工具表在前缀重建时一同更新，避免保留已不可用工具的说明。
  */
 export interface WorldView {
   /** 全部已挂载 World(含被隐藏的) */
@@ -90,7 +74,7 @@ export interface WorldView {
   visible(): World[];
 }
 
-/** 一个 World 此刻交出的工具名(前缀漂移的判据之一) */
+/** 当前工具名称，用于检查工具表是否需要重建。 */
 function toolSignature(mod: World): string {
   return mod
     .tools()
@@ -98,15 +82,9 @@ function toolSignature(mod: World): string {
     .join(',');
 }
 
-/**
- * 主 session 的上下文事实与计数口径。由 core 按当前 provider 现读——模型与端点
- * 都可热改,不做启动期快照。
- */
+/** 按当前活跃端点读取上下文容量与计数，支持模型和端点热更新。 */
 export interface ContextFacts {
-  /**
-   * 一次请求能收的输入上限(token):生效窗口减单轮生成上限。窗口未知则 null,
-   * 此时没有物理钳制,只剩上游拒绝请求那一道兜底。
-   */
+  /** 输入容量为模型窗口减单轮生成上限；窗口未知时返回 null，Core 不据此限制输入。 */
   hardTokens(): number | null;
   /** 上游还没数过的条目的本地估算(Provider 模块的估算函数,缺席时为字数比例估算)。 */
   estimateTokens(records: readonly ContextRecord[]): number;
@@ -120,14 +98,13 @@ export interface MainLoopDeps {
   persona: Persona;
   /** 本循环所跑的那个session声明(轮数上限/工具集都从这里实时读) */
   decl: SessionDecl;
-  /** 当前活跃端点的模型档。模型归 Provider,不按 session 分岔;每轮现读。 */
+  /** 当前活跃端点的模型配置，每轮读取。 */
   spec: () => ModelSpec;
   context: ContextFacts;
   /** 记录落库刻的附件内部化(新字节进日志附件库、已有句柄补 mime);core 提供 */
   blobs: { intern(inputs: readonly (BlobInput | BlobRef)[] | undefined): BlobRef[] | undefined };
   /** 已挂载 World 的**实时**视图(可见性可被运维改;见 WorldView) */
   worlds: WorldView;
-  /** bot 目录:bot 侧的环境提示词覆盖文件在这下面找(见 prefix.ts)。 */
   /** 环境提示词的两个覆盖层(包 / 部署);缺席 = 只用 World 自带的模板。 */
   dirs?: EnvPromptDirs;
   bus: WakeBus;
@@ -143,19 +120,19 @@ export interface MainLoopDeps {
   transcript?: Transcript;
   /** 工具归属的 World id(工具流水的 mod 列);认不出的是Persona自己的工具 */
   toolOwner?: (name: string) => string | undefined;
-  /** 同一唤醒批内 LLM 失败后的续拍预算;缺席用 DEFAULT_RESUBMIT。 */
+  /** 同一批内模型失败后重新请求的预算，缺省使用 DEFAULT_RESUBMIT。 */
   resubmit?: ResubmitPolicy;
 }
 
 /**
- * 同一唤醒批内 LLM 失败后的续拍预算。续拍 = 已落库的 partial 与机械回执之后再采一次,
- * 上下文不重写,模型看着自己的半句话接着说。可续拍的失败:流内失败与空闲超时(status 0)、
- * 429、5xx;上游说输入超长走交接,其余 4xx、抢占、关机与硬轮数上限不续拍。
+ * 同一批内模型失败后的重新请求策略，沿用已保存的部分输出与工具回执。
+ * 仅状态 0、429、5xx 可重新请求；输入超限触发交接，其他 4xx、抢占、
+ * 关机和达到轮数上限均结束本批。
  */
 export interface ResubmitPolicy {
-  /** 连续失败到第几次仍续拍:2 = 第 1、2 次失败后各续拍一次,第 3 次失败收束本批。 */
+  /** 允许重新请求的连续失败次数；例如 2 表示第三次连续失败结束本批。 */
   maxConsecutive: number;
-  /** 一批内的续拍总数上限。 */
+  /** 一批内重新请求的总次数上限。 */
   maxPerBatch: number;
   /** 第 n 次连续失败后的等待毫秒数,超出长度取最后一档。 */
   backoffMs: readonly number[];
@@ -170,7 +147,7 @@ export interface LoopStatus {
   /** 正在执行上下文交接事务(取快照 → Persona策略 → 重建 → 唤醒)。 */
   truncating: boolean;
   messageCount: number;
-  /** 下一次请求的输入 token 数(上游计数锚点 + 新增条目估算;无锚点时整份估算)。 */
+  /** 下次请求的输入 token 数：上游计数覆盖部分加新增条目估算；无上游计数时全部估算。 */
   estTokens: number;
   context: {
     /** 一次请求能收的输入上限;窗口未知时 null。 */
@@ -184,7 +161,7 @@ export interface LoopStatus {
   lastTruncateAt: string | null;
   /** 人工暂停中(控制台;事件照常落库排队,不投递) */
   paused: boolean;
-  /** schedule_wake(block=true) 的临时投递闸门正在生效。 */
+  /** 当前是否安装了 DeliveryGate。 */
   scheduleBlocked: boolean;
   lastUsage: LLMUsage | null;
   /** 投递水位：最后一条已投递或已了结事件的位置游标。 */
@@ -194,24 +171,20 @@ export interface LoopStatus {
 }
 
 /**
- * 外部正文所挂的保留帧名。core 合成的投递帧用它;它不是工具、没有 schema、
- * 不进工具表。模型看着满屏合成帧难免仿造一次——仿造的调用在落 session 前被整个
- * 丢弃,只按名字判,参数与 id 一概不看。
+ * 合成外部投递帧使用的保留名称，不注册为工具。
+ * 模型返回的同名调用在写入 session 前丢弃，不检查其参数或 id。
  */
 const EXTERNAL_EVENT_FRAME = 'external_event_frame';
-/** 卡住时刻表的保留窗口:够静默提醒(最长一级 600s)问,也够恢复告知用 */
+/** 失败时刻的保留窗口，供 World 查询与恢复通知使用。 */
 const STALL_WINDOW_MS = 3_600_000;
 /**
  * LLM 连续失败达到此次数时报告 error，恢复后解除告警。该阈值仅控制告警，不改变重试节奏。
  */
 const STALL_ALERT_THRESHOLD = 5;
-/** 保留帧名集合:这些名字不能被注册成工具,模型仿造的同名调用也不落 session。 */
+/** 不能注册为工具的名称；模型返回的同名调用不写入 session。 */
 export const RESERVED_FRAME_NAMES = new Set<string>([EXTERNAL_EVENT_FRAME]);
 
-/**
- * 帧 sidecar:每条事件在正文里的位置。正文是 renderEventLines 的产物(各事件 text 用
- * 换行拼接),base 是事件块在整条正文里的起点。
- */
+/** 事件正文的位置元数据；各事件 text 用换行拼接，base 是事件块在整条正文中的起点。 */
 function frameEventRefs(events: EventEnvelope[], base: number): FrameEventRef[] {
   let start = base;
   return events.map((e) => {
@@ -227,9 +200,7 @@ function eventBlobs(events: readonly EventEnvelope[]): BlobRef[] {
   return events.flatMap((e) => e.blobs ?? []);
 }
 
-/**
- * 重启补投的入队条数上限。超限时保留最近事件，更早事件按上一世代已了结推进水位。
- */
+/** 重启补投的数量上限；仅补投最近事件，更早的事件标记已处理并推进水位。 */
 const MAX_REQUEUE = 200;
 
 /**
@@ -245,7 +216,7 @@ const WATERMARK_STALL_MS = 300_000;
  */
 const WATERMARK_RESTATE_MS = [15 * 60_000, 60 * 60_000] as const;
 
-/** 投递成文渲染的 deadline;超时按蒸发处理。IPC 现拿快照是毫秒级,3s 已很宽。 */
+/** 延迟渲染期限；超时项不归档、不投递。 */
 const RENDER_DEADLINE_MS = 3000;
 /** renderDeferred 超时哨兵(render 合法返回 null,不能拿 null 当超时信号) */
 const RENDER_TIMED_OUT = Symbol('render-timed-out');
@@ -279,55 +250,48 @@ export class MainLoop {
   /** 当前正在处理一个事件批；手动交接必须等到该批自然结束，不能重置半轮session。 */
   private processingBatch = false;
   private handoffRequested = false;
-  /**
-   * onDelivery 钩子执行期的注入收编器:非 null 时,injectInternal 的即时项进这里
-   * 而不是总线,随本批原子投递。
-   */
+  /** onDelivery 同步执行期间，injectInternal 的即时项加入当前批，不经过总线。 */
   private deliveryCollector: EventEnvelope[] | null = null;
   /** 已投递但前面仍有外部缺口的游标；水位只越过连续前缀。 */
   private readonly deliveredCursors = new Set<number>();
   /**
-   * 已被 projector 处理的原始归档位置游标，包括被投影引用和被策略丢弃的候选。
-   * 未处理的 archive-only 必须挡住连续水位；该集合仅存内存，重启时由 requeueUndelivered 按投影引用重建。
+   * 已由候选处理函数处理的原始归档位置，包含选中及丢弃项。
+   * 未处理的归档项阻止水位越过；该集合不持久化，重启时根据已生成事件的来源引用恢复。
    */
   private readonly settledArchives = new Set<number>();
   /**
-   * 最近一小时的 LLM 失败时刻，单位为毫秒。账本保存在 state.data.llmStall，跨重启保留；恢复时通知Persona， World 可按窗口查询。
+   * 窗口内的 LLM 失败时刻，单位为毫秒。保存在 state.data.llmStall，
+   * 跨重启保留；恢复时通知 Persona，World 可按时间窗口查询。
    */
   private get stallAt(): number[] { return this.d.state.data.llmStall.at; }
   /** 当前这串连续失败的第一次发生时刻;0 = 此刻没在失败串里 */
   private get stallSince(): number { return this.d.state.data.llmStall.since; }
   private set stallSince(at: number) { this.d.state.data.llmStall.since = at; }
-  /** 当前这串连败是否已发过操作员告警;true 期间不重复响,恢复时发解除 */
+  /** 当前连续失败是否已告警；恢复后解除，同一串不重复告警。 */
   private stallAlarmActive = false;
-  /** 水位自检的巡查定时;run() 布防、stop() 撤防。 */
+  /** run() 启动水位巡查，stop() 取消。 */
   private watermarkAudit: ReturnType<typeof setInterval> | null = null;
   /**
-   * 已经报过停滞的那个水位值;-1 = 此刻没在报过的停滞里。用水位值做节流键:
-   * 水位没动 = 同一次停滞;水位动了 = 上一次已解除。同一次停滞不再是永久静音,
-   * 按 WATERMARK_RESTATE_MS 退避重报。
+   * 已报告停滞的水位，-1 表示未报告。水位推进后重置；
+   * 同一水位按 WATERMARK_RESTATE_MS 间隔再次报告。
    */
   private watermarkStallAt = -1;
   /** 当前这次停滞的首报时刻(退避重报的基准) */
   private watermarkStallSince = 0;
-  /** 首报时的落后量(重报带增量:「停滞越久越该说话」的证据) */
+  /** 首报时的积压量，后续报告据此计算增长量。 */
   private watermarkStallBehind = 0;
   /** 同一次停滞已报次数(首报计 1) */
   private watermarkStallReports = 0;
   /**
-   * 上游计数锚点:上一发成功调用的输入加输出 token 数,覆盖到 session 的前
-   * `records` 条(含那一发的 assistant 输出)。之后新增的条目只能本地估算,
-   * 下一发成功即重锚。session 整体重写(交接/清空/前缀重载)后作废。
+   * 最近成功请求的输入与输出 token 总数，覆盖前 records 条（含响应）。
+   * 新增条目使用本地估算，下次成功后更新计数；上下文整体重写后失效。
    */
   private anchor: { records: number; tokens: number; reasoningTokens: number } | null = null;
   /** 当前 system 前缀和工具表采用的可见 World 集合。 */
   private appliedVisibleWorlds: Set<string> | null = null;
   /** 当前前缀中各可见 World 的工具签名，用于检测工具表漂移。 */
   private appliedWorldTools = new Map<string, string>();
-  /**
-   * 合成首轮对话(风格锚)的消息缓存。随 system 前缀一起刷新(编辑→重载生效),
-   * 请求间字节恒定——它紧跟 system,是缓存前缀的自然延长。
-   */
+  /** 首轮对话随 system 前缀一起重新读取，重载前保持相同请求内容。 */
   private firstTurnMsgs: ContextRecord[] = [];
   /** 当前模型轮；非 reasoning 增量一旦外流，本轮不再接受自动抢占。 */
   private currentRound: {
@@ -342,11 +306,11 @@ export class MainLoop {
   private sealed = false;
   /** 已落库、但尚未配齐结果的当前 assistant 工具调用。 */
   private pendingToolCalls = new Set<string>();
-  /** 续拍退避等待的提前唤醒;stop() 调它,等待立即结束并由 active() 判定退出。 */
+  /** stop() 提前结束重试等待，由 active() 决定退出。 */
   private backoffWake: (() => void) | null = null;
   /**
-   * 关机信号:stop() 触发一次。工具 ctx.signal 由它与本轮 flight 信号合成——flight 只在
-   * 尚未外化时被抢占取消,那时没有工具在跑;工具执行期间能触发 abort 的只有关机与换代。
+   * 工具信号合并关机信号与当前模型调用信号。
+   * 自动抢占仅发生在没有外部输出、尚未执行工具时；工具执行期间仅关机或循环换代会取消。
    */
   private readonly shutdown = new AbortController();
 
@@ -363,7 +327,7 @@ export class MainLoop {
     return this.active(this.generation);
   }
 
-  /** 取消仍处于思考/prefill 阶段的模型轮。返回 false 表示没有免费抢占窗口。 */
+  /** 尝试取消尚未输出的当前模型调用；无可取消调用时返回 false。 */
   abortCurrentRound(): boolean {
     if (!this.activeNow()) return false;
     const round = this.currentRound;
@@ -374,12 +338,9 @@ export class MainLoop {
   }
 
   /**
-   * session 声明是 schema 与 handler 的权威来源。core 仅执行去重、稳定排序和
-   * 隐藏 World 过滤。
-   *
-   * 摘除按**工具名**做:World 工具名同时承担归属标记。
-   * World 之间、World 与 Persona 自有工具(`Persona.ownToolNames`)或保留帧名的重名由
-   * 装配层拒绝挂载(`WorldAssembly`);Persona 不报自有工具名时这里留先到的并告警。
+   * 工具 schema 与 handler 来自 session 声明；此处去重、稳定排序并按名称过滤隐藏 World 工具。
+   * World 之间、与 Persona 声明的自有工具及保留帧重名时，装配层拒绝挂载。
+   * Persona 未声明自有工具名时，此处保留先注册项并告警。
    */
   private assembleTools(hiddenToolNames: Set<string>): void {
     const { decl, log } = this.d;
@@ -387,7 +348,7 @@ export class MainLoop {
     const seen = new Set<string>();
     for (const def of decl.tools()) {
       if (RESERVED_FRAME_NAMES.has(def.name)) {
-        // 保留帧名不许被注册成真工具:同名调用会在落 session 前被丢弃逻辑误吃
+        // 保留帧名称不能注册为工具，同名模型调用会被丢弃。
         log.warn(`工具名与保留帧撞名,拒绝注册: ${def.name}`);
         continue;
       }
@@ -406,13 +367,10 @@ export class MainLoop {
     this.toolDefs = defs;
   }
 
-  /** 空tags只提醒一次,别在每次前缀重建时刷屏 */
+  /** 空 tags 只报告一次。 */
   private readonly warnedUntagged = new Set<string>();
 
-  /**
-   * 把当前可见性烘进工具表,并记下烘的是哪一组。重启恢复不重建前缀,
-   * 仍通过此步骤按可见性装配工具表。
-   */
+  /** 按当前可见性重建工具表并记录所用 World 集合；重启恢复前缀时也执行。 */
   private bindWorlds(): World[] {
     const { worlds } = this.d;
     const visible = worlds.visible();
@@ -467,9 +425,8 @@ export class MainLoop {
   }
 
   /**
-   * 出线态:落盘态(session.records)在 system 头之后插入合成首轮对话。
-   * 发请求、Persona拿到的快照都是这个口径——继承快照的 fork 因此与主 session
-   * 字节前缀一致,前缀缓存照蹭。开关关或内容空时与落盘态相同(总是复制)。
+   * 在持久上下文的 system 消息后插入合成首轮对话，生成请求与快照使用的副本。
+   * 继承快照的 fork 保留相同的请求前缀；禁用或内容为空时仅复制原上下文。
    */
   outboundMessages(): ContextRecord[] {
     const msgs = this.d.session.records;
@@ -480,19 +437,15 @@ export class MainLoop {
     return [...msgs.slice(0, head), ...first, ...msgs.slice(head)];
   }
 
-  /** 当前生效的合成首轮对话(开关关或内容空=空数组)。控制台的出线态标注用它。 */
+  /** 当前生效的合成首轮对话，供请求及控制台查看；禁用或为空时返回空数组。 */
   activeFirstTurn(): ContextRecord[] {
     if (!this.d.cfg.context.firstTurn) return [];
     return [...this.firstTurnMsgs];
   }
 
   /**
-   * 当前前缀与 World 现状是否不一致。控制台据此提示人工重载;
-   * 每次重载丢一次前缀缓存。
-   *
-   * 两种漂移:运维改了可见性,或 World 自己开关掉了一部分功能(工具名变了)。
-   * 后者按工具名判定——一个 World 撤下工具时,它的环境提示词一般同时改,而工具名是
-   * 同步可读的,环境提示词不是。
+   * 比较当前 World 可见性及工具名称与构建前缀时的记录，供控制台提示重载。
+   * 工具名可同步读取，因此用它检测 World 功能变化，不直接读取异步环境模板。
    */
   modulePrefixDrift(): string[] {
     const applied = this.appliedVisibleWorlds;
@@ -514,7 +467,7 @@ export class MainLoop {
     return functionResult(callId, withBlobLines(out.text, blobs), blobs ? { blobs } : {});
   }
 
-  /** 时机:一轮自然收束。先Persona,再可见 World(World 用它清理只在本轮有效的暂态)。 */
+  /** 一轮结束时先通知 Persona，再通知可见 World。 */
   private finishTurn(): void {
     if (!this.activeNow()) return;
     const { persona, worlds, log } = this.d;
@@ -538,27 +491,18 @@ export class MainLoop {
   }
 
   /**
-   * 一批唤醒项进入主session。
-   *
-   * 投递成文项与候选投影在此刻落库，固定排在即时项之后。projector 先看到
-   * 当前批的全部同源票据，选中项与 deferred 再按源票据顺序成文。
-   *
-   * 成文完毕后触发 onDelivery 时机钩子:Persona看到本批全部信封,钩子期间
-   * 注入的即时项收编进本批(排在既有内部行之后、外部正文之前)。抬头、回忆
-   * 这类话语都是它在钩子里注入的——core 一个字不写。
-   *
-   * 内部项的文本合成一条 user 消息;外部正文按声明落在哪个区:`tool` 模式下
-   * 紧跟着补一对伪造的 external_event_frame 调用/回执(user 区因此只装内部
-   * 系统文本),`user` 模式下正文并进同一条 user 消息。
+   * 将一批事件写入主 session。即时事件在前，候选生成内容与延迟渲染内容在后。
+   * 候选按 source、origin 和处理函数分组，再按来源项在批次中的顺序生成正文。
+   * 正文归档后调用 onDelivery；同步注入的内部项追加到内部行末尾、外部正文之前。
+   * 内部行合成一条 user 消息；外部正文按 eventDelivery 进入合成工具回执或同一条 user 消息。
    */
   private async deliverBatch(batch: WakeItem[], generation: number): Promise<boolean> {
     if (!this.active(generation)) return false;
     const { session, persona, store, cfg, log } = this.d;
     const projections = this.prepareCandidateProjections(batch, generation);
     if (!this.active(generation)) return false;
-    // projector 已经过过手的候选一律记为了结:选中的马上就有投影引用它,没选中的
-    // 是 World 按自己的策略丢的,两种都不必再等。没过手的(还在批窗口里)不在这里,
-    // 水位也就跨不过去。
+    // 已调用候选处理函数的原始事件均标记已处理，含选中与丢弃项。
+    // 尚未交给处理函数的候选继续阻止水位推进。
     for (const item of batch) {
       for (const event of item.candidate?.sourceEvents ?? []) this.settledArchives.add(event.cursor);
     }
@@ -584,7 +528,7 @@ export class MainLoop {
       if (!deferred) continue;
       const rendered = await this.renderDeferred(deferred, generation);
       if (!this.active(generation)) return false;
-      if (rendered === null) continue; // 蒸发:不落库不投递
+      if (rendered === null) continue; // 未生成正文，不归档、不投递。
       const body = typeof rendered === 'string' ? { text: rendered } : rendered;
       const blobs = this.d.blobs.intern(body.blobs);
       delivered.push(store.append({
@@ -602,8 +546,7 @@ export class MainLoop {
     }
     if (!this.active(generation)) return false;
     if (delivered.length > 0) {
-      // 时机钩子:钩子体内的即时注入进收编器,不进总线(scoped 捕获,并发到达的
-      // 无关项不会被误收进本批)。
+      // 仅捕获同步钩子内的即时注入；退出钩子后恢复总线投递。
       const injected: EventEnvelope[] = [];
       this.deliveryCollector = injected;
       try {
@@ -627,9 +570,8 @@ export class MainLoop {
       } else events.push(e);
     }
     const inUser = this.eventDelivery() === 'user';
-    // World 写好的正文原样进来,core 一个字都不加
     if (events.length > 0 && inUser) lines.push(renderEventLines(events));
-    // 整批都是自消解项才整条标记:混批时宁可多留一次,也不连累同批的正经内容
+    // 仅当整条消息都可清除时标记 ephemeral，混合消息需保留其他内容。
     const ephemeral = ephemeralCount > 0 && ephemeralCount === internals.length && events.length === 0;
     if (!this.active(generation)) return false;
     this.dropEphemeral(generation);
@@ -652,7 +594,7 @@ export class MainLoop {
     return changed;
   }
 
-  /** 候选策略属于来源 World；主循环只组批、校验引用并收编输出。 */
+  /** 候选选择由来源 World 决定；Core 组批、校验来源引用并收集输出。 */
   private prepareCandidateProjections(
     batch: readonly WakeItem[],
     generation: number,
@@ -714,12 +656,7 @@ export class MainLoop {
     return prepared;
   }
 
-  /**
-   * 抹掉还留在 session 里的自消解项(见 EventEnvelope.ephemeral)。每批唤醒
-   * 投递前清一次,所以同时在场的最多是一批。
-   *
-   * 按落盘态的标记找,不按对象引用找——重启读回的陈旧项一样会被清掉。
-   */
+  /** 每批投递前删除带 ephemeral 标记的旧消息；重启读回的标记同样有效。 */
   private dropEphemeral(generation: number): void {
     if (!this.active(generation)) return;
     const { session } = this.d;
@@ -730,10 +667,7 @@ export class MainLoop {
     this.d.transcript?.boundary('ephemeral-drop', { dropped });
   }
 
-  /**
-   * 投递成文渲染,带 deadline。契约(DeferredEventSpec):render 只该读现成
-   * 状态,慢渲染视同没渲染出来——超时与异常都按蒸发处理,只记日志。
-   */
+  /** 延迟渲染应读取当前状态；null、超时或异常均不归档、不投递，超时与异常记录日志。 */
   private async renderDeferred(spec: DeferredEventSpec, generation: number): Promise<DeferredRendered | null> {
     if (!this.active(generation)) return null;
     const { log } = this.d;
@@ -745,12 +679,12 @@ export class MainLoop {
       const out = await Promise.race([Promise.resolve(spec.render()), timeout]);
       if (!this.active(generation)) return null;
       if (out === RENDER_TIMED_OUT) {
-        log.warn('投递成文渲染超时,该项蒸发', { type: spec.type, source: spec.source });
+        log.warn("延迟渲染超时，该项未归档、未投递", { type: spec.type, source: spec.source });
         return null;
       }
       return out;
     } catch (e) {
-      log.warn('投递成文渲染失败,该项蒸发', { type: spec.type, source: spec.source, err: e });
+      log.warn("延迟渲染失败，该项未归档、未投递", { type: spec.type, source: spec.source, err: e });
       return null;
     } finally {
       if (timer) clearTimeout(timer);
@@ -758,10 +692,8 @@ export class MainLoop {
   }
 
   /**
-   * 外部正文通过一对合成的 external_event_frame 调用和回执进入上下文。
-   *
-   * 调用与回执均由 core 合成,agent 并没有真的动手。user 消息只承载内部
-   * 系统文本;外部正文留在工具回执区,且不增加一轮模型调用。
+   * 以合成调用及回执承载外部正文，不新增模型请求。
+   * 该模式下 user 消息仅承载内部文本。
    */
   private appendEventFrame(events: EventEnvelope[], generation: number): void {
     if (!this.active(generation)) return;
@@ -777,10 +709,8 @@ export class MainLoop {
   }
 
   /**
-   * 摘除模型仿造的保留帧调用。只按名字丢:参数伪造、id 仿造一概不看
-   * 内容,同样丢弃。丢干净后没有剩余调用的消息不带 tool_calls 字段——本轮就
-   * 按"无调用"自然结束;混着合法调用时只丢保留的那部分,其余照常执行。
-   * 仿造这件事本身记日志,供核算场统计。
+   * 丢弃模型返回的保留帧调用并记录日志，其余调用照常执行。
+   * 删除后没有工具调用的响应按自然结束处理。
    */
   private dropReservedCalls(records: ContextRecord[]): ContextRecord[] {
     return records.filter(entry => {
@@ -803,9 +733,8 @@ export class MainLoop {
     for (let c = top + 1; c <= latest; c++) {
       const next = store.get(c);
       if (!next) break;
-      // archive-only 不是无条件可跳过:它只在 projector 已经过过手时才算了结
-      // (见 settledArchives)。还在批窗口里等发车的原文一旦被水位跨过去,重启
-      // 补投从 lastDeliveredCursor+1 起算就再也看不见它。
+      // 未处理的 archive-only 项必须保留在水位之后，重启才会补投。
+      // 已处理项由 settledArchives 标识。
       const skippable = next.origin === 'internal'
         || (next.contextDelivery === 'archive-only' && this.settledArchives.has(c));
       // 集合记录存储位置；装载期重排保证 next.cursor === c。
@@ -819,7 +748,7 @@ export class MainLoop {
     state.save();
   }
 
-  /** 时机:session 开场。开场白由Persona在钩子里注入(不注入=这次开场沉默)。 */
+  /** session 开场时调用 Persona 钩子；未注入时不添加开场文本。 */
   private pushOpening(reason: SessionOpeningReason): void {
     const { persona, log } = this.d;
     try {
@@ -835,9 +764,8 @@ export class MainLoop {
    */
   private requeueUndelivered(): void {
     const { bus, state, store, log } = this.d;
-    // 先记下起点、再从盘面回填"哪些原始归档已被投影引用过",最后才结水位:
-    // noteHandled 的 archive-only 分诊靠 settledArchives,那张表是进程内内存,
-    // 重启后为空;不回填就会让上一世代已了结的归档把水位永远钉在原地。
+    // 推进水位前，先从已生成事件的引用恢复 settledArchives。
+    // 否则重启前已处理的原始归档仍会阻止水位推进。
     const from = state.data.lastDeliveredCursor + 1;
     if (from > store.latestCursor()) {
       this.noteHandled([], this.generation);
@@ -890,15 +818,15 @@ export class MainLoop {
   private async bootstrap(generation: number): Promise<void> {
     if (!this.active(generation)) return;
     const { session, log } = this.d;
-    // 恢复持久化的连败账，清除窗口外记录；窗口内失败可在重启后首次成功时报告。
+    // 恢复窗口内的失败记录，供重启后的首次成功报告。
     if (this.pruneStalls()) this.d.state.save();
     if (this.stallSince !== 0) {
       const carried = this.stallAt.filter((t) => t >= this.stallSince).length;
-      log.warn('上一进程的 LLM 连败账未结,跨重启带回', {
+      log.warn('已恢复上一进程的 LLM 连续失败记录', {
         since: new Date(this.stallSince).toISOString(),
         count: carried,
       });
-      // 带回的账已够阈值就直接进"已告警"态:不重复响一遍,但恢复时照发解除
+      // 已达到阈值的持久记录不重复告警，恢复时仍报告解除。
       this.stallAlarmActive = carried >= STALL_ALERT_THRESHOLD;
     }
     this.requeueUndelivered();
@@ -942,7 +870,7 @@ export class MainLoop {
         this.stopFn = () => resolve('stop');
       });
 
-      // 水位自检的巡查。unref:它不是活儿,不该拖着进程不让退。
+      // unref 避免巡查定时器阻止进程退出。
       this.watermarkAudit = setInterval(() => {
         try {
           this.auditDeliveryWatermark();
@@ -967,14 +895,14 @@ export class MainLoop {
           if (changed) {
             await this.rounds(generation);
             if (!this.active(generation)) break;
-            // 回合期间(工具/运维)登记的交接请求先兑现,再走批末时机钩子与物理钳制。
+            // 先执行本批登记的交接请求，再运行批末钩子与容量检查。
             await this.flushRequestedHandoff(generation);
             if (!this.active(generation)) break;
             await this.batchEndCheck(generation);
             if (!this.active(generation)) break;
           }
 
-          // 停放中的投递成文项不算积压:只看即时项,别让一条挂着的观察压死空闲期。
+          // 延迟渲染和 piggyback 项不阻止进入空闲钩子。
           if (bus.pendingImmediate() === 0 && persona.onIdle) {
             try {
               await persona.onIdle();
@@ -983,7 +911,7 @@ export class MainLoop {
             }
             if (!this.active(generation)) break;
           }
-          // 手动请求也可能在onIdle的人格Git提交期间到达。
+          // onIdle 等待期间也可能收到手动交接请求。
           await this.flushRequestedHandoff(generation);
         } finally {
           this.processingBatch = false;
@@ -997,7 +925,7 @@ export class MainLoop {
     }
   }
 
-  /** 整个唤醒批的推理轮都在 sess 锚点作用域里跑;每轮再改写 round / resp / call。 */
+  /** 本批模型调用共享 sess 关联字段；每轮更新 round、resp 和 call。 */
   private rounds(generation: number): Promise<void> {
     return withAnchors({ sess: this.d.decl.id }, () => this.roundsInScope(generation));
   }
@@ -1008,8 +936,7 @@ export class MainLoop {
     const schemas = this.getToolSchemas();
     const caps = decl.rounds();
     this.roundsLastBatch = 0;
-    // 输出旁路:声明了 tap 就以流式调用并转发增量。tap 的异常只记日志——
-    // 旁路的消费方坏掉不该毁掉本轮推理。
+    // tap 接收流式增量；其异常只记日志，不中断模型调用。
     const tap = decl.outputTap;
     const resubmit = this.d.resubmit ?? DEFAULT_RESUBMIT;
     let consecutiveFailures = 0;
@@ -1019,9 +946,8 @@ export class MainLoop {
       if (!this.active(generation)) return;
       this.roundsLastBatch = round;
       const spec = this.d.spec();
-      // 物理钳制的轮边界版:工具回执与事件把计数推过上限时,不再发请求去撞上游拒绝,
-      // 本批在此收束,交接由批末的 batchEndCheck 执行。首轮不查:上一批末已经钳过,
-      // 本批刚投递的事件必须得到回应。
+      // 后续轮输入超限时结束本批，由批末检查执行交接。
+      // 首轮仍处理本批新投递的事件；上一批的容量检查已在批末执行。
       if (round > 1) {
         const hard = this.d.context.hardTokens();
         if (hard !== null && this.estTokens() > hard) {
@@ -1042,14 +968,14 @@ export class MainLoop {
         role: decl.id,
         log,
         round: roundNo,
-        // 关机或换代撤销本轮时随之 abort;抢占不取消工具(DESIGN §4.1)。
+        // 关机或循环换代取消工具；自动抢占不取消工具。
         signal: AbortSignal.any([flight.controller.signal, this.shutdown.signal]),
         queueExternalEvents: (events) => {
           if (this.active(generation)) queuedEvents.push(...events);
         },
       };
-      // 提前派发:流里一个 tool_call 闭合就立刻执行它的 handler,不等整条
-      // 消息收完。闭合顺序等于消息内顺序,屏障语义(barrierAfter)照常成立。
+      // 工具调用闭合后可提前执行；协议层保证闭合顺序与消息内顺序一致。
+      // barrierAfter 阻止之后的调用提前执行。
       const eager = tap
         ? new EagerDispatch(
             () => this.toolDefs, ctx, log, decl.id, this.d.toolLog,
@@ -1085,8 +1011,7 @@ export class MainLoop {
       const outbound = this.outboundMessages();
       const prefixHash = prefixFingerprint(outbound);
       try {
-        // role 只进故障指纹(同一模型上主角色全灭、梦角色同期成功是实测过的形状),
-        // 不进请求体。
+        // role 仅用于故障分类，不写入请求体。
         const llmStart = Date.now();
         let res: Awaited<ReturnType<typeof llm.respond>>;
         try {
@@ -1134,8 +1059,7 @@ export class MainLoop {
         }
         this.recordFailedUsage(e, prefixHash);
         if (tap && e instanceof GenerationError && e.partial) {
-          // 增量已外流(可能已被外部消费):session必须记下实际外流的部分,
-          // 否则记忆与外部世界永久分叉。已提前派发的调用用真实结果配对。
+          // 已向外发送的部分输出必须保存；已执行的工具调用使用真实结果配对。
           await this.recordAbortedStream(responseRecords(e.partial, e.origin), eager, generation);
           if (!this.active(generation)) {
             try {
@@ -1151,12 +1075,12 @@ export class MainLoop {
             log.warn('outputTap.onAbort异常', { err: tapErr });
           }
         }
-        // 提前派发的 handler 可能已把事件从总线取走(queueExternalEvents)。退回总线:
-        // 续拍前经 takeIfReady 接回,不续拍则随下一批投递。
+        // 提前执行的工具可能已消费队列；失败后将这些事件退回总线。
+        // 重试前重新接收已就绪事件，否则随下一批投递。
         for (const event of queuedEvents) {
           bus.push({ event }, { trigger: 'flush' });
         }
-        // 上游说输入超长是唯一准确的越线信号:不算卡住,本批收束后立即交接。
+        // 上游报告输入超限时，不记入连续失败，结束本批后交接。
         if (e instanceof GenerationError && this.d.context.contextOverflow(e)) {
           log.warn('上游拒绝:输入超过模型上下文,本批结束即交接', { estTokens: this.estTokens(), hardTokens: this.d.context.hardTokens() });
           this.handoffRequested = true;
@@ -1168,22 +1092,21 @@ export class MainLoop {
         consecutiveFailures++;
         const detail = {
           err: e,
-          // 4xx 的响应正文是唯一的诊断线索(如"Model Not Exist"),截断进日志。
-          // 流内失败时这里装的是整条原始失败事件(见 llmResponses 的 response.failed 分支)。
+          // 4xx 正文截断后记录；流内失败保留协议层提供的失败事件。
           ...(e instanceof GenerationError && e.body ? { body: e.body.slice(0, 500) } : {}),
           ...(e instanceof GenerationError ? { status: e.status } : {}),
           attempt: consecutiveFailures,
         };
-        // 可续拍的失败类别见 ResubmitPolicy;已落库的 partial 与回执就是模型接着说的依据。
+        // 按 ResubmitPolicy 重试，沿用已保存的部分输出与工具回执。
         const retryable = e instanceof GenerationError && (e.status === 0 || e.status === 429 || e.status >= 500);
         if (retryable && consecutiveFailures <= resubmit.maxConsecutive && resubmits < resubmit.maxPerBatch && round < caps.hard) {
           resubmits++;
           const delayMs = resubmit.backoffMs[Math.min(consecutiveFailures, resubmit.backoffMs.length) - 1] ?? 0;
-          log.warn('LLM调用失败,退避后在本批内续拍', { ...detail, resubmits, delayMs });
+          log.warn('LLM 调用失败，退避后在本批内重试', { ...detail, resubmits, delayMs });
           noteRound('failed', { resubmit: true, delayMs });
           await this.backoff(delayMs);
           if (!this.active(generation)) return;
-          // 退避期间到齐的事件(含刚退回的)先进上下文,续拍看到的是此刻的世界。
+          // 重试前先投递等待期间已就绪的事件。
           const ready = bus.takeIfReady();
           if (ready) {
             await this.deliverBatch(ready, generation);
@@ -1291,8 +1214,7 @@ export class MainLoop {
       }
       if (arrived.length > 0) {
         if (round >= caps.hard || turnEnded) {
-          // 不在无人继续推理的情况下把session停在user消息；退回总线，
-          // 外层下一回合再正常投递。
+          // 不再执行模型请求时，事件退回总线随下一批投递。
           for (const item of arrived) bus.push(item, { trigger: 'flush' });
         } else {
           await this.deliverBatch(arrived, generation);
@@ -1300,7 +1222,7 @@ export class MainLoop {
         }
       }
 
-      // 显式收工(endsTurn工具):与自然结束同一出口,事件已退回总线成下一批。
+      // endsTurn 与自然结束使用同一出口；事件已退回总线。
       if (turnEnded) {
         noteRound('ended', { toolCalls: calls.length, arrived: arrived.length });
         this.finishTurn();
@@ -1316,7 +1238,7 @@ export class MainLoop {
     }
   }
 
-  /** 续拍前的退避等待;stop() 经 backoffWake 提前结束它。 */
+  /** 重新请求前等待；stop() 通过 backoffWake 提前结束等待。 */
   private backoff(ms: number): Promise<void> {
     if (ms <= 0) return Promise.resolve();
     return new Promise<void>((resolve) => {
@@ -1326,9 +1248,8 @@ export class MainLoop {
   }
 
   /**
-   * 断流一致性:把已外流的部分消息追加进 session。已提前派发过的调用用真实
-   * 执行结果配对(它确实跑了);其余从未执行,补机械回执保持配对——下一轮
-   * 请求才不会缺 tool result。
+   * 保存已经发送的部分响应。已执行调用使用实际结果；
+   * 未执行调用补充未执行标记，保持后续请求的工具配对。
    */
   private async recordAbortedStream(
     partial: ContextRecord[],
@@ -1357,16 +1278,15 @@ export class MainLoop {
     this.noteHandled(events, this.generation);
   }
 
-  /** 出线视图的本地估算:历史思维链丢弃时不计入。 */
+  /** 按请求内容估算，排除不会回传的历史推理。 */
   private estimateOutbound(msgs: readonly ContextRecord[]): number {
     const view = this.d.cfg.context.keepPastThinking ? msgs : withoutPastReasoning(msgs);
     return this.d.context.estimateTokens(view);
   }
 
   /**
-   * 下一次请求的输入 token 数。有锚点时 = 上游数过的那一份 + 锚点之后新增条目的
-   * 估算;历史思维链丢弃时锚点那一发的推理不再进下一发,按上游报的推理量扣掉。
-   * 没有锚点时整份本地估算(出线态口径:合成首轮对话也占上下文)。
+   * 使用上次成功请求的 token 计数，加上此后新增条目的本地估算。
+   * 禁用历史推理时扣除上次输出中的推理量；无上游计数时估算完整请求，含合成首轮对话。
    */
   estTokens(): number {
     const { anchor } = this;
@@ -1378,7 +1298,7 @@ export class MainLoop {
     return this.estimateOutbound(this.outboundMessages());
   }
 
-  /** estTokens 里上游数过的部分(整份估算时 0);控制台按它区分真值与估算。 */
+  /** 上游已计数的部分；全部由本地估算时为 0。 */
   private countedTokens(): number {
     const { anchor } = this;
     if (!anchor || this.d.session.records.length < anchor.records) return 0;
@@ -1390,11 +1310,7 @@ export class MainLoop {
     return { estTokens: this.estTokens(), hardTokens: this.d.context.hardTokens() };
   }
 
-  /**
-   * 时机:一批处理完、回合循环收束。压力预警与主动交接是Persona在钩子里的
-   * 裁量(经 sessionInfo 查数、经 requestContextHandoff 行动);core 只留
-   * 一条物理钳制——计数越过模型上限即强制交接,机器不能等人格慌了才救火。
-   */
+  /** 一批结束后调用 Persona 钩子，再检查是否超过模型容量；超限时强制交接。 */
   private async batchEndCheck(generation: number): Promise<void> {
     if (!this.active(generation)) return;
     const { persona, log } = this.d;
@@ -1461,18 +1377,16 @@ export class MainLoop {
   }
 
   /**
-   * persona.onHandoff 提供动态尾;醒来消息由它在钩子内注入(事务期间总线
-   * 不投递,注入项落在新 session 第一批)。策略失败或越界时使用默认重建结果,
-   * 确保已触发的截断继续完成。
+   * Persona.onHandoff 提供保留内容；事务期间停止投递，钩子注入项进入新 session 的首批。
+   * 策略失败或返回内容越界时使用默认重建结果。
    */
   private async performHandoff(generation: number): Promise<void> {
     if (!this.active(generation)) return;
     const { cfg, session, state, log, persona } = this.d;
-    // 出线态快照:交接策略里开的继承型 fork 才能与主 session 字节前缀一致。
-    // 落盘防线在 clampTail——firstTurn 标记的消息不进重建后的动态尾。
+    // 快照包含合成首轮对话，继承它的 fork 保留相同请求前缀。
+    // clampTail 排除 firstTurn 项，避免写入持久上下文。
     const snapshot = this.outboundMessages();
     const before = this.estTokens();
-    // Persona没有交接策略时按机械默认重建(null 尾)。
     let result: ContextHandoffResult = { tail: null };
     try {
       if (persona.onHandoff) result = await persona.onHandoff(snapshot, { hardTokens: this.d.context.hardTokens() });
@@ -1481,7 +1395,7 @@ export class MainLoop {
     }
     if (!this.active(generation)) return;
 
-    // system 前缀在交接策略可能改写人格工作区之后重建。
+    // 策略执行后重建前缀，读取其可能更新的内容。
     const sysMsg = await this.buildSystem();
     if (!this.active(generation)) return;
     const newTail = this.clampTail(result, snapshot, [sysMsg, ...this.activeFirstTurn()]);
@@ -1501,9 +1415,8 @@ export class MainLoop {
   }
 
   /**
-   * 动态尾必须满足工具调用配对与物理上限:新前缀加尾巴不得越过 hardTokens。
-   * null 尾按同一上限从快照末尾机械重建;上限未知时只修配对。Persona带 trim
-   * 交回的整段候选走同一条重建路径,只是不再当作它出错。
+   * 修复保留内容的工具配对，并将新前缀与保留内容限制在 hardTokens 内。
+   * null 从快照末尾重建；上限未知时仅修复配对。trim 表示候选内容允许超限后裁剪。
    */
   private clampTail(result: ContextHandoffResult, snapshot: ContextRecord[], prefix: readonly ContextRecord[]): ContextRecord[] {
     const { log, context } = this.d;
@@ -1517,18 +1430,15 @@ export class MainLoop {
       const candidate = snapshot.slice(start).filter((m) => !m.context.firstTurn);
       return budget === null ? fixPairing(candidate) : rebuildTail(candidate, budget, estimate);
     }
-    // 合成首轮对话与 system 同款过滤:它只活在出线态,落盘即污染真实历史。
+    // system 和合成首轮对话不属于持久化的保留内容。
     const paired = fixPairing(tail.filter((m) => !hasRole(m, 'system') && !m.context.firstTurn));
     if (budget === null || estimate(paired) <= budget) return paired;
-    // trim:Persona声明这是"整段候选材料",越过上限是预期,不是它出错。
+    // trim 表示允许 Core 从候选内容裁剪，无需报告策略越界。
     if (!result.trim) log.warn('交接策略返回的动态尾越过模型上下文上限,按机械默认裁剪', { budget });
     return rebuildTail(paired, budget, estimate);
   }
 
-  /**
-   * 主session清空重开(web运维动作):只保留新system前缀，boot作为下一条user消息
-   * 重新开启回合。事件库不动，旧经历仍可通过历史工具找回。
-   */
+  /** 清空主 session，重建 system 前缀并调用 Persona 开场钩子；事件库保留。 */
   async clearSession(): Promise<void> {
     const generation = this.generation;
     if (!this.active(generation)) return;
@@ -1543,8 +1453,8 @@ export class MainLoop {
   }
 
   /**
-   * 重新读取 ORIENTATION / CONSTITUTION / IO 环境提示词并只替换当前 session
-   * 的 system 前缀。既有 user / assistant / tool 消息全部保留。
+   * 通过 Persona.systemSegments 和 World 环境模板重建 system 前缀。
+   * 只替换 system 消息，保留既有 user、assistant 和工具记录。
    */
   reloadSystemPrefix(): Promise<void> {
     const generation = this.generation;
@@ -1590,21 +1500,20 @@ export class MainLoop {
     if (error instanceof GenerationError) this.mainTrack?.recordAttempts(error.attempts, undefined, { prefixHash });
   }
 
-  /** 一次调用失败:进时刻表,并记下这串失败是什么时候开始的。落盘,重启不丢账。 */
+  /** 记录失败时刻与连续失败起点，并持久化。 */
   private noteStalled(): void {
     const now = Date.now();
     if (this.stallSince === 0) this.stallSince = now;
     this.stallAt.push(now);
     this.pruneStalls(now);
     this.d.state.save();
-    // 连败到阈值:发一条操作员口径的告警(见 STALL_ALERT_THRESHOLD 注释)。
-    // 同一串只响一次;只报事实,不改重试行为。
+    // 同一串连续失败达到阈值时仅告警一次，不改变重试策略。
     if (!this.stallAlarmActive && this.stallSince !== 0) {
       const count = this.stallAt.filter((t) => t >= this.stallSince).length;
       if (count >= STALL_ALERT_THRESHOLD) {
         this.stallAlarmActive = true;
         this.d.log.error(
-          `[告警] LLM 已连续失败 ${count} 次,零成功——成串的失败不会自愈,去看上游;恢复时会另发解除`,
+          `[告警] LLM 连续失败 ${count} 次；请检查请求错误与上游状态`,
           {
             count,
             since: new Date(this.stallSince).toISOString(),
@@ -1615,10 +1524,7 @@ export class MainLoop {
     }
   }
 
-  /**
-   * 丢掉窗口外的失败时刻。窗口里一条都不剩时连 `stallSince` 一并清零——否则
-   * 停机一整天后的第一次成功会把一串早已过期的账当成"刚恢复"报出来。
-   */
+  /** 清除窗口外的失败时刻；窗口内已无失败记录时同时清除连续失败起点。 */
   private pruneStalls(now = Date.now()): boolean {
     const stall = this.d.state.data.llmStall;
     const cutoff = now - STALL_WINDOW_MS;
@@ -1630,17 +1536,13 @@ export class MainLoop {
   }
 
   /**
-   * 一次调用成功:如果刚才卡过,把这串失败的机械事实交给Persona成文。
-   * 整串失败只问一次(问完清零),不在失败期间问——失败期间她根本收不到。
-   *
-   * core 不写面向 agent 的散文:说不说(一次抖动值不值得占一条上下文)、
-   * 怎么说(「卡住」还是别的词、提不提观众),全是 onStallsRecovered 钩子的事;
-   * 没有钩子或钩子返回 null 就什么都不注入。
+   * 首次成功后将连续失败次数与时长交给 Persona.onStallsRecovered，并清除起点。
+   * 未提供钩子或未返回正文时不注入恢复通知。
    */
   private noteStallsRecovered(): void {
     this.pruneStalls();
     if (this.stallSince === 0) {
-      // 连败账已被窗口清空(如长时间停摆后的重启):挂着的告警一并解除,别让它永久卡响
+      // 失败记录超出窗口时解除现有告警。
       if (this.stallAlarmActive) {
         this.stallAlarmActive = false;
         this.d.log.warn('[解除] LLM 连败告警解除:失败串已超出统计窗口');
@@ -1738,17 +1640,13 @@ export class MainLoop {
     });
   }
 
-  /** 最近 withinMs 毫秒内卡住的次数。 World 问"这段安静里有多少是卡住的"用它。 */
+  /** 查询最近 withinMs 毫秒内的模型失败次数。 */
   llmStalls(withinMs: number): number {
     const from = Date.now() - Math.max(0, withinMs);
     return this.stallAt.filter((t) => t >= from).length;
   }
 
-  /**
-   * 投递Persona已渲染的内部唤醒文本(即时成文);core 不解释语义。
-   * onDelivery 时机钩子执行期间的注入收编进当前在途批(同批原子到达);
-   * 其余时刻照常进总线。
-   */
+  /** 注入 Persona 提供的内部文本。onDelivery 同步执行期间加入当前批，其余时刻进入总线。 */
   injectInternal(text: string, kind = 'notice'): void {
     if (!this.activeNow()) return;
     const item = this.internalItem('persona', kind, text);
@@ -1759,10 +1657,7 @@ export class MainLoop {
     this.d.bus.push(item);
   }
 
-  /**
-   * 投递Persona已渲染的外部事件(即时成文):source 记 persona,origin external,
-   * 投递侧按 origin 进事件帧。交接笔记走这条路——它记的是发生过的事,不是提示语。
-   */
+  /** 注入 Persona 提供的外部正文；source=persona、origin=external，按 eventDelivery 投递。 */
   injectExternal(text: string, kind = 'note'): void {
     if (!this.activeNow()) return;
     const { store, cfg } = this.d;
@@ -1777,21 +1672,15 @@ export class MainLoop {
     this.d.bus.push({ event });
   }
 
-  /**
-   * 投递成文的内部唤醒项:发车刻渲染并落库,投出的文本就是库里记的文本。
-   * 心跳这类"报此刻状态"的项走这条路。
-   */
+  /** 内部项在投递时渲染并归档；投递正文与归档正文一致。 */
   injectDeferred(kind: string, render: () => string | null | Promise<string | null>): void {
     if (!this.activeNow()) return;
     this.d.bus.push({ deferred: { type: kind, source: 'persona', origin: 'internal', render } });
   }
 
   /**
-   * 内部项持久化并取得游标后，由调用方安排总线投递。
-   *
-   * 内部项与外部事件共用事件库和游标序列，`origin` 区分两者。
-   * source 记的是产生方:Persona注入的记 `persona`(开场/预警/交接唤醒都是它
-   * 在时机钩子里注入的),World 自报的内部事件经 pushEvent 记 World id。
+   * 内部项与外部事件共用事件库和游标，origin 标记为 internal；调用方决定投递时机。
+   * source 记录生产方。
    */
   private internalItem(source: string, type: string, text: string): WakeItem & { event: EventEnvelope } {
     const { store, cfg } = this.d;
@@ -1805,10 +1694,7 @@ export class MainLoop {
     return { event };
   }
 
-  /**
-   * 当前工具表schema(web调试界面和模型调用共用;run()前为空数组)。
-   * 带上 tags:控制台据此把 core 原语与其余工具分开陈列。
-   */
+  /** 当前工具 schema，供模型与控制台使用；run() 前为空。tags 保留声明方的分类。 */
   getToolSchemas(): Array<ToolSchema & { tags: readonly ToolTag[] }> {
     return this.toolDefs.map(({ name, description, parameters, tags }) => ({
       name, description, parameters, tags,
@@ -1876,7 +1762,7 @@ export class MainLoop {
     }
     this.pendingToolCalls.clear();
     if (failed.length > 0) {
-      this.d.log.error('关机时工具调用配对落盘失败；重启恢复会补齐', { callIds: failed });
+      this.d.log.error('关机时工具调用配对记录写入失败', { callIds: failed });
     }
   }
 }
@@ -1890,10 +1776,7 @@ function parseToolArgs(raw: string): Record<string, unknown> | null {
   }
 }
 
-/**
- * 执行一次 tool handler,异常就地转回执文本。常规派发与提前派发共用这一份,
- * 两条路径的回执措辞不会静默分叉,工具调用流水也只有这一个落点。
- */
+/** 普通执行与流式提前执行共用工具处理及日志记录；异常转换为失败回执。 */
 function runToolHandler(
   def: ToolDef,
   args: Record<string, unknown>,
@@ -1919,13 +1802,9 @@ function runToolHandler(
 }
 
 /**
- * 提前派发:tap 会话在 tool_call 流式闭合时立即执行。
- * LLM 层保证闭合顺序等于消息内顺序:
- *  - 屏障语义成立:一个 barrierAfter 工具闭合后,后续闭合的调用不再提前派发
- *    (它们在消息落定后拿"[not executed]"回执,与非流式路径一致);
- *  - 结果按 call id 暂存,消息落定后由 rounds() 按序取走配对;
- *  - 参数不是合法 JSON 的调用不派发,落回非流式路径的机械回执。
- * handler 异常在这里就地转成回执文本,与非流式路径同一措辞。
+ * 工具调用在流中闭合后可提前执行，闭合顺序由协议层保证。
+ * barrierAfter 阻止后续调用提前执行；其后调用在响应结束时记为未执行。
+ * 结果按 call id 暂存，rounds() 按消息顺序取回配对；无效 JSON 留待常规路径生成错误回执。
  */
 class EagerDispatch {
   private readonly ready = new Map<number, import('../protocol/open-responses/index.ts').OutputItem>();
@@ -1961,7 +1840,7 @@ class EagerDispatch {
   private dispatch(call: { id: string; name: string; args: string }): void {
     if (!this.active()) return;
     if (this.barrierHit) return;
-    // 保留帧不派发:消息落定后整个调用会被丢弃(不依赖"恰好没注册"这一层)
+    // 保留帧调用不执行，也不写入 session。
     if (RESERVED_FRAME_NAMES.has(call.name)) return;
     if (!call.id) {
       // 上游没给 call id 时无法在消息落定后配对(空串键会互相覆盖);
@@ -1971,12 +1850,11 @@ class EagerDispatch {
     }
     const def = this.defs().find((t) => t.name === call.name);
     if (!def) return;
-    // 屏障工具本身可以提前执行(屏障约束的是"后面的调用要等模型读过它的结果")
+    // 屏障工具自身可提前执行，后续调用不能提前执行。
     if (def.barrierAfter) this.barrierHit = true;
     const args = parseToolArgs(call.args);
     if (args === null) return; // 落回非流式路径的"arguments are not valid JSON"回执
-    // 串行执行:前一个 handler 完成才启动下一个(非流式路径也是逐个 await)。
-    // "打断当前台词,紧接着说新话"这类组合依赖这条顺序保证。
+    // handler 按调用顺序串行执行。
     const run = this.chain.then(() => this.active()
       ? runToolHandler(def, args, this.ctx, call.id, this.role, this.toolLog, this.active, this.owner(def.name))
       : { text: NOT_EXECUTED_LOOP_STOPPED });

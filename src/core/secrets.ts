@@ -1,12 +1,9 @@
-/**
- * 密钥读取:按名字同步取一个静态字符串。没有写回、没有失效、没有异步——
- * 有生命周期的凭据(OAuth 的旋转 refresh token)不走这条链,归 provider 模块自己管。
- */
+/** 按名称同步读取密钥；可轮换凭据的生命周期由 provider 管理。 */
 import { existsSync, readFileSync } from 'node:fs';
 
 /**
- * 一份 `.env` 的读取器:**进程环境 > 这份文件**,读不到给空串。
- * 文件内容读一次就记住:一次运行里密钥不会自己变。
+ * 每次优先读取非空进程环境变量；否则使用首次读取后缓存的文件内容，缺失返回空串。
+ * 文件值读取到首个空白字符，不解析引号。
  */
 export function secretReader(file: string): (name: string) => string {
   let text: string | null = null;

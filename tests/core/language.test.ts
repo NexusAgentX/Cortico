@@ -1,6 +1,6 @@
 /**
- * 控制台语言是部署事实:config.json 的 `language` 赢,其次环境变量,最后系统区域。
- * 系统区域凡不是中文就算英文;读不到区域时保持中文。两种语言的串表键集必须一致。
+ * 控制台默认语言依次读取 config.language、进程环境和系统 locale。
+ * 非中文 locale 使用英文，locale 缺失时用中文；请求可另行选择语言。
  */
 import { describe, it, expect } from 'vitest';
 import {

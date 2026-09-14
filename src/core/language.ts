@@ -1,19 +1,12 @@
 /**
- * Console language: a property of the browser session, not of the process.
- *
- * The process resolves a default once: `language` in `config.json` when it names a known
- * language, then the `CORTICO_LANGUAGE` environment variable, then the system locale, where
- * anything that is not Chinese counts as English. The default is stamped on `<html lang>`;
- * the browser may override it and sends its choice with every request (see
- * `CONSOLE_LANGUAGE_HEADER` / `CONSOLE_LANGUAGE_QUERY` in the console protocol). Every
- * server-side text meant for the console is rendered per request: `World.console(language)`,
- * `Persona.console(language)`, provider config groups, receipts and validation messages.
- * Panels read `ConsolePanelContext.language`. Each owner decides whether to carry a second
- * language at all; a missing translation falls back to the owner's Chinese.
- *
- * Model-facing text is outside this value's reach and is fixed English: prompt templates a
- * World ships, tool receipts, event text and the core's own context markers. Persona content
- * carries whatever language its author wrote.
+ * Console text uses the language supplied with each browser request.
+ * The initial default uses a recognized config.language, then CORTICO_LANGUAGE,
+ * then the system locale. Chinese locales select zh; other nonempty locales select en;
+ * an unavailable locale falls back to zh. The environment/locale result is cached once.
+ * The browser can override the initial <html lang> value and sends its choice in the
+ * console language header or query parameter. Panels receive ConsolePanelContext.language.
+ * Owners render request text in that language; missing translations use Chinese.
+ * This setting does not select or translate model-facing text.
  */
 export type Language = 'zh' | 'en';
 
@@ -63,10 +56,7 @@ export function resolveLanguage(configured: unknown): Language {
   return isLanguage(configured) ? configured : systemLanguage();
 }
 
-/**
- * Select one language's table. Tables are plain objects declared as `zh` plus
- * `en: typeof zh`, so the compiler holds the two key sets equal.
- */
+/** Select a language table; the type requires English to have the same keys as Chinese. */
 export function pick<T>(language: Language, table: { readonly zh: T; readonly en: T }): T {
   return language === 'en' ? table.en : table.zh;
 }

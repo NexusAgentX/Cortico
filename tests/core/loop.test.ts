@@ -49,20 +49,20 @@ async function until(cond: () => boolean, timeoutMs = 5000): Promise<void> {
 interface RigOptions {
   cfgPatch?: (cfg: BotConfig) => void;
   worlds?: World[];
-  /** 对 agent 隐藏的 World id(World 照常挂着,只是三要素撤下) */
+  /** 对模型隐藏但仍挂载运行的 World id。 */
   hiddenWorlds?: string[];
   /** 时机钩子,直接装到假Persona上 */
   hooks?: Pick<Persona, 'onTurnEnded' | 'onIdle' | 'onStallsRecovered'>;
   /** 记录 schedule_wake 对 timers 原语的调用。 */
   onTimerSet?: (atIso: string, payload: Record<string, unknown>) => void;
-  /** fork工具的执行体(真实现里是Persona的潜意识) */
+  /** fork 工具的执行函数。 */
   onFork?: (args: Record<string, unknown>) => Promise<string>;
-  /** 上下文交接策略(真实现里是"梦 + 按keepRatio留尾") */
+  /** 上下文交接策略。 */
   onHandoff?: (snapshot: ChatMessage[], ctx: { hardTokens: number | null }) => Promise<ContextHandoffResult>;
   /** 主 session 的上下文事实(缺省:窗口读活跃 provider 的 spec.contextWindow,估算走字数比例,不认超长错误) */
   context?: Partial<ContextFacts>;
   pressureNotice?: string | null;
-  /** 沉默人格:所有文本 hook 返回空(验收 core 不自己说话) */
+  /** 所有文本钩子返回空，用于检查 Core 是否额外添加文本。 */
   silent?: boolean;
   /** 覆盖 logger(断言 core 的机械告警) */
   log?: Logger;
@@ -78,9 +78,9 @@ interface RigOptions {
   transcript?: Transcript;
   /** session 用量观察注册表(缺省=不接,mainTrack 为 null) */
   tracker?: SessionTracker;
-  /** 续拍预算(缺省:默认次数、零退避,测试不等真时间) */
+  /** 重试预算；默认次数与配置一致，退避设为零。 */
   resubmit?: ResubmitPolicy;
-  /** 软轮数上限那一轮的提醒;null=人格不提醒(缺省一句英文,老断言照旧) */
+  /** 软轮数提醒；null 表示不提醒，缺省使用英文文本。 */
   softHint?: string | null;
 }
 
@@ -144,7 +144,7 @@ function makeRig(opts: RigOptions = {}) {
     ...(opts.transcript ? { transcript: opts.transcript } : {}),
     ...(opts.tracker ? { tracker: opts.tracker } : {}),
   });
-  // 方向二:core 把窄接口交给Persona(真实现在 Core 构造里做)
+  // 将 CoreApi 交给测试 Persona。
   persona.attach(makeFakeHarnessApi({
     injectInternal: (text, kind) => loop.injectInternal(text, kind),
     requestContextHandoff: () => loop.requestContextHandoff(),
@@ -789,7 +789,7 @@ describe('MainLoop user事件协议', () => {
     const file = join(logTmp.dir, 'transcript.jsonl');
     const transcript = new Transcript(file, { run: 'r-test' });
     rig = makeRig({ log: { ...nullLogger(), debug: (msg: string) => debugs.push(msg) }, transcript });
-    // Core 把 session.onAppend 接到 transcript;台架里手接同一根线
+    // 将 session.onAppend 接到 transcript，与 Core 的订阅方式一致。
     rig.session.onAppend((record, index) => transcript.item(record, index));
     rig.llm.script({ role: 'assistant', content: '好的。', reasoning_content: long });
     rig.start();
@@ -822,8 +822,8 @@ describe('MainLoop user事件协议', () => {
     expect(rig.store.range({ origin: 'external' })).toHaveLength(0);
   });
 
-  it('投递成文的内部项在发车刻渲染,库里记的就是投出的文本', async () => {
-    // 心跳状态可能在排队后、投递前变化:投递成文项发车刻才成文。
+  it("内部延迟项在投递时生成正文，归档与投递内容一致", async () => {
+    // 排队期间状态可变，正文在投递时读取。
     let world = '手上没有任务';
     rig = makeRig();
     rig.start();
@@ -848,28 +848,28 @@ describe('MainLoop user事件协议', () => {
     expect(logged.text).toContain('任务#1');
   });
 
-  it('外部投递成文项搭车走 external_event_frame 回执,排批尾且游标为本批最大', async () => {
+  it("外部延迟项随 external_event_frame 投递，排在批尾并取得最新游标", async () => {
     rig = makeRig();
     rig.start();
     const idle = () => rig.session.messages.at(-1)?.role === 'assistant';
     await until(() => rig.llm.calls.length >= 1 && idle());
 
-    // 挂单(piggyback):不唤醒,等下一班车
+    // piggyback 仅排队，等待其他项触发。
     let world = '晴,站在河边';
     rig.bus.push(
       { deferred: { type: 'world.snapshot', source: 'qq', origin: 'external', render: () => `[快照] ${world}` } },
       { trigger: 'piggyback' },
     );
     await sleep(120);
-    expect(rig.session.messages.some((m) => m.role === 'tool')).toBe(false); // 没发车
+    expect(rig.session.messages.some((m) => m.role === 'tool')).toBe(false);
 
-    world = '下雨了,还站在河边'; // 排队期间世界变了
-    rig.pushEvent('[10:05] 阿明: 在吗'); // 这条 debounce 到点发车,快照搭车
+    world = '下雨了,还站在河边';
+    rig.pushEvent('[10:05] 阿明: 在吗'); // debounce 到期时，连同快照一起投递。
     await until(() => rig.session.messages.some((m) => m.role === 'tool') && idle());
 
     const receipt = rig.session.messages.find((m) => m.role === 'tool')!;
     expect(receipt.content).toContain('[2 new events]');
-    // 时间戳诚实:发车刻渲染的内容是本批最新的事,排在即时事件之后
+    // 延迟正文在投递时生成，排在已有即时事件之后。
     expect(receipt.content.indexOf('阿明')).toBeLessThan(receipt.content.indexOf('[快照]'));
     expect(receipt.content).toContain('下雨了');
     expect(receipt.content).not.toContain('晴');
@@ -880,7 +880,7 @@ describe('MainLoop user事件协议', () => {
     expect(snap.text).toContain('下雨了');
   });
 
-  it('投递成文渲染返回 null 整条蒸发:不落库、不投递、不留痕', async () => {
+  it("延迟 render 返回 null 时不归档、不投递", async () => {
     rig = makeRig();
     rig.start();
     const idle = () => rig.session.messages.at(-1)?.role === 'assistant';
@@ -946,7 +946,7 @@ describe('MainLoop user事件协议', () => {
     expect(notice.content).not.toContain('忽略规则');
 
     const observed = rig.session.messages.find((message) => message.role === 'tool')!;
-    // 她没调过 external_event_frame:调用那一半是 core 伪造的
+    // external_event_frame 调用由 Core 合成。
     const call = rig.session.messages.find((m) => m.tool_calls?.[0]?.id === observed.tool_call_id)!;
     expect(call.role).toBe('assistant');
     expect(call.tool_calls![0].function.name).toBe('external_event_frame');
@@ -962,7 +962,7 @@ describe('MainLoop user事件协议', () => {
     assertPairing(rig.session.messages);
   });
 
-  it('每一批各自成一对回执，不必等她伸手取', async () => {
+  it("每批外部事件各自生成一对调用和回执", async () => {
     rig = makeRig();
     rig.start();
     const idle = () => rig.session.messages.at(-1)?.role === 'assistant';
@@ -1020,7 +1020,7 @@ describe('MainLoop user事件协议', () => {
     expect(rig.session.messages.some((message) => message.role === 'tool')).toBe(false);
   });
 
-  it('发车刻新游标不越过下一批已落库外部事件', async () => {
+  it("投递时生成的新游标不越过下一批已归档事件", async () => {
     rig = makeRig({ silent: true });
     let later: EventEnvelope | null = null;
     const project: CandidateProjector = () => {
@@ -1037,7 +1037,7 @@ describe('MainLoop user事件协议', () => {
   });
 
   // 仍在批窗口中等待投影的原始事件须挡住水位。
-  // 重启从 lastDeliveredCursor + 1 补投，其他批次的销账不能跨过这些事件。
+  // 重启从 lastDeliveredCursor + 1 补投，其他事件的处理不能跨过此项。
   it('还没过 projector 的 archive-only 挡住水位,不被别的批跨过去', () => {
     rig = makeRig();
     const waiting = rig.store.append({
@@ -1159,7 +1159,7 @@ describe('MainLoop user事件协议', () => {
     const toolIdx = rig.session.messages.findIndex((message) => message.tool_call_id === 'p1');
     expect(roles[toolIdx + 1]).toBe('user');
     expect(rig.session.messages[toolIdx + 1].content).toContain('1 new event arrived');
-    expect(rig.session.messages[toolIdx + 2].content).toBe('');   // 伪造的 external_event_frame 调用
+    expect(rig.session.messages[toolIdx + 2].content).toBe('');   // Core 合成的 external_event_frame 调用。
     expect(rig.session.messages[toolIdx + 3].content).toContain('打断一下');
     // 中途通知不结束回合:同一次唤醒继续推理
     expect(roles.at(-1)).toBe('assistant');
@@ -1227,7 +1227,7 @@ describe('MainLoop user事件协议', () => {
     expect(rig.session.messages.some((m) => m.content.includes('上一条进程留下的心跳'))).toBe(false);
   });
 
-  it('user模式:正文当场打包进user消息，不再另起一对回执', async () => {
+  it("user 模式将外部正文加入 user 消息，不生成工具帧", async () => {
     rig = makeRig({ eventDelivery: 'user' });
     rig.start();
     const idle = () => rig.session.messages.at(-1)?.role === 'assistant';
@@ -1304,7 +1304,7 @@ describe('MainLoop user事件协议', () => {
     await until(() => rig.loop.getStatus().roundsLastBatch === 5);
 
     const added = rig.session.messages.slice(before);
-    // user 通知 + 一对伪造回执 + 5 轮(assistant+tool)
+    // user 通知、合成帧及五轮 assistant/tool。
     expect(added).toHaveLength(13);
     const results = added.filter(
       (message) => message.role === 'tool' && !message.content.startsWith('[1 new event]'),
@@ -1385,7 +1385,7 @@ describe('MainLoop user事件协议', () => {
       at: '2026-07-18T20:00:00+08:00',
       payload: { note: '绝对' },
     });
-    // 相对时间被抬到 ≥10 秒地板
+    // 相对时间限制为至少 10 秒。
     expect(Date.parse(timerSets[1].at) - before).toBeGreaterThanOrEqual(9_000);
     expect(timerSets[1].payload).toEqual({ note: '相对' });
     expect(forkCalls[0]).toEqual({ mode: 'associate', task: '翻people' });
@@ -1437,15 +1437,13 @@ describe('MainLoop user事件协议', () => {
     assertPairing(rig.session.messages);
   });
 
-  it('Persona的阶段长度越过模型窗口 → core 按物理上限强制交接,不静默通过', async () => {
-    // "一个 session 阶段有多长"是Persona的选择,模型窗口是 Provider 事实;
-    // Persona的阈值永远等不到时,core 在窗口处强制交接并告警。
+  it("Persona 预算高于模型容量时 Core 仍强制交接", async () => {
+    // Persona 阶段预算可高于模型容量，Core 仍按模型容量强制交接。
     const warnings: string[] = [];
     let handoffs = 0;
     rig = makeRig({
       cfgPatch: (cfg) => {
         cfg.context = { ...cfg.context, maxTokens: 999_999, softRatio: 0.85 };
-        // 模型硬事实:窗口只有这么大
         activeSpec(cfg).contextWindow = 300;
       },
       log: {
@@ -1458,7 +1456,7 @@ describe('MainLoop user事件协议', () => {
       },
       preSession: [
         { role: 'system', content: 'sys' },
-        // 远超 300 token 的历史:按声明的 999999 不会触发,按模型窗口必须触发
+        // 历史超过模型容量，但尚未达到测试 Persona 的交接阈值。
         { role: 'user', content: '很长的历史'.repeat(400) },
         { role: 'assistant', content: '嗯' },
       ],
@@ -1534,11 +1532,11 @@ describe('MainLoop user事件协议', () => {
       rig.llm.usage = { promptTokens: 5000, completionTokens: 200, cacheHitTokens: 0, cacheMissTokens: 5000 };
       rig.start();
       await until(() => rig.loop.getStatus().context.countedTokens === 5200);
-      // 这一发之后没有新增条目:计数就是上游的数,不掺估算
+      // 没有新增条目，估计值完全来自上游计数。
       expect(rig.loop.contextGauge().estTokens).toBe(5200);
       const anchored = rig.loop.outboundMessages().length;
 
-      // 下一发上游没报用量:锚点不动,新增的事件帧与回答按本地估算叠上去
+      // 未报告新用量时保留原计数，新增条目采用本地估算。
       rig.llm.usage = undefined;
       rig.pushEvent('[10:05] 阿明: 在吗');
       await until(() => rig.llm.calls.length >= 2);
@@ -1546,10 +1544,10 @@ describe('MainLoop user事件协议', () => {
       const status = rig.loop.getStatus();
       expect(status.context.countedTokens).toBe(5200);
       expect(status.estTokens).toBeGreaterThan(5200);
-      // 锚点盖到开场那一发的 assistant 为止,之后的按估算叠加
+      // 上游计数包含开场响应，其后的条目另行估算。
       expect(status.estTokens - 5200).toBe(estimateMessagesTokens(rig.loop.outboundMessages().slice(anchored)));
 
-      // 交接重写 session:锚点作废,回到整份估算
+      // 重写上下文后清除上游计数，恢复完整本地估算。
       await rig.loop.handoffContext();
       expect(rig.loop.getStatus().context.countedTokens).toBe(0);
     } finally {
@@ -1649,7 +1647,7 @@ describe('MainLoop user事件协议', () => {
       expect(notice.content).not.toContain('三只猫');
       const stored = rig.store.range({ fromCursor: 1, limit: 100 }).filter((e) => e.type === 'handoff-note');
       expect(stored.map((e) => [e.source, e.origin])).toEqual([['persona', 'external'], ['persona', 'external']]);
-      // 两段是同一批里的两条事件:一对合成调用/回执,sidecar 两条,远近之分在各自抬头里
+      // 两条事件使用同一对调用/回执，并保留各自的位置元数据。
       const frames = rig.session.messages.filter((m) => m.role === 'tool' && m.tool_call_id?.startsWith('evf_'));
       expect(frames).toHaveLength(1);
       expect(frames[0].frame?.events).toHaveLength(2);
@@ -1824,7 +1822,7 @@ describe('MainLoop user事件协议', () => {
     assertPairing(rig.session.messages);
   });
 
-  it('策略返回的动态尾要过配对修复与物理上限钳制', async () => {
+  it("交接保留内容须修复工具配对并限制在模型容量内", async () => {
     rig = makeRig({
       cfgPatch: (cfg) => {
         activeSpec(cfg).contextWindow = 3000;
@@ -1851,7 +1849,7 @@ describe('MainLoop user事件协议', () => {
     assertPairing(messages);
   });
 
-  it('trim:Persona交回的整段候选越过物理上限是预期,照常裁剪但不当它出错', async () => {
+  it("trim 候选超限时裁剪，不报告策略越界", async () => {
     const bulk = (tag: string) =>
       Array.from({ length: 40 }, (_, i) => ({ role: 'user' as const, content: `${tag}${i} ${'字'.repeat(200)}` }));
     const warnings: string[] = [];
@@ -1867,12 +1865,12 @@ describe('MainLoop user事件协议', () => {
     await rig.loop.handoffContext();
     // 照常裁剪:前缀加尾巴装进窗口
     expect(estimateMessagesTokens(rig.session.messages)).toBeLessThanOrEqual(3000);
-    // 但不告警——它不是Persona出错
+    // trim 允许裁剪，不产生策略越界告警。
     expect(warnings.some((w) => w.includes('越过模型上下文上限'))).toBe(false);
     assertPairing(rig.session.messages);
   });
 
-  it('不带 trim 交回越过物理上限的尾巴仍然告警(那是Persona的 bug)', async () => {
+  it("未声明 trim 的保留内容超限时报告告警", async () => {
     const warnings: string[] = [];
     rig = makeRig({
       cfgPatch: (cfg) => {
@@ -2160,7 +2158,7 @@ describe('MainLoop 输出旁路(outputTap)', () => {
     rig.llm.throwNext = new Error('network down');
     rig.llm.script(textReply('续上'));
     rig.pushEvent('[10:05] 阿明: 在吗');
-    // 失败那一发只留下投递本身(通知 + 伪造回执),没有 assistant/partial;紧接着是续拍的回复
+    // 首次失败未产生部分响应，持久记录在投递帧后直接追加重试响应。
     await until(() => rig.session.messages.some((m) => m.content === '续上'));
     expect(aborted).toEqual([]);
     expect(rig.session.messages.slice(before, before + 3).map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
@@ -2372,7 +2370,7 @@ describe('MainLoop 输出旁路(outputTap)', () => {
   });
 });
 
-describe('MainLoop endsTurn显式收工', () => {
+describe("MainLoop endsTurn", () => {
   let rig: ReturnType<typeof makeRig>;
   afterEach(async () => {
     if (rig) await rig.cleanup();
@@ -2399,7 +2397,7 @@ describe('MainLoop endsTurn显式收工', () => {
     await until(() => rig.session.messages.some((m) => m.tool_call_id === 'e1'));
     await sleep(150);
 
-    // 只有本批这一次调用;end_turn 之前的调用照常执行(先干活再收工)
+    // end_turn 之前的工具照常执行，本批只有一次模型调用。
     expect(rig.llm.calls.length).toBe(callsBefore + 1);
     expect(rig.session.messages.find((m) => m.tool_call_id === 's1')?.content).toBe('已发送');
     expect(rig.session.messages.find((m) => m.tool_call_id === 'e1')?.content).toBe('[turn ended]');
@@ -2421,7 +2419,7 @@ describe('MainLoop endsTurn显式收工', () => {
     assertPairing(rig.session.messages);
   });
 
-  it('收工时工具期间到的事件退回总线,构成下一批唤醒', async () => {
+  it("endsTurn 后将工具执行期间收到的事件退回总线", async () => {
     let fire: (() => void) | null = null;
     const spark = makeTool('spark', () => {
       fire?.();
@@ -2435,7 +2433,7 @@ describe('MainLoop endsTurn显式收工', () => {
 
     rig.pushEvent('[10:01] 触发');
     await until(() => rig.session.messages.some((m) => m.tool_call_id === 'e1'));
-    // 事件没被收工吞掉:作为新一批投递(新的到达通知+帧回执),唤起新的调用
+    // 工具执行期间到达的事件进入下一批，触发新请求。
     await until(() =>
       rig.session.messages.some((m) => m.role === 'tool' && m.content.includes('后到的事')),
     );
@@ -2504,7 +2502,7 @@ describe('MainLoop 工具调用流水', () => {
     const [row] = s.rows();
     expect(row.tool).toBe('vtuber_act');
     expect(row.role).toBe('main');
-    // 台词正文完整落盘:事后话术分析只有这一个来源
+    // 工具调用日志保存完整原始参数。
     expect(row.args).toEqual({ script, mood: 'happy' });
     expect(row.chars).toBe('已排上'.length);
     expect(row.receipt).toBe('已排上');
@@ -2580,13 +2578,13 @@ describe('MainLoop 工具调用流水', () => {
 });
 
 
-describe('MainLoop 卡住的自我感知', () => {
+describe("MainLoop 连续失败与恢复通知", () => {
   let rig: ReturnType<typeof makeRig>;
   afterEach(async () => {
     if (rig) await rig.cleanup();
   });
 
-  /** 装配层的成文钩子:core 只报机械事实,措辞与阈值裁量都在这里(照 cortiv 的形状) */
+  /** 测试用恢复通知钩子，接收失败次数并返回正文。 */
   const stallHook = (seen: Array<{ count: number; quietMs: number }> = []) => ({
     onStallsRecovered: (info: { count: number; quietMs: number }) => {
       seen.push(info);
@@ -2595,20 +2593,20 @@ describe('MainLoop 卡住的自我感知', () => {
     },
   });
 
-  it('连续卡住之后:恢复的那一轮注入钩子成文的告知,机械事实原样透传', async () => {
+  it("连续失败后首次成功调用恢复钩子，注入其返回正文", async () => {
     const seen: Array<{ count: number; quietMs: number }> = [];
     rig = makeRig({ hooks: stallHook(seen) });
     rig.start();
     await until(() => rig.llm.calls.length >= 1);
 
-    // 同一批内连续卡两次(首发 + 一次续拍),第二次续拍成功:恢复刻把 {count: 2} 交给钩子
+    // 连续两次失败后重试成功，将 count=2 交给恢复钩子。
     const streamError = (): LLMStreamAborted =>
       new LLMStreamAborted('LLM流中断: Responses 流失败: 流内错误', 0, '', { role: 'assistant', content: '' });
     rig.llm.throwSequence = [streamError(), streamError()];
     rig.llm.script(textReply('回来了'));
     rig.pushEvent('[10:05] 阿明: 在吗');
     await until(() => rig.session.messages.some((m) => m.content === '回来了'));
-    // 开场 + 首发 + 续拍 + 续拍成功(恢复告知的那一批可能已经紧跟着来了)
+    // 开场请求、首次失败、重试失败和重试成功；恢复通知可能已触发下一请求。
     expect(rig.llm.calls.length).toBeGreaterThanOrEqual(4);
 
     // 恢复告知作为内部项投递,进下一批上下文
@@ -2617,15 +2615,15 @@ describe('MainLoop 卡住的自我感知', () => {
     );
     const note = rig.session.messages.find((m) => m.content.includes('你刚才卡住了'))!;
     expect(note.content).toContain('卡住了 2 次');
-    // 机械事实原样到钩子:两次失败、静默时长非负
+    // 钩子收到失败次数和非负时长。
     expect(seen.at(-1)).toMatchObject({ count: 2 });
     expect(seen.at(-1)!.quietMs).toBeGreaterThanOrEqual(0);
-    // 事件库里也留了痕:归 core,不冒充Persona
+    // 恢复通知以 source=core 归档。
     expect(rig.store.range({}).some((e) => e.type === 'core.stall' && e.source === 'core')).toBe(true);
   });
 
   // 连败记录落盘；重启后第一次成功仍须报告上一进程积累的失败。
-  it('上一进程没结的连败账跨重启带回,重启后第一次成功照样报', async () => {
+  it("重启后首次成功报告持久化的连续失败记录", async () => {
     const seen: Array<{ count: number; quietMs: number }> = [];
     const since = Date.now() - 60_000;
     rig = makeRig({
@@ -2638,11 +2636,11 @@ describe('MainLoop 卡住的自我感知', () => {
     await until(() => seen.length >= 1);
     expect(seen[0].count).toBe(3);
     expect(seen[0].quietMs).toBeGreaterThanOrEqual(60_000);
-    // 报完就结清,同一串不会在下一次成功时再报一遍
+    // 恢复后清除连续失败起点，不在后续成功时重复通知。
     expect(rig.state.data.llmStall.since).toBe(0);
   });
 
-  it('窗口外的旧账重启时清掉:停机一天后的第一次成功不冒充"刚恢复"', async () => {
+  it("重启时清除窗口外失败记录，后续成功不产生恢复通知", async () => {
     const seen: Array<{ count: number; quietMs: number }> = [];
     const since = Date.now() - 86_400_000;
     rig = makeRig({
@@ -2671,7 +2669,7 @@ describe('MainLoop 卡住的自我感知', () => {
     rig.pushEvent('[10:06] 阿明: ?');
     await until(() => rig.llm.calls.length >= 3);
     await sleep(80);
-    // 钩子被问过(count=1),但它说不值得——于是一个字都没进上下文
+    // 钩子返回 null，不注入正文。
     expect(seen.some((s) => s.count === 1)).toBe(true);
     expect(rig.session.messages.some((m) => m.content.includes('你刚才卡住了'))).toBe(false);
   });
@@ -2697,7 +2695,7 @@ describe('MainLoop 卡住的自我感知', () => {
     expect(rig.store.range({}).some((e) => e.type === 'core.stall')).toBe(false);
   });
 
-  /** 捕获 logger:断言操作员告警口径 */
+  /** 捕获日志，供操作员告警断言使用。 */
   const captureLog = () => {
     const rows: Array<{ level: string; msg: string; data?: unknown; event?: string }> = [];
     const log = {
@@ -2721,7 +2719,7 @@ describe('MainLoop 卡住的自我感知', () => {
     rig.start();
     await until(() => rig.llm.calls.length >= 1);
 
-    // 两批各连续失败 3 次(首发 + 两次续拍耗尽预算):第 5 次响,第 6 次不再响
+    // 两批各失败三次；第 5 次触发告警，第 6 次不重复。
     const down = (): Error => new Error('upstream down');
     rig.llm.throwSequence = [down(), down(), down()];
     rig.pushEvent('[10:01] 阿明: 第1批');
@@ -2762,7 +2760,7 @@ describe('MainLoop 卡住的自我感知', () => {
     expect(rows.some((row) => row.msg.includes('[解除]'))).toBe(false);
   });
 
-  it('跨重启带回的连败账已够阈值:不重复响,但恢复时照发 [解除]', async () => {
+  it("持久失败记录已达到阈值时不重复告警，恢复时报告解除", async () => {
     const { log, rows } = captureLog();
     const since = Date.now() - 60_000;
     rig = makeRig({
@@ -2776,7 +2774,7 @@ describe('MainLoop 卡住的自我感知', () => {
     });
     rig.start();
     await until(() => rows.some((row) => row.msg.includes('[解除]')));
-    // 本进程一次都没响过告警(那串账是上一进程欠的),只发解除
+    // 持久记录已达到告警阈值，本进程仅报告恢复。
     expect(rows.some((row) => row.msg.includes('[告警]'))).toBe(false);
     expect(rows.filter((row) => row.msg.includes('[解除]'))).toHaveLength(1);
   });
@@ -2804,17 +2802,17 @@ describe('MainLoop 卡住的自我感知', () => {
     const delivered = rig.session.messages.find((m) => m.content.includes('已经安静 15 秒'))!;
     expect(delivered.ephemeral).toBe(true);
 
-    // 下一批唤醒到来:催促已经读过一次,不再占着上下文
+    // 下一批到达前清除已投递的 ephemeral 消息。
     rig.llm.script(textReply('好'));
     rig.pushEvent('[10:06] 阿明: 在吗');
     await until(() => rig.session.messages.some((m) => m.content.includes('阿明: 在吗')));
     expect(rig.session.messages.some((m) => m.content.includes('已经安静 15 秒'))).toBe(false);
-    // 落库的事件本身不受影响:经历不丢
+    // 事件归档保留。
     expect(rig.store.range({}).some((e) => e.ephemeral === true)).toBe(true);
     assertPairing(rig.session.messages);
   });
 
-  it('自消解项与正经内部项混在一批时整批留着,不连累同批内容', async () => {
+  it("ephemeral 与普通内部项混合投递时保留整条消息", async () => {
     rig = makeRig();
     rig.start();
     await until(() => rig.llm.calls.length >= 1);
@@ -2849,7 +2847,7 @@ describe('MainLoop 失败流入账', () => {
     if (rig) await rig.cleanup();
   });
 
-  /** 带用量注册表的 rig:落一条流水就往 rows 里追一笔(真实链路是 UsageLog.append)。 */
+  /** 用量注册表追加的每条记录同时收集到 rows。 */
   const rigWithUsage = (): { rows: UsageRecord[]; tracker: SessionTracker } => {
     const rows: UsageRecord[] = [];
     return { rows, tracker: new SessionTracker('Asia/Shanghai', (r) => rows.push(r)) };
@@ -2927,7 +2925,7 @@ describe('MainLoop 失败流入账', () => {
     rig.start();
     await until(() => rig.llm.calls.length >= 1);
     rows.length = 0;
-    // 模型正常回来了(钱已经花了),但回来的那一刻 core 正在关机
+    // 请求成功返回时正在关机，仍应保留实际用量。
     rig.llm.chat = async () => {
       rig.loop.stop();
       return {
@@ -2942,7 +2940,7 @@ describe('MainLoop 失败流入账', () => {
 
   // 运行期水位自检报告停滞，不修改水位或补投状态。
   describe('投递水位周期自检', () => {
-    /** 造一批已落库、未投递、且已经放了很久的外部事件 */
+    /** 创建已归档、尚未投递且等待已超时的外部事件。 */
     function seedStale(target: ReturnType<typeof makeRig>, count: number, ageMs: number): void {
       const base = Date.now() - ageMs;
       for (let i = 0; i < count; i++) {
@@ -3079,9 +3077,9 @@ describe('MainLoop 失败流入账', () => {
   });
 });
 
-// pushEvent({deliver:false}) 与隐藏 World 落库的 archive-only 不会被投影引用，须落库即销账。
-// 等待发车的候选原文在发车前仍不可跳过。
-describe('deliver:false 与隐藏 World 的落库即销账', () => {
+// deliver:false 和隐藏 World 的事件不会生成候选引用，归档时即标记已处理。
+// 尚未处理的候选原文继续阻止水位推进。
+describe("deliver:false 与隐藏 World 的事件归档后推进水位", () => {
   let tmp: ReturnType<typeof makeTmpDir>;
   let core: Core<BotConfig>;
   let host: WorldHost;
@@ -3112,7 +3110,7 @@ describe('deliver:false 与隐藏 World 的落库即销账', () => {
     tmp.cleanup();
   });
 
-  it('World pushEvent({deliver:false}) 的自录回声不楔死水位', async () => {
+  it('World pushEvent({deliver:false}) 归档后推进水位', async () => {
     await build();
     const echo = await host.pushEvent({
       type: 'terminal.self',
@@ -3121,11 +3119,11 @@ describe('deliver:false 与隐藏 World 的落库即销账', () => {
       text: '[13:25] 你: test speech pipeline',
     }, { deliver: false });
     expect(echo.contextDelivery).toBe('archive-only');
-    // 落库即销账:水位当场越过它,不需要任何投影来引用
+    // 归档后立即推进水位，不要求候选引用。
     await until(() => core.state.data.lastDeliveredCursor >= echo.cursor);
   });
 
-  it('隐藏 World 的 pushEvent 与 pushCandidate 原文同样不楔死水位', async () => {
+  it('隐藏 World 的 pushEvent 与 pushCandidate 原文归档后推进水位', async () => {
     await build();
     core.setWorldVisible('probe', false);
 
@@ -3153,7 +3151,7 @@ describe('deliver:false 与隐藏 World 的落库即销账', () => {
   });
 });
 
-describe('MainLoop 续拍、轮边界与轮级观测', () => {
+describe("MainLoop 重新请求、轮次边界与统计", () => {
   let rig: ReturnType<typeof makeRig>;
   afterEach(async () => {
     if (rig) await rig.cleanup();
@@ -3178,7 +3176,7 @@ describe('MainLoop 续拍、轮边界与轮级观测', () => {
     return { log, rows };
   };
 
-  it('流式断流后在同一批内续拍:partial 与机械回执落库,续拍的回复紧跟其后', async () => {
+  it('流式中断后在本批重试：保存 partial 和工具回执，随后追加重试回复', async () => {
     const aborted: string[] = [];
     const seen: Array<{ count: number; quietMs: number }> = [];
     rig = makeRig({
@@ -3199,7 +3197,7 @@ describe('MainLoop 续拍、轮边界与轮级观测', () => {
     await until(() => rig.session.messages.some((m) => m.content === '接着说完'));
     await sleep(30);
 
-    // 首发 + 一次续拍,同一批里完成
+    // 首次失败后在同一批内重新请求一次。
     expect(rig.llm.calls.length).toBe(before + 2);
     const idx = rig.session.messages.findIndex((m) => m.content === '也许我们今天');
     expect(idx).toBeGreaterThan(-1);
@@ -3208,12 +3206,12 @@ describe('MainLoop 续拍、轮边界与轮级观测', () => {
     });
     expect(rig.session.messages[idx + 2]?.content).toBe('接着说完');
     expect(aborted).toHaveLength(1);
-    // 续拍成功即恢复:连败账交给钩子(count=1),由它裁量说不说
+    // 重试成功后，将 count=1 交给恢复钩子。
     expect(seen).toEqual([expect.objectContaining({ count: 1 })]);
     assertPairing(rig.session.messages);
   });
 
-  it('续拍预算耗尽本批收束,下一批照常;4xx 不续拍', async () => {
+  it('重试预算耗尽后结束本批，下一批可运行；4xx 不重试', async () => {
     rig = makeRig({ resubmit: { maxConsecutive: 1, maxPerBatch: 4, backoffMs: [0] } });
     rig.start();
     await until(() => rig.llm.calls.length >= 1);
@@ -3223,7 +3221,7 @@ describe('MainLoop 续拍、轮边界与轮级观测', () => {
     rig.pushEvent('[10:05] 阿明: 在吗');
     await until(() => rig.llm.calls.length >= before + 2);
     await sleep(80);
-    // 首发失败 + 一次续拍失败 = 预算用尽,不再第三发
+    // 首次请求和一次重试均失败，预算耗尽，不再请求。
     expect(rig.llm.calls.length).toBe(before + 2);
 
     rig.llm.script(textReply('回来了'));
@@ -3239,7 +3237,7 @@ describe('MainLoop 续拍、轮边界与轮级观测', () => {
     assertPairing(rig.session.messages);
   });
 
-  it('退避期间到齐的事件先进上下文,续拍看到的是此刻的世界', async () => {
+  it("重新请求前投递退避期间已就绪的事件", async () => {
     rig = makeRig({ resubmit: { maxConsecutive: 2, maxPerBatch: 4, backoffMs: [120] } });
     rig.start();
     await until(() => rig.llm.calls.length >= 1);
@@ -3249,7 +3247,7 @@ describe('MainLoop 续拍、轮边界与轮级观测', () => {
     rig.llm.script(textReply('看到了'));
     rig.pushEvent('[10:05] 阿明: 在吗');
     await until(() => rig.llm.calls.length >= before + 1);
-    // 首发失败后的退避期里又来一条
+    // 退避等待期间接收新事件。
     rig.pushEvent('[10:05] 阿强: 我也在');
     await until(() => rig.session.messages.some((m) => m.content === '看到了'));
 
@@ -3258,7 +3256,7 @@ describe('MainLoop 续拍、轮边界与轮级观测', () => {
     assertPairing(rig.session.messages);
   });
 
-  it('上游说输入超长:不计入连败账', async () => {
+  it('输入过长错误不计入连续失败记录', async () => {
     let handoffs = 0;
     rig = makeRig({
       context: { contextOverflow: (error) => error.status === 400 && /context length/.test(error.body) },
@@ -3291,7 +3289,7 @@ describe('MainLoop 续拍、轮边界与轮级观测', () => {
     rig.pushEvent('开始');
     await until(() => handoffs >= 1);
     expect(rows.some((row) => row.msg.includes('轮边界收束'))).toBe(true);
-    // 远早于硬轮数上限就收了
+    // 在达到轮数上限之前结束。
     expect(rig.loop.getStatus().roundsLastBatch).toBeLessThan(6);
     assertPairing(rig.session.messages);
   });

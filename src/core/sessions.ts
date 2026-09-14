@@ -2,14 +2,9 @@ import type { ContextRecord } from '../protocol/open-responses/context.ts';
 import type { ProviderAttempt } from './generation.ts';
 import { usageCounters } from '../protocol/open-responses/context-helpers.ts';
 /**
- * SessionTracker — 运行中各agent session的观察注册表(web面板数据源)。
- *
- * "session"=一次独立的LLM对话进程:常驻的那个(接收事件投递)与各种临时fork。
- * role=Persona声明的不透明 session id,core 仅将其作为分类标签。每个 session
- * 累计usage(输入/输出/缓存命中),并持有消息数组的引用(零拷贝;查看时才序列化)。
- *
- * 统计与消息引用仅供操作者观察；open 分配的 id 同时作为 session 实例身份交给
- * LLM 调用。注册表数据只存于内存并在进程重启时清零。
+ * 控制台使用的 session 统计与消息引用，注册表仅驻留内存。
+ * role 使用 Persona 声明的 session id；open 返回的实例 id 也传给模型调用。
+ * 消息通过保存的引用在读取时序列化；重启清空统计。
  */
 import type { LLMUsage, UsageRecord } from './types.ts';
 import { nowIso } from './util.ts';
@@ -39,18 +34,14 @@ export interface SessionHandle {
   recordAttempts(attempts: readonly ProviderAttempt[], messagesRef?: ContextRecord[], extra?: { prefixHash?: string; outcome?: 'discarded' }): void;
   /** 本次 session 实例的 id；常驻 session 使用声明 id，临时 fork 使用运行期序号。 */
   id: string;
-  /**
-   * 记一次LLM调用:累计usage;messagesRef=该session的消息数组引用(可选更新);
-   * model=本次调用的模型名(落持久化流水时归因,可选);extra=只进持久化流水的
-   * 观测列(前缀指纹)。
-   */
+  /** 累计用量，可更新消息数组引用。model 用于持久化归因；extra 提供前缀指纹和费用记录。 */
   record(
     usage: LLMUsage,
     messagesRef?: ContextRecord[],
     model?: string,
     extra?: { prefixHash?: string; charges?: import('./generation.ts').Charge[] },
   ): void;
-  /** session结束(临时session收线时调;幂等) */
+  /** 关闭 session；重复调用无效。 */
   close(): void;
 }
 

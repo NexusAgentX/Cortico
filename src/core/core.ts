@@ -44,10 +44,7 @@ import { currentAnchors } from './log-context.ts';
 import { MainLoop, type ContextFacts } from './loop.ts';
 import type { ResponseClient } from './generation.ts';
 
-/**
- * 单个 World 的收尾预算。盖得住最慢的那条:MC 服务端 stop 存档自带 15 秒上限,
- * 加上子进程 RPC 的往返。超过就记一笔往下走 —— 关机不能被一个 World 扣住。
- */
+/** 单个 World 的停止期限；失败或超时写入结果，其他停止操作继续。 */
 const MODULE_STOP_MS = 20_000;
 /** 主循环收到 abort 后用于落完已外化片段的期限。 */
 const LOOP_DRAIN_MS = 1_000;
@@ -69,7 +66,7 @@ export interface WorldStopFailure {
 
 export class Core<C extends CoreConfig = CoreConfig> {
   readonly loaded: LoadedConfig<C>;
-  /** 本次进程运行:记录都落在 run.dir 下 */
+  /** 本次进程运行的标识与日志目录。 */
   readonly run: RunInfo;
   readonly runlog: Runlog;
   readonly transcript: Transcript;
@@ -81,7 +78,6 @@ export class Core<C extends CoreConfig = CoreConfig> {
   readonly loop: MainLoop;
   readonly llm: ResponseClient;
   /** 媒体库：字节保存在 data/media/，回执与事件只存引用。 */
-  /** 日志附件库:随记录落库的字节 */
   readonly logBlobs: LogBlobStore;
   /** 各agent session的观察注册表(web面板数据源) */
   readonly sessions: SessionTracker;
@@ -100,9 +96,9 @@ export class Core<C extends CoreConfig = CoreConfig> {
   private started = false;
   /** 每个声明当前运行的 fork 实例数，用于并发记账。 */
   private readonly forkRunning = new Map<string, number>();
-  /** 每个 World 当前在途的认知外包请求数(同款并发记账;单实例策略归Persona) */
+  /** 各 World 在途的认知请求数；并发限制由 Persona 决定。 */
   private readonly cognitionRunning = new Map<string, number>();
-  /** 接收事件投递的那个 session 声明(模型事实按它实时读) */
+  /** 接收事件的主 session 声明。 */
   private readonly mainDecl: SessionDecl;
   /** World 自愿上报用量的常驻仪表条目(每 World 一条) */
   private readonly moduleUsageTracks = new Map<string, SessionHandle>();
@@ -138,7 +134,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
     this.persona = deps.persona;
     this.logBlobs = new LogBlobStore(dataDir);
     this.providers = new ProviderRegistry(() => cfg.providers, {
-      // 端点的状态归全局端点表那一格,不是这份部署的 data/ —— 同一个账号因此只授权一次。
+      // 同一部署根下的部署共享端点配置和状态目录。
       stateRoot: loaded.providersDir ?? join(loaded.rootDir, 'providers'),
       repoRoot: loaded.repoRoot ?? process.cwd(),
       readBlob: (handle) => {
@@ -162,7 +158,6 @@ export class Core<C extends CoreConfig = CoreConfig> {
 
     // attach 必须先于 declareSessions，后者会将工具 handler 绑定到 CoreApi。
     this.persona.attach(this.makeApi());
-    // 声明按原样收下:模型档不再由 core 往声明上盖,声明里也不再有它。
     const decls = this.persona.declareSessions();
     for (const decl of decls) this.sessionDecls.set(decl.id, decl);
     const main = decls.filter((d) => d.receivesEvents && d.persistent);
@@ -238,8 +233,8 @@ export class Core<C extends CoreConfig = CoreConfig> {
   }
 
   /**
-   * 记录落库刻的附件内部化:新字节进日志附件库换 `log:` 句柄;已有句柄只补 mime 与名字。
-   * 返回落库形态;没有附件返回 undefined,记录上不长出空数组。
+   * 新附件字节写入日志附件库并转换为 log: 句柄；已有句柄补充 mime 和名称。
+   * 无附件时返回 undefined，避免保存空数组。
    */
   internBlobs(inputs: readonly (BlobInput | BlobRef)[] | undefined): BlobRef[] | undefined {
     if (!inputs || inputs.length === 0) return undefined;
@@ -273,7 +268,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
     return {
       id,
       running: this.forkRunning.get(id) ?? 0,
-      // 出线态快照(含合成首轮对话):继承它的 fork 与主 session 字节前缀一致
+      // 包含合成首轮对话，使继承该快照的 fork 使用相同的请求前缀。
       snapshot: isMainLoop ? this.loop.outboundMessages() : null,
       estTokens: gauge?.estTokens ?? null,
       hardTokens: gauge?.hardTokens ?? null,
@@ -292,7 +287,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
     return manual === undefined ? detected : Math.min(detected, manual);
   }
 
-  /** 上下文事实,按当前 provider 的模型档现读。全局一份:模型不再按 session 分岔。 */
+  /** 按当前活跃端点读取模型上下文事实。 */
   private contextFacts(): ContextFacts {
     const module = () => providerModule(this.activeProviderEntry().entry.kind);
     return {
@@ -307,9 +302,8 @@ export class Core<C extends CoreConfig = CoreConfig> {
   }
 
   /**
-   * 创建一个临时 session 并跑完它的工具循环。core 在这里只做机械的事——
-   * 按声明取模型档位/工具集/轮数上限、并发记账、用量归账、错误隔离。
-   * 单实例之类的策略性限制由Persona自己判断(它能经 sessionInfo 读到计数)。
+   * 创建临时 session；在创建时绑定当前活跃端点与模型，工具和轮数来自声明或调用参数。
+   * 记录并发数与用量；并发限制由 Persona 决定。
    */
   async spawnFork(opts: ForkOptions): Promise<string> {
     const decl = this.sessionDecls.get(opts.id);
@@ -345,18 +339,9 @@ export class Core<C extends CoreConfig = CoreConfig> {
   }
 
   /**
-   * 认知外包(见 types.ts `CognitionRequest` 的主权划分)。core 在这条路上
-   * **只做机械的三件事**,一件语义的事都不做:
-   *
-   *  1. **注入**:Persona提供了实现、且它的全局开关开着,World host 上才出现
-   *     `cognition` 句柄;否则句柄根本不存在(World 据此走降级路径)。
-   *  2. **白名单**:`req.tools` 必须全是**请求方 World 自己**声明的工具名。越权的
-   *     直接以 `{error}` 驳回,**不惊动Persona**——不然 World 就能借她的手去点
-   *     别人的工具,等于绕开工具可见性自己开了一个意识面。
-   *  3. **并发记账**:同 forkRunning,数在途请求数交给Persona判断单实例/排队。
-   *
-   * 用量不在这里记:人格实现内部走 spawnFork,归账由 SessionDecl 那条路完成
-   * (成本页按声明 id 分类),core 不重复记一遍。
+   * Persona 提供且启用 cognition 时，WorldHost 才提供该接口。
+   * 请求只能列出该 World 的工具；不合法的请求返回错误，不调用 Persona。
+   * Core 记录在途数供 Persona 决定并发策略。经 spawnFork 产生的用量在 fork 中记录，此处不重复计量。
    */
   private makeCognition(mod: World, active: () => boolean): CognitionHost | undefined {
     const impl = this.persona.cognition;
@@ -372,7 +357,6 @@ export class Core<C extends CoreConfig = CoreConfig> {
         const named = req.tools ?? [];
         const outsiders = named.filter((name) => !own.has(name));
         if (outsiders.length > 0) {
-          // 这不是运行时波动,是 World 写错了:点名的工具压根不是它自己的。
           log.warn('认知请求越权点名工具,已驳回', { tools: outsiders });
           return {
             error:
@@ -386,7 +370,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
         try {
           return await impl.request({ ...req, brief }, { worldId: mod.id, tools, running });
         } catch (e) {
-          // 人格实现炸了不该炸穿 World:如实换成一句失败原因交回去。
+          // Persona 异常转换为请求错误，返回 World。
           log.warn('认知请求受理失败', { err: e });
           return { error: e instanceof Error ? e.message : String(e) };
         } finally {
@@ -409,15 +393,8 @@ export class Core<C extends CoreConfig = CoreConfig> {
 
 
   /**
-   * 隐藏一个 World = 撤下它对 agent 的三要素(前缀环境提示词 / 工具 / 事件投递),
-   * **不动它的 runtime**:连接不断、自带 loop 不停、它持有的页面照常工作
-   * (终端 World 的对话页就是这种情况——页面还能打字,只是不会唤醒 agent)。
-   *
-   * 生效时机分两半:
-   *  - 事件投递:立即。不进请求,零缓存代价。事件照常落库,历史工具查得到,
-   *    但不唤醒 agent;重新显示时不补投积压。
-   *  - 前缀段与工具:等下一次前缀重建。两者同属缓存前缀,必须一起换;
-   *    运维在控制台决定重载时机,每次重载丢一次前缀缓存。
+   * World 隐藏后继续运行，事件仅归档且重新显示时不补投。
+   * 事件投递立即停止；环境前缀与工具表在下一次前缀重建时一同更新。
    */
   setWorldVisible(id: string, visible: boolean): void {
     if (!this.worlds.some((m) => m.id === id)) throw new Error(`未挂载的 World: ${id}`);
@@ -430,11 +407,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
     return this.state.data.worldVisibility[id] !== false;
   }
 
-  /**
-   * 隐藏 World 推来的事件落了库但不唤醒 agent。这是开关按下的结果而不是故障,
-   * 所以按 HIDDEN_PUSH_NOTE_GAP_MS 节流;但一条都不记的话,现场只剩「她听不见」
-   * 这一个症状,而开关是上一场甚至上一周按下的。
-   */
+  /** 隐藏 World 的推送按 HIDDEN_PUSH_NOTE_GAP_MS 限频报告，计数保留在日志中。 */
   private noteHiddenPush(id: string): void {
     const note = this.hiddenPushes.get(id) ?? { count: 0, notedAtMs: 0 };
     note.count += 1;
@@ -443,7 +416,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
     if (note.notedAtMs > 0 && now - note.notedAtMs < HIDDEN_PUSH_NOTE_GAP_MS) return;
     note.notedAtMs = now;
     this.log.warn(
-      `World 对 agent 隐藏,事件只归档不投递: ${id}(本轮第 ${note.count} 条;要她收得到,去控制台把这个 World 改回可见)`,
+      `隐藏 World 的事件仅归档: ${id}(本轮第 ${note.count} 条)。需要投递时请开启该 World 的可见性`,
     );
   }
 
@@ -454,18 +427,12 @@ export class Core<C extends CoreConfig = CoreConfig> {
     return { visibility, driftedWorlds: this.loop.modulePrefixDrift() };
   }
 
-  /** 当前跑的模型档(控制台状态快照、启动横幅用);一个端点一份,不按 session 分。 */
+  /** 用于控制台状态和启动信息的当前模型配置。 */
   mainSessionSpec(): ModelSpec {
     return this.activeSpec();
   }
 
-  /**
-   * 当前活跃端点的模型档。`ModelSpec` 整组归 Provider——Persona既拿不到也不报,
-   * core 每次用时按 `activeProvider` 现读。
-   *
-   * 端点没填模型就抛:框架不替部署猜一个模型名,也没有"Persona那份 baseline"
-   * 可以退回去了。
-   */
+  /** 按 activeProvider 读取模型配置；端点未配置模型时抛错。 */
   activeSpec(): ModelSpec {
     const { name, entry } = this.activeProviderEntry();
     if (!entry.spec) {
@@ -474,7 +441,6 @@ export class Core<C extends CoreConfig = CoreConfig> {
     return entry.spec;
   }
 
-  /** 当前活跃的 provider 条目;activeProvider 指向不存在的键时抛清晰错误 */
   activeProviderEntry(): { name: string; entry: LLMProviderEntry } {
     const cfg = this.loaded.config;
     const name = cfg.activeProvider;
@@ -497,7 +463,6 @@ export class Core<C extends CoreConfig = CoreConfig> {
     const spec = (): ModelSpec => this.activeSpec();
     return {
       model: () => spec().model,
-      // 吃不吃图是端点后面那个底模的部署事实:读活跃 provider 条目的手动开关。
       accepts: (mime) => {
         const {entry} = this.activeProviderEntry();
         return providerModule(entry.kind).accepts?.(entry,spec(),mime) ?? (entry.multimodal === true && mime.startsWith('image/'));
@@ -512,10 +477,10 @@ export class Core<C extends CoreConfig = CoreConfig> {
     if (previous) previous.active = false;
     const lease = { active: true };
     this.moduleHostLeases.set(mod, lease);
-    // getter 里的 this 是宿主对象自己,拿不到 core——留一个显式引用。
+    // getter 的 this 是 WorldHost；通过 self 访问 Core。
     const self = this;
     return {
-      // 唯一事件通道:origin 由 World 自填(不填=external),投递侧按标签路由分区。
+      // origin 由 World 指定，默认 external；决定后续投递方式。
       pushEvent: async (
         e: Omit<EventEnvelope, 'cursor' | 'origin' | 'contextDelivery'> & { origin?: EventOrigin },
         opts?: PushOptions,
@@ -530,11 +495,11 @@ export class Core<C extends CoreConfig = CoreConfig> {
           origin: e.origin ?? 'external',
           contextDelivery: deliver ? 'deliver' : 'archive-only',
         });
-        // 隐藏的 World 照常落库(经历不丢,历史工具查得到),但不唤醒 agent。
+        // 隐藏 World 的事件仍归档，不投递。
         if (deliver) {
           this.bus.push({ event: envelope }, { trigger: opts?.trigger });
         } else {
-          // 不投递的落库事件也须销账。这类 archive-only 不经过候选投影，不能等待 settledArchives 的候选发车路径结清水位。
+          // 仅归档事件不会经过候选处理，必须在此标记已处理以推进投递水位。
           this.loop.acknowledgeDiscarded([envelope]);
           if (opts?.deliver !== false) this.noteHiddenPush(mod.id);
         }
@@ -542,7 +507,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
       },
       pushDeferred: (e, opts) => {
         if (!lease.active) return;
-        // 隐藏 World 的项直接丢弃:没有正文可落库,也不该唤醒。
+        // 隐藏 World 的延迟渲染项没有正文，直接丢弃。
         if (!this.isWorldVisible(mod.id)) return;
         this.bus.push(
           { deferred: { ...e, source: mod.id, origin: e.origin ?? 'external' } },
@@ -571,8 +536,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
             },
           }, { trigger: opts?.trigger });
         } else {
-          // 隐藏 World 的候选不会发车,原文永远等不到投影引用——同样要当场销账,
-          // 否则这批 archive-only 就是水位上的永久楔子。
+          // 隐藏的候选不再生成投递内容，立即标记归档事件已处理。
           this.loop.acknowledgeDiscarded(sourceEvents);
         }
         return sourceEvents;
@@ -583,8 +547,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
         const taken = this.bus
           .drainPending((it) => it.event?.origin === 'external' && filter(it.event))
           .map((it) => it.event as EventEnvelope);
-        // 抽走的事件也要销账。不销就是一道永久缺口:它们既不会进 session,
-        // 水位又越不过去,下次启动整段重新补投(与 discardPendingEvents 同理)。
+        // 被消费的事件须标记已处理，避免投递水位停留在此并在重启后补投。
         if (taken.length > 0) this.loop.acknowledgeDiscarded(taken);
         return taken;
       },
@@ -594,8 +557,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
         if (lease.active) this.reportWorldUsage(mod.id, usage, opts);
       },
       llmStalls: async (withinMs) => this.loop.llmStalls(withinMs),
-      // getter 而非固定值:Persona的全局开关每次取用现读,热改立即生效
-      // (关掉 = 下一次 `if (host.cognition)` 就已经是 undefined,不必重启 World)。
+      // 每次访问重新检查 Persona 开关，关闭后 getter 立即返回 undefined。
       get cognition(): CognitionHost | undefined {
         return lease.active ? self.makeCognition(mod, () => lease.active) : undefined;
       },
@@ -624,9 +586,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
   async start(): Promise<void> {
     const dataDir = this.loaded.dataDir;
     if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
-    // state 已在构造期读盘(见那里的注释)。这里不再 load 一次:load() 整体重赋
-    // this.data,再读一遍就会把装配到启动之间发生的改动(onStart 钩子、控制台在
-    // core 起来之前做的重置)从内存里抹掉。那些路径本来就各自 save() 过。
+    // 构造期已加载状态；此处再次 load 会覆盖装配后、启动前的修改。
     this.session.load();
     for (const mod of this.worlds) {
       try {
@@ -653,9 +613,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
     this.log.emit('info', 'core已启动', { event: 'started', data: { run: this.run.id } });
   }
 
-  /**
-   * 收尾先终止主循环，再并发停止 World。每个边界都有独立期限，失败进入返回账。
-   */
+  /** 先终止主循环，再并发停止 World；各步骤有独立期限，失败写入返回结果。 */
   /**
    * 运行中挂载一个 World:入表,core 已启动则立即 start,并重建 system 前缀
    * (环境提示词段与工具表同属缓存前缀,挂载必须连带换掉)。start 抛错时不入表。
@@ -676,10 +634,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
     if (this.started) await this.loop.reloadSystemPrefix();
   }
 
-  /**
-   * 运行中卸载一个 World:按关机同款期限 stop,租约失效,出表,重建 system 前缀。
-   * stop 失败或超时只记账不阻止卸载——World 已经不可达,留在表里只会继续占工具名。
-   */
+  /** 停止 World 后使租约失效、移出挂载表并重建前缀；停止失败或超时仍继续卸载。 */
   async unmountWorld(id: string): Promise<WorldStopFailure | null> {
     const index = this.worlds.findIndex((m) => m.id === id);
     if (index < 0) throw new Error(`未挂载的 World: ${id}`);
