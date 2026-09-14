@@ -170,7 +170,7 @@ export interface AutoloadOptions<T> {
   loading: string;
   failed: string;
   load(): Promise<T>;
-  /** `reload` 重跑一遍取数与渲染——改完自己的状态之后调它,而不是重挂面板。 */
+  /** reload 重新加载数据并渲染。 */
   render(data: T, reload: () => void): Node[];
 }
 

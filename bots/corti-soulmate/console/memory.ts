@@ -8,7 +8,6 @@ import type {
 } from 'cortico/web/shared/client-panel.ts';
 import { autoload, dimLine, type FileOp, type MemoryState } from './client.ts';
 
-/** 四条认知路径的中文名。这是本人格实现自己的词表,不是框架概念。 */
 const ROLE_LABELS: Record<string, string> = {
   main: '主意识 main',
   dream: '梦 dream',
@@ -40,7 +39,6 @@ function tiersCard(ctx: ConsolePanelContext, st: MemoryState): HTMLElement {
   const card = ui.sheet({
     title: 'MEMORY 分层',
     en: 'MEMORY 0–4',
-    desc: '半静态段的五层,深→浅。每层装什么由Persona定;这里印的是它此刻真装着的东西。',
   });
   const table = ui.table({ head: ['层', '装的是什么', '此刻'] });
   for (const t of st.tiers) {
@@ -60,8 +58,7 @@ function memoCard(ctx: ConsolePanelContext, st: MemoryState): HTMLElement {
   const card = ui.sheet({
     title: 'memo 三级',
     en: 'resident / active / archived',
-    desc: '常驻区全文进前缀,所以有容量上限;active 只列名;archived 只报数。'
-      + '上限由记忆工具写入时硬拦(memoCapGuard),不是建议值。',
+    desc: '前缀包含常驻区全文、active 文件名和 archived 文件数。容量已满时工具拒绝新增文件。',
   });
 
   card.body.appendChild(ui.statgrid([
@@ -98,9 +95,8 @@ function matrixCard(ctx: ConsolePanelContext, st: MemoryState): HTMLElement {
   const { matrix } = st;
   const card = ui.sheet({
     title: '写权限矩阵',
-    en: 'checkAccess()',
-    desc: '机械硬拦,不做认知判断:哪条路径写不进去,工具层当场拒绝并把理由回给 agent。'
-      + '这张表是逐格现算的(每格真跑一次 checkAccess),所以它永远等于代码。',
+    en: 'permissions',
+    desc: '工具拒绝超出权限的操作并返回原因。所有角色均可读取这些区域。',
   });
 
   const table = ui.table({
@@ -113,18 +109,10 @@ function matrixCard(ctx: ConsolePanelContext, st: MemoryState): HTMLElement {
     ]);
   }
   card.body.appendChild(table.el);
-  card.body.appendChild(dimLine(
-    ctx,
-    '读一律放行(全角色全区域可读),所以「只读」那格的意思是:除了读,什么都不行。'
-    + '把鼠标停在格子上能看到被拒时 agent 收到的原话。',
-  ));
   return card.el;
 }
 
-/**
- * 一格。允许的操作印成 pill;被拒的理由塞进 `title`——那句话就是 agent 会看到的
- * tool result,摊在页面上会把表撑爆,但它是排查"她为什么写不进去"唯一有用的东西。
- */
+/** 悬停说明使用工具返回的拒绝原因。 */
 function cellNode(ctx: ConsolePanelContext, cell: { allowed: FileOp[]; denied: Array<{ op: FileOp; reason: string }> }): HTMLElement {
   const { ui } = ctx;
   const box = ui.h('div', 'ct-cellops');

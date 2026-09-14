@@ -1,15 +1,4 @@
-/**
- * 面板 `reset`(bot 级)—— 统一重置:persona 回滚到某存档点 + 按序清空全部存储。
- *
- * 归属:这一次事务跨两个 owner(persona 的介质归Persona,存储清单归框架),
- * 所以**由 bot 编排**,框架不提供通用 transaction 原语。
- *
- * **顺序要紧**:persona 先回滚,`session` 那项(order 10)最后清——清完即用回滚后的
- * persona 重建前缀,保证"重开"落在那个存档点的世界上。顺序在服务端排,不在这里。
- *
- * 面板上先摊开"到底会清掉哪些东西",再给按钮。清单不齐时按钮直接不给按:
- * 半次重置(persona 回到出厂态、session 还活在回滚前的世界)比不重置危险得多。
- */
+/** 统一重置面板：先回滚工作区，再按服务端清单清除存储，session 最后重建。清单不完整时禁止执行。 */
 
 import type {
   ConsolePanelContext,
@@ -36,8 +25,7 @@ function runCard(ctx: ConsolePanelContext, st: ResetState, reload: () => void): 
   const card = ui.sheet({
     title: '统一重置',
     en: 'rollback + clear all',
-    desc: '把 persona/ 回滚到选定存档点,再按序清空全部 core 存储。'
-      + '这不是"撤销上一步",是从那个存档点的干净态整个重开。',
+    desc: '将工作区回滚到选定存档点，再按清单清除存储。',
   });
 
   const bar = ui.rowbar();
@@ -49,7 +37,7 @@ function runCard(ctx: ConsolePanelContext, st: ResetState, reload: () => void): 
     return card.el;
   }
   if (!st.checkpoints.length) {
-    card.body.appendChild(ui.placeholder('还没有存档点可以回滚到——先去「存档点」面板建一个'));
+    card.body.appendChild(ui.placeholder('没有可用存档点，请先在「存档点」面板创建。'));
     return card.el;
   }
 
@@ -80,19 +68,18 @@ async function execute(
   const { ui } = ctx;
   const first = await ui.confirm({
     title: `回滚到存档点「${checkpoint}」并清空全部存储?`,
-    body: '① persona/(记忆)恢复到该存档点;② 清空全部 core 数据。'
-      + 'persona 还能从 git 找回来,core 数据不可恢复。',
+    body: '工作区恢复到该存档点，然后清除清单中的全部存储。已提交的工作区版本可查询；清除的数据不可恢复。',
     danger: true,
   });
   if (!first) return;
   const second = await ui.confirm({
     title: '再确认',
-    body: `将从「${checkpoint}」的干净态重开,当前经历全部清空。继续?`,
+    body: `确认回滚到「${checkpoint}」并清除清单中的全部存储？`,
     danger: true,
   });
   if (!second) return;
 
-  const busy = ui.busy('正在重置', '回滚 persona 并按序清空存储,这期间别动别的。');
+  const busy = ui.busy('正在重置', '正在回滚工作区并清除存储。');
   btn.disabled = true;
   try {
     const out = await ctx.invoke<ResetResult>('run', [checkpoint]);
@@ -118,9 +105,9 @@ async function execute(
 function scopeCard(ctx: ConsolePanelContext, st: ResetState): HTMLElement {
   const { ui } = ctx;
   const card = ui.sheet({
-    title: '会被清掉的东西',
+    title: '清除范围',
     en: 'storage parts',
-    desc: '按这个清单逐项清除,顺序由各项自己声明(session 最后清,清完即重建前缀)。',
+    desc: '工作区回滚后按清单逐项清除。session 最后清除，并用回滚后的工作区重建前缀。',
   });
   if (!st.parts.length) {
     card.body.appendChild(ui.placeholder('拿不到存储清单'));

@@ -1,16 +1,9 @@
 import type { ContextRecord } from 'cortico/protocol/open-responses/context.ts';
 import { hasRole } from 'cortico/protocol/open-responses/context-helpers.ts';
 /**
- * CortiSoulmate(默认人格名 Yukima)——Cormini 之上的分层记忆变体。
- *
- * 继承 Cormini 的骨架(工作区文件工具、前缀装配、心跳、交接笔记、end_turn、save_blob),
- * 把零号机的记忆设计内建为类行为:
- *  - MEMORY 0~4 五层前缀(地图 / 认知 / 备忘三级 / 反射 / 当下),模板在 MEMORY.md;
- *  - 写纪律:主意识写笔记和备忘,只有梦重写(permissions.ts 的矩阵经 writeGuard 硬拦),
- *    memo 三级容量在写入时守门,`move_file` 在层间搬运;
- *  - 交接后并行梦:整理工作区、维护 people/ 与 WORLDVIEW.md,浮现经 MEMORY 3 回到主意识;
- *  - persona git:每批空闲提交一次,控制台的存档点与统一重置建在它上面;
- *  - 昼夜心跳与 `schedule_wake` 闹钟(rhythm.ts)。
+ * 继承文件式工作区 Persona，增加 MEMORY 0–4、memo 写入容量检查、角色权限矩阵和后台整理。
+ * 交接快照进入串行梦队列，结果经 MEMORY 3 与事件回到主 session。
+ * 工作区改动按批次提交 Git；rhythm.ts 提供昼夜心跳和 schedule_wake。
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -41,20 +34,15 @@ const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 /** MEMORY 3 反射层最多保留几缕浮现 */
 const EMERGENCE_KEEP = 3;
 
-/**
- * 机制说明这份虚拟文件的名字(大小写不敏感)。它随软件版本走、不在工作区里,
- * 所以是**内容决策**而不是磁盘事实:读走 `readOverride`,写走 `writeGuard`,
- * 两条都在这份Persona里,不在记忆层。
- */
+/** CORE.md 是包内只读机制文档；readOverride 提供读取，writeGuard 拒绝写入。 */
 const CORE_NAME = 'core.md';
 
-/** 工作区骨架:哪几个目录该存在是这份人格的记忆设计,不是记忆层的事。 */
 export const WORKSPACE_DIRS = [
   '', 'note', 'note/playbook', 'note/library',
   'people', 'memo', 'memo/active', 'memo/archived',
 ] as const;
 
-/** 段的人类可读名。**只用于控制台标签**,一个字也不进前缀。 */
+/** 仅供控制台显示的段名，不写入前缀。 */
 const SEGMENT_TITLES: Record<string, string> = {
   'persona.orientation': 'ORIENTATION',
   'persona.constitution': '宪法',
@@ -71,7 +59,7 @@ const SEGMENT_SOURCES: Record<string, string> = {
 
 export interface CortiSoulmateOptions {
   memoryDir: string;
-  /** 整份配置。轮数上限、memo 容量、上下文预算都从这里实时读(热改即生效;模型不归它)。 */
+  /** 热配置；轮数、memo 容量与上下文预算在使用时读取。 */
   cfg: BotConfig;
   /** 已挂载的 World(挂载表活引用) */
   worlds?: World[];
@@ -113,7 +101,7 @@ export class CortiSoulmate extends Cormini {
     const base: CorminiOptions = {
       memoryDir: opts.memoryDir,
       context: () => cfg.context,
-      // 轮数上限是热配置:用 getter 现读,不拍快照
+      // getter 在每次使用时读取热配置。
       rounds: { get soft() { return cfg.loop.softCap; }, get hard() { return cfg.loop.hardCap; } },
       seedConstitution: '(宪法尚未写入)\n',
       worlds: opts.worlds,
@@ -121,18 +109,17 @@ export class CortiSoulmate extends Cormini {
       ...(opts.promptsDir ? { orientationOverrideFile: join(opts.promptsDir, 'ORIENTATION.md') } : {}),
       ...(opts.firstTurnDir ? { firstTurnDir: opts.firstTurnDir } : {}),
       tickDelayMs: (now) => tickDelayMs(cfg, now),
-      // 表情包住 external/qq/images/;MEMORY 0 列的也是这里
       blobsDir: 'external/qq/images/',
     };
     super(base);
     this.cfg = cfg;
     this.promptsDir = opts.promptsDir ?? null;
     this.memory.ensureDirs(WORKSPACE_DIRS);
-    // 活引用:控制台改 cfg.memo 的叶子即时生效。
+    // 保留 cfg.memo 的活引用以读取热配置。
     this.memo = new MemoTiers(this.memory, this.cfg.memo);
   }
 
-  /** 人格实现所有的工作区版本管理;该介质不属于 core 契约。 */
+  /** Persona 的工作区 Git 版本管理。 */
   get git(): WorkspaceGit {
     return this.memory.git;
   }
@@ -148,7 +135,6 @@ export class CortiSoulmate extends Cormini {
 
   override attach(core: CoreApi): void {
     super.attach(core);
-    // 闹钟语义(簿记/闸门/文案)全在Persona;core 只出持久定时器与闸门原语
     this.wakes = new WakeManager(core, () => this.cfg.timezone);
     this.dreamer = new Dream({
       cfg: this.cfg,
@@ -231,10 +217,7 @@ export class CortiSoulmate extends Cormini {
   // 写纪律
   // ---------------------------------------------------------------------------
 
-  /**
-   * 写准入 = 权限矩阵 + memo 容量守门 + CORE.md 只读。拒绝理由原样回给 agent,
-   * 写清楚为什么以及该走什么路径。
-   */
+  /** 写入需通过角色权限、memo 容量和 CORE.md 只读检查；拒绝原因返回给 agent。 */
   protected override writeGuard(op: 'write' | 'append' | 'rename' | 'delete', path: string, role: string): string | null {
     const rel = normalizeWorkspacePath(path);
     if (isHarnessPath(rel)) return 'CORE.md is a system mechanics doc; read-only.';
@@ -252,10 +235,7 @@ export class CortiSoulmate extends Cormini {
     return readFileSync(file, 'utf8');
   }
 
-  /**
-   * 人格文本此刻该读的那份:部署 `prompts/` 下同名文件存在就是它,否则是包内默认。
-   * 五份都走这里:ORIENTATION / PREFIX / ENV_SECTION / MEMORY / CORE。
-   */
+  /** 读取部署 prompts/ 同名覆盖文件；不存在时读取包内默认文件。 */
   textFile(name: string): string {
     const override = this.promptsDir ? join(this.promptsDir, name) : null;
     return override && existsSync(override) ? override : join(MODULE_DIR, name);
@@ -326,7 +306,7 @@ export class CortiSoulmate extends Cormini {
   // 时机
   // ---------------------------------------------------------------------------
 
-  /** 心跳带上时刻:消息行里的时间不带日期,当天日期她从这里拿。 */
+  /** 心跳提供日期和时间；普通消息时间行不含日期。 */
   protected override tickText(quietSeconds: number): string {
     return `[system/tick] Time is ${tickTimeText(this.cfg.timezone, new Date())}. `
       + `About ${Math.round(quietSeconds / 60)} min since the last messages.`;
@@ -376,11 +356,7 @@ export class CortiSoulmate extends Cormini {
   // 控制台
   // ---------------------------------------------------------------------------
 
-  /**
-   * 自报控制面:**认知绑定**的三块(工作区 / Memory 分层 / 版本历史)与自己的模板。
-   * 部署绑定的(存档点 / 统一重置 / 强制入梦)在 bots/corti-soulmate/console-page.ts。
-   * 工作区归版本历史管,不进「删除全部数据」。
-   */
+  /** 声明工作区、Memory 分层、版本历史与模板；部署级控制在 console-page.ts。工作区排除在统一清除清单外。 */
   override console(language: Language = 'zh'): PersonaConsoleDecl {
     return personaConsoleDecl({
       memory: this.memory,

@@ -1,18 +1,6 @@
 /**
- * MEMORY 0~4 的**值**。
- *
- * 这一层不产出文本:五层的引导语、小标题、空态措辞全在 `MEMORY.md` 模板里,
- * 人可以改、可以加行删行、可以整层删掉。这里只负责把活数据算出来填进洞。
- *
- * 各段引导语遵守最小先验:只给中性定位一句话,不写用途引导
- * (说"memo/是你的备忘录",不说"这里放承诺")——那句话现在归模板,改它不用改代码。
- *
- * 深→浅:
- *   MEMORY 0 地图   persona/最外层目录(这是地图不是答案)
- *   MEMORY 1 认知   WORLDVIEW.md全文 + 花名册(我认识的人)
- *   MEMORY 2 备忘   常驻memo全文 + active/文件名 + archived一句指路
- *   MEMORY 3 反射   最近几场梦的浮现
- *   MEMORY 4 当下   当前时间(纯机械,植物层)
+ * MEMORY 0–4 模板变量：工作区目录、WORLDVIEW 与人物索引、memo 内容与清单、近期梦摘要、时间。
+ * 引导语和空态由 MEMORY.md 模板提供。
  */
 import { readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -22,7 +10,7 @@ import type { GitWorkspaceMemory } from '../../cormini/persona/memory.ts';
 import { MemoTiers } from './memoTiers.ts';
 import { buildRoster } from './roster.ts';
 
-/** 模板里那些洞分别填什么。控制台照这份在编辑器旁边列出来。 */
+/** 控制台展示的模板变量说明。 */
 export const MEMORY_VAR_DECLS: readonly PromptVarDecl[] = [
   { name: 'memory.tree', description: 'persona/ 最外层目录清单(只一层,目录带 /)。', multiline: true },
   { name: 'memory.playbooks', description: 'note/playbook/ 下的手册名,每行一条。', multiline: true },
@@ -56,7 +44,7 @@ export function memoryVars(
   /** Persona所有的近期梦浮现(MEMORY 3)。 */
   emergences: string[],
 ): Record<string, string> {
-  // 空值一律交空串——空态说什么由模板的缺省文案决定,不在这里写死。
+  // 空值返回空串，由模板提供空态。
   let playbook: string[] = [];
   try {
     playbook = ws.listDir('note/playbook');

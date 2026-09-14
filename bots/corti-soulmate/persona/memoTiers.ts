@@ -30,8 +30,7 @@ export class MemoTiers {
     }
     if (!existsSync(abs)) return [];
     return readdirSync(abs, { withFileTypes: true })
-      // memo 是按“文件条目”计数的时间层，不以扩展名判定存在性。无扩展名、
-      // .txt 或历史命名都必须进入前缀与容量守门；只排除内部临时/隐藏文件。
+      // 所有文件均计入容量，不限扩展名；排除临时与隐藏文件。
       .filter((e) => e.isFile() && !e.name.startsWith('.') && !e.name.includes('.tmp-'))
       .map((e) => ({ name: e.name, mtime: statSync(join(abs, e.name)).mtimeMs }))
       .sort((a, b) => a.mtime - b.mtime || a.name.localeCompare(b.name));

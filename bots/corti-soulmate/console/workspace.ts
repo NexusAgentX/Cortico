@@ -108,7 +108,7 @@ class WorkspaceView {
   private readonly replaceInput: HTMLInputElement;
   private readonly findCount: HTMLElement;
 
-  /** 快速 A→B 时忽略迟到的 A(否则 A 的正文会盖掉 B)。 */
+  /** 仅应用最近一次打开文件请求的结果。 */
   private openSeq = 0;
 
   constructor(ctx: ConsolePanelContext, tree: WorkspaceTree) {
@@ -122,7 +122,6 @@ class WorkspaceView {
       desc: '保存时以 operator 署名提交到工作区的 Git 仓库。',
     });
 
-    // ---- 顶栏:新建 / 刷新 / 过滤 / git 一行 ----
     const filterInput = ui.input({
       type: 'search',
       placeholder: '过滤档案名…',
@@ -252,8 +251,7 @@ class WorkspaceView {
   }
 
   /**
-   * 重取目录树,只重画左栏。保存/新建/删除/改名之后都调它——
-   * 编辑器里的正文、光标、脏位、滚动位置一概不动。
+   * 刷新目录树时保留编辑器正文、光标、未保存状态和滚动位置。
    */
   private async refreshTree(): Promise<void> {
     try {
@@ -263,7 +261,7 @@ class WorkspaceView {
       this.renderTree();
       if (this.cur) this.markSelected(this.cur.path);
     } catch {
-      // 树没刷新不影响正在编辑的档案,不打扰;下一次动作还会再试
+      // 刷新失败时保留当前目录树和编辑状态。
     }
   }
 
@@ -429,7 +427,7 @@ class WorkspaceView {
     const path = this.cur.path;
     const ok = await this.ctx.ui.confirm({
       title: `删除 persona/${path}?`,
-      body: '未保存的修改会丢失;已保存的版本仍可从「版本历史」里找回来。',
+      body: '未保存的修改将丢失。已提交的版本可从「版本历史」恢复。',
       danger: true,
     });
     if (!ok || !this.cur) return;
@@ -577,7 +575,6 @@ class WorkspaceView {
     for (const c of commits) this.histWrap.append(...this.commitRow(c, path));
   }
 
-  /** 一条提交 + 它下面那块可展开的 diff。 */
   private commitRow(c: Commit, path: string): Node[] {
     const { ui } = this.ctx;
     const row = ui.h('div', 'histrow');
@@ -612,7 +609,7 @@ class WorkspaceView {
                 this.setPane('edit');
                 this.editor.value = f.content;
                 this.syncMeta();
-                setMsg(this.msg, '旧版本已放进编辑器,保存之后才会生效');
+                setMsg(this.msg, '已载入旧版本，保存后生效');
               },
             }),
             ui.copyButton(() => f.content, { label: '复制全文' }),

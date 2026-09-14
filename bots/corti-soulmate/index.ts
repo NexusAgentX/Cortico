@@ -81,7 +81,7 @@ export function build(loaded: LoadedConfig<BotConfig>, worlds: World[]): BotPart
     memoryDir: loaded.memoryDir,
     cfg,
     worlds: worlds,
-    // 部署侧人格文本:首轮对话只有这一层;五份模板在这里有同名文件即压过包内默认。
+    // 首轮对话由部署提供；同名模板覆盖包内默认。
     firstTurnDir: resolve(loaded.rootDir, 'prompts'),
     promptsDir: resolve(loaded.rootDir, 'prompts'),
   });

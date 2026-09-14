@@ -15,8 +15,7 @@ describe('花名册(派生视图)', () => {
   });
   afterEach(() => cleanup(dir));
 
-  // 一个人都没有时交空串:"还不认识任何人"该怎么说归 MEMORY.md 的缺省文案,
-  // 不在代码里写死(那句话是人格措辞,该由人改)。
+  // 空值返回空串，空态文案由 MEMORY.md 模板提供。
   it('空目录 → 空串,空态文案让模板去说', () => {
     expect(buildRoster(dir)).toBe('');
   });
@@ -51,7 +50,7 @@ describe('MEMORY 0~4 拼装', () => {
     now: new Date('2026-07-17T12:00:00+08:00'),
     timezone: 'Asia/Shanghai',
   });
-  /** 浮现现在归Persona自己(存在 core 的不透明状态袋里) */
+  /** Persona 的浮现值存于 Core 的不透明状态中。 */
   const withEmergences = (...texts: string[]): void => {
     const state: Record<string, unknown> = { emergences: texts };
     core.attach(makeFakeHarnessApi({ personaState: () => state }));

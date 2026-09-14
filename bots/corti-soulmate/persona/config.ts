@@ -8,11 +8,11 @@ import type { ConfigGroup } from 'cortico/core/config-schema.ts';
 /** Persona建议的配置片段(会被 config.json 覆盖) */
 export interface PersonaConfig {
   context: {
-    /** 一个 session 阶段有多长(认知节奏;模型物理上限另由 core 按 Provider 事实守门) */
+    /** 用于计算预警阈值和交接笔记预算。 */
     maxTokens: number;
-    /** 交接时保留动态尾的比例 */
+    /** 交接笔记预算占阶段预算的比例。 */
     keepRatio: number;
-    /** 软阈值比例:超过后先提示一轮,再在回合边界交接 */
+    /** 超过阶段预算的此比例时先提示；下一批结束时仍超出则交接。 */
     softRatio: number;
   };
   loop: { softCap: number; hardCap: number };
@@ -45,18 +45,15 @@ export const PERSONA_CONFIG_GROUP: ConfigGroup = {
     properties: {
       'context.maxTokens': {
         type: 'integer',
-        title: '上下文交接阈值(context.maxTokens)',
+        title: '上下文阶段预算',
         minimum: 8000,
         maximum: 2_000_000,
         multipleOf: 1000,
         'x-suffix': 'tok',
         'x-hot': true,
-        // 说明三个容量参数各自控制的阶段。此处渲染为 .tdesc 纯文本，Markdown 标记不会被解析。
         description:
-          '塞满多少就交接:session 计数长到这么多 token 就写交接笔记、进下一阶段,并在后台入梦。'
-          + '别跟另外两个数搞混——「模型窗口」(model.contextWindow,设置→模型与供应商)是模型物理上能收多少,'
-          + '这一格应小于它,越过时 core 会先按物理上限强制交接;「单轮上限」(model.maxTokens)是她一次回答最多生成多少。'
-          + '调小=交接更频繁、每次丢更多上下文;调大=她记得住更长的一段,但每轮输入更贵。',
+          '上下文超过阶段预算 × 软阈值比例时先提示；下一批结束时仍超出则交接，并启动后台整理。'
+          + '模型窗口与单次输出上限在「语言模型」页配置；达到模型硬限制时由 Core 强制交接。',
       },
       'context.keepRatio': {
         type: 'number',
@@ -66,7 +63,7 @@ export const PERSONA_CONFIG_GROUP: ConfigGroup = {
         multipleOf: 0.01,
         'x-suffix': '×',
         'x-hot': true,
-        description: '交接笔记的预算 = 交接阈值 × 此比例:清空前最近的一段按这个 token 数装进笔记。',
+        description: '交接笔记的 token 预算 = 阶段预算 × 此比例。笔记保留最近内容。',
       },
       'context.softRatio': {
         type: 'number',
@@ -76,7 +73,7 @@ export const PERSONA_CONFIG_GROUP: ConfigGroup = {
         multipleOf: 0.01,
         'x-suffix': '×',
         'x-hot': true,
-        description: '超过 阶段长度×此比例 后先提示一轮;那一轮自然结束时才真正交接。',
+        description: '上下文预警阈值 = 阶段预算 × 此比例。',
       },
       'loop.softCap': {
         type: 'integer',
@@ -106,7 +103,7 @@ export const PERSONA_CONFIG_GROUP: ConfigGroup = {
         multipleOf: 1,
         'x-suffix': '条',
         'x-hot': true,
-        description: 'MEMORY 2 常驻区容量(7±2 的 7)。每次前缀都全文显示这一层。',
+        description: 'MEMORY 2 常驻区容量；前缀包含这一层的全文。',
       },
       'memo.activeCap': {
         type: 'integer',
