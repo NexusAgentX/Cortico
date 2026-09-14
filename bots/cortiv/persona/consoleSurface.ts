@@ -1,10 +1,4 @@
-/**
- * Persona自报的控制面——工作区编辑器、记忆概览、版本历史。
- *
- * 写的语义(提交给谁、冲突怎么算)是这份人格自己的选择:git、operator 署名、
- * sha256 内容指纹当 baseRevision。Memory 页按 CortiV 的真实记忆画
- * (workspace 文件、viewers/ 人物档案、宪法),不假装有 MEMORY 0–4。
- */
+/** Persona 的服务端工作区、人物档案与版本历史面板。保存以 operator 署名提交；读取和保存校验使用相同的内容指纹。 */
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -23,12 +17,10 @@ export const PERSONA_PANELS: WorldPanelDecl[] = [
   {
     id: 'memory',
     title: 'Memory',
-    description: '工作区文件、人物档案 viewers/、宪法此刻装着什么。',
   },
   {
     id: 'history',
     title: '版本历史',
-    description: 'workspace/ 这个 git 仓的提交流水与逐次 diff;某个版本的全文也在这里取。',
   },
 ];
 

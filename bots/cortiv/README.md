@@ -1,55 +1,50 @@
-# 可缇Corti (CortiV)
+<!-- Owner: bots/cortiv/index.ts, bots/cortiv/persona/persona.ts -->
 
-Owner: `bots/cortiv/index.ts`
+# CortiV
 
-AI VTuber 实时系统。Persona `CortiV`(persona/persona.ts)继承可缇mini 的
-`Cormini` 基类,把直播 memory 系统内建为类行为。
+直播 bot。Persona `CortiV` 继承 `Cormini`，增加观众档案和交接后的后台整理。
 
-## Run
+## 启动
 
 ```bash
 pnpm start cortiv
 ```
 
-控制台: `http://127.0.0.1:7789/`
+默认控制台地址：`http://127.0.0.1:7789/`。
 
 ## World
 
-| World | 状态 |
+| World | 功能与配置 |
 |---|---|
-| `terminal` | 控制台聊天 |
-| `minecraft` | Minecraft 语义操作、任务队列和客户端托管 |
-| `pvz` | 植物大战僵尸语义操作、任务队列和游戏托管。实现在扩展包 `cortico-world-pvz`,没装它这一格是灰卡片;默认关 |
-| `vtuber` | L1–L4 演出、TTS 直写声卡、演出流 SSE `http://127.0.0.1:7792/stream` + 弹幕输入 WS。实现在外部包 `cortico-world-vtuber`,由扩展层装载;没装它这一格是灰卡片 |
-| `bilibili` | B 站直播间只读接入（弹幕/礼物/SC/上舰/人流读数）。默认关，填 `worlds.bilibili.roomId` 与 `worlds.bilibili.sessdata` 后开 |
-| `asr` | 麦克风语音识别。实现在扩展包 `cortico-world-asr`,没装它这一格是灰卡片;默认关 |
+| `terminal` | 控制台聊天。 |
+| `minecraft` | Minecraft 操作、任务队列和客户端托管。 |
+| `pvz` | 植物大战僵尸操作、任务队列和游戏托管，由扩展 `cortico-world-pvz` 提供，默认关闭。 |
+| `vtuber` | L1–L4 演出、TTS 声卡输出、演出流 SSE `http://127.0.0.1:7792/stream` 与弹幕输入 WS，由扩展 `cortico-world-vtuber` 提供。 |
+| `bilibili` | 直播间只读接入：弹幕、礼物、SC、上舰和观众统计。默认关闭，启用前填写 `worlds.bilibili.roomId`；`sessdata` 可提供登录凭证。 |
+| `asr` | 麦克风语音识别，由扩展 `cortico-world-asr` 提供，默认关闭。 |
 
-`.env` 可选：`VTS_AUTH_TOKEN`（首次连 VTS 弹窗允许后可写入）。
+未安装的扩展 World 显示为不可用。VTS 首次连接授权后可将 `VTS_AUTH_TOKEN` 写入部署 `.env`。
 
 ## 事件投递
 
-默认模式：外部事件正文落在伪造的 `external_event_frame` 回执里，
-user 区只装内部系统文本。两个 bot 一致。
+默认将外部事件正文放入合成的 `external_event_frame` 工具回执，user 消息用于内部系统文本。
 
-## Memory 系统(直播场景)
+## Memory
 
-载体仍是工作区文件,机制内建在 [`CortiV`](persona/persona.ts)(不是构造开关——变体即类):
+Memory 使用工作区文件，由 [Persona](persona/persona.ts) 管理。
 
-| 件 | 机制 |
+| 功能 | 行为 |
 |---|---|
-| 观众档案 | `viewers/<来源>/<数字ID>.md`,首行=一句话摘要。带 `senderKey` 的外部事件在**当前上下文窗口首次出现**时,首行被机械唤起注入(投递刻收编,同批原子到达);交接清空上文后再出现重念一次,热重启不重念。脱敏期(uid 抹零,无 senderKey)整条静默降级。梦往档案追加印象时须用 `edit_file` 重写首行,首行随印象走。 |
-| 工作区工具 | 基类的 `read_file`(可带行区间)/`write_file`/`edit_file`/`delete_file`/`list_files`/`glob_files`/`grep_files`,加 CortiV 自己的 `append_file`、`git_log`、`git_show`、`recall_viewer`。写、改、追加、删每次落盘都提交进工作区 git,署她自己的名。 |
-| 主动取档 | `recall_viewer`:按 id 交回整份档案;按名字对本场见过的人与档案首行,唯一命中一份时带全文,没档案的人给出 id。唤起只带首行、弹幕正文不带 id,这是她拿整份印象的路。 |
-| 前缀卫生 | 前缀树里 `viewers/` 与 `handoffs/` 折叠为计数(几百份档案不进缓存前缀);`list_files` 对指定目录全量,其余每个子目录只列前 10 项并折叠计数;前缀里的提示指向 `recall_viewer`。 |
-| 软边界速记 | 批末超 `context.softRatio` 先注入一次提醒("近期自动带过去,把很久以前还在跟的事写下来"),下一批末仍超才请求交接;Core 另有越过模型物理上限强制交接的钳制。 |
-| 并行梦 | 交接**立即返回**(近期尾机械保留,直播不断流);交接前完整快照(头部优先渲染——会死的恰恰是头部)交给后台 `dream` fork 整理:合并观众档案、蒸馏场次、修正过时内容。单实例排队,同档模型,浮现非 `(nothing)` 才注入打扰她。 |
+| 观众档案 | `viewers/<来源>/<数字ID>.md`，首行为摘要。同一 `senderKey` 在当前上下文窗口首次出现时，档案首行与外部事件同批注入。交接清除已唤起记录，热重启保留；没有稳定身份键的事件不触发档案召回。后台整理追加档案时同时更新首行摘要。 |
+| 工作区工具 | 基类提供 `read_file`（支持行区间）、`write_file`、`edit_file`、`delete_file`、`list_files`、`glob_files`、`grep_files`；另外提供 `append_file`、`git_log`、`git_show`、`recall_viewer`。文件修改成功后尝试提交工作区 Git，使用 Persona 署名；提交失败保留已写文件并报告错误。 |
+| 主动召回 | `recall_viewer` 按 id 读取完整档案；按名字查询当前已知观众与档案首行，唯一匹配时返回全文，无档案时返回已知 id。自动召回只提供首行；事件正文不附加身份 id。 |
+| 目录列表 | 前缀将 `viewers/` 与 `handoffs/` 显示为文件计数。`list_files` 指定目录时列出全部条目；默认列表的各子目录最多展示十项并统计其余条目。前缀提示使用 `recall_viewer` 读取档案。 |
+| 上下文阈值 | 批末估算 token 超过 `context.maxTokens * context.softRatio` 时，首次注入记录提醒；提醒后再次在批末超过阈值才请求交接。交接后复位提醒状态。Core 另按模型 token 上限执行强制交接。 |
+| 后台整理 | 交接把快照排入串行 `dream` 队列，继续执行基类交接，不等待整理结束。基类写交接笔记并返回空 tail。后台使用相同档位模型，更新观众档案、整理场次和过时内容。 |
 
-她认人的键永远是数字 uid(B 站改名随意,名字只是数据);唤起触发不依赖进场消息
-(普通进场只进人流聚合),弹幕/礼物/上舰谁先到谁触发。
+后台整理按原顺序从快照头部选取消息，正文总预算为 120,000 字符。user/assistant 单条上限
+1,500 字符、工具参数 300 字符、工具回执 800 字符；忽略 system 与无文本项，超过总预算后停止选取。
+整理结束后，非空且已变化的 `recent` 文件摘要最多注入 900 字符；非空且不为 `(nothing)` 的最终文本另注入最多 600 字符。
 
-## 与 cormini
-
-| | cormini | cortiv |
-|---|---|---|
-| `web.port` | 7788 | 7789 |
-| vtuber | 无 | 舞台最小可行性 |
+观众身份按来源与数字 uid 区分，昵称用于显示和查询。首次出现的弹幕、礼物或上舰事件均可触发召回，
+不依赖普通进场事件；普通进场只参与聚合统计。
