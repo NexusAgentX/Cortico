@@ -46,7 +46,7 @@ describe('CortiV 的 World 激活开关(热生效)', () => {
       minecraft: { enabled: false }, bilibili: { enabled: false },
     });
     expect(a.assembly.mounted.map((m) => m.id)).not.toContain('bilibili');
-    expect(await a.assembly.activate('bilibili')).toContain('已写回 config.json');
+    expect(await a.assembly.activate('bilibili')).toContain('已启用');
     expect(a.config().worlds.bilibili.enabled).toBe(true);
     expect(a.assembly.mounted.map((m) => m.id)).toContain('bilibili');
     expect(a.assembly.slot('bilibili').mounted).toBe(true);
@@ -70,7 +70,7 @@ describe('CortiV 的 World 激活开关(热生效)', () => {
       await a.assembly.deactivate(id);
     }
     expect(a.assembly.mounted.map((m) => m.id)).toEqual(['terminal']);
-    expect(await a.assembly.deactivate('terminal')).toContain('已写回 config.json');
+    expect(await a.assembly.deactivate('terminal')).toContain('已停用');
     expect(a.config().worlds.terminal.enabled).toBe(false);
     expect(a.assembly.mounted).toEqual([]);
     // 停用后槽位上是一个全新实例,再激活按当前配置重建

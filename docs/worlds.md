@@ -14,7 +14,7 @@ World 不直接访问 Memory 或调用 Persona 的工具。
 | `id` | 同时用于配置段 `worlds.<id>` 和控制台页 `world:<id>` |
 | `envPromptVars()` | 环境提示词模板的当前占位符值。返回 `null` 时省略整段,`{}` 时使用无变量模板;前缀重建时重新调用 |
 | `tools()` | 这个 World 暴露的工具 |
-| `start(host)` / `stop()` | 挂载与卸载;`start` 抛错就不入挂载表 |
+| `start(host)` / `stop()` | 启动与停止;运行中挂载时先调用 `start`,成功后加入挂载表 |
 | `console?()` | 控制台页声明(见 [console.md](console.md)) |
 | `outputTap?()` | 主 session 输出流的接收器(演出、字幕) |
 | `onHandoffEnded?()`、`onTurnEnded?()` | 交接结束与主循环一轮结束的通知;隐藏的 World 不接收 |
@@ -33,7 +33,7 @@ Core 通过 `WorldHost` 向 World 提供以下能力:
 | `cognition?` | 向 Persona 请求后台认知计算;Persona 未提供时该成员不存在 |
 | `log` | 包含 World 区域和调用关联字段的 Logger |
 
-`trigger` 控制投递时机:`preempt` 取消尚未产生外部输出的当前模型轮并立即投递;
+`trigger` 控制投递时机:`preempt` 请求中断当前模型调用并立即投递,已提交不可逆输出时不取消调用;
 `flush` 立即投递并包含积压事件;`debounce` 参与合批;`piggyback` 仅排队,随其他触发产生的批次投递。
 外部事件默认 `debounce`,内部事件默认 `flush`。`deliver: false` 仅存储事件。
 
@@ -53,8 +53,8 @@ World 应通过事件报告服务器起停、存档切换、连接变化等状�
 
 ## 定义与装配
 
-`WorldDefinition`(`src/world.ts`):`id`、`label`、`defaults()`(配置段默认值,`enabled` 恒
-false,由 bot 的 `declares` 置 true)、`preflight?`、`configOptions?`、`create(ctx)`。
+`WorldDefinition`(`src/world.ts`):`id`、`label`、`defaults()`(配置段默认值,World 声明的
+`enabled` 应为 false)、`preflight?`、`configOptions?`、`create(ctx)`。
 `WorldContext` 向 `create` 提供:`cfg`(共享配置对象)、`timezone`、`botName`、`botDir` /
 `packageDir` / `dataDir` / `repoRoot`、`secret()` / `storeSecret()`、`persist()`(写回
 `worlds.<id>`)、`restart()`。界面语言不在其中:它是每个请求的属性,`console(language)` 与
@@ -62,10 +62,12 @@ false,由 bot 的 `declares` 置 true)、`preflight?`、`configOptions?`、`crea
 
 仓内定义列在 `src/worlds/index.ts`;启动器合并内建与扩展定义,通过 `withWorlds()` 交给 bot 定义。
 bot 的 `index.ts` 在 `declares` 中列出默认启用的 World id。声明但未安装的 World 显示为不可用;
-已安装但未声明的 World 默认关闭,部署可自行启用。
+补充 World 默认段时,声明过的 `enabled` 置 true,其余置 false;bot 已提供的配置段保留原值,
+部署配置可继续覆盖。
 `WorldAssembly` 分别管理各 World:`create()` 抛错不影响其他 World 的构造;
-`activate` / `deactivate` / `restart` 热生效并写回 `worlds.<id>.enabled`;预建实例只能停起、
-不能重建。生命周期事件转给 `Persona.onWorldLifecycle`。
+`activate` / `deactivate` 热生效并写回 `worlds.<id>.enabled`。定义实例在停用或重启时重新构造;
+预建实例重启时复用现有对象,停用后不能通过 `activate` 重新挂载。
+生命周期事件转给 `Persona.onWorldLifecycle`。
 
 ## 环境提示词
 
@@ -129,7 +131,7 @@ Minecraft 的 `PwsrTables` 管理目标、路标及蓝图的 realm 视图,空间
 
 ## 添加 World
 
-从 `WorldDefinition` 起:`defaults()` 定配置段,`create()` 返回实现 `World` 的实例;有面板就加
+从 `WorldDefinition` 起:`defaults()` 定配置段,`create()` 返回实现 `World` 的实例;有自定义面板就加
 `console/client.ts`;有环境描述就加 `ENV_PROMPT.md`。测试用 `tests/helpers/fake-host.ts` 的
 `FakeHost` 记录推送。放进仓库的在 `src/worlds/index.ts` 登记一行;放进仓库还是做成扩展,判据在
 [CONTRIBUTING.md](../CONTRIBUTING.md)。
