@@ -788,7 +788,7 @@ describe('BilibiliWorld', () => {
     feed(danmaku(42, '阿明', '有身份'));
     expect(badge(module, '身份')).toBe('可认人');
     for (let i = 0; i < 20; i++) feed(danmaku(0, '老***', `第 ${i} 条`));
-    expect(badge(module, '身份')).toContain('脱敏中');
+    expect(badge(module, '身份')).toContain('缺少观众 uid');
     await vi.advanceTimersByTimeAsync(300);
     expect(host.events).toHaveLength(21);
     await module.stop();
@@ -1108,7 +1108,7 @@ describe('BilibiliWorld', () => {
       '[上舰 ¥138|甲] 开通了 舰长×1',
       '[续费|乙] 续费了 提督',
     ]);
-    expect(host.logs.filter((log) => log.msg.includes('吞掉'))).toHaveLength(2);
+    expect(host.logs.filter((log) => log.msg.includes('已过滤重复的大航海 TOAST'))).toHaveLength(2);
   });
 
   it('原始帧采样:名单内 cmd 与首见礼物名原样落盘,普通弹幕绝不采', async () => {
@@ -1184,7 +1184,7 @@ describe('BilibiliWorld', () => {
       // 公告板一字不动
       expect(module.envPromptVars()['bilibili.agentAnnouncement']).toBe('今晚八点开播');
       // 告警口径保留:runlog 里数得出来
-      expect(host.logs.some((log) => log.level === 'warn' && log.msg.includes('拒绝执行'))).toBe(true);
+      expect(host.logs.some((log) => log.level === 'warn' && log.msg.includes('拒绝空白 text'))).toBe(true);
       await module.stop();
     });
 
@@ -1199,9 +1199,8 @@ describe('BilibiliWorld', () => {
     });
   });
 
-  // 轮询状态转沿生成事件和 [事故] 告警；WS 与轮询报告的同一转沿须去重。
   describe('直播状态沿:转沿成文与双源去重', () => {
-    it('轮询读到 living true→false:成文权威事实事件 + [事故] 级 error', async () => {
+    it('轮询状态变为下播时投递事件并记录 error', async () => {
       const { module, host, setStatus } = await mount();
       setStatus({ ...STATUS, living: false });
       await module.stop();
@@ -1213,12 +1212,12 @@ describe('BilibiliWorld', () => {
       expect(room[0].text).toContain('看不到直播画面');
       // 留场弹幕的反向证据要提前说破
       expect(room[0].text).toContain('不代表直播还在');
+
       const errors = host.logs.filter((log) => log.level === 'error');
       expect(errors).toHaveLength(1);
-      expect(errors[0].msg).toContain('[事故]');
-      expect(errors[0].msg).toContain('已关播');
-      // 只报事实,处置留给人
-      expect(errors[0].msg).toContain('留给人');
+
+      expect(errors[0].msg).toContain('直播间未开播');
+
     });
 
     it('关播后轮询读到 living false→true:成文再开播事件,不再是 error', async () => {
@@ -1247,11 +1246,11 @@ describe('BilibiliWorld', () => {
 
       const room = host.events.filter((e) => e.type === 'bilibili.room');
       expect(room).toHaveLength(1);
-      // 成文的是 WS 路(normalize)的那条,且陈述为权威事实
+
       expect(room[0].text).toContain('平台已推送下播指令');
       expect(room[0].text).toContain('不代表直播还在');
-      // [事故] 告警只响一次
-      expect(host.logs.filter((log) => log.level === 'error' && log.msg.includes('[事故]'))).toHaveLength(1);
+
+      expect(host.logs.filter((log) => log.level === 'error' && log.msg.includes('直播间未开播'))).toHaveLength(1);
     });
 
     it('轮询先发现:WS 迟到的 PREPARING 在短窗内同样被吞', async () => {
@@ -1264,8 +1263,8 @@ describe('BilibiliWorld', () => {
       expect(room).toHaveLength(1);
       expect(room[0].text).toContain('平台确认已下播');
       expect(host.logs.filter((log) => log.level === 'error')).toHaveLength(1);
-      // 迟到的 WS 指令被短窗去重吞掉,并留一行可对账的日志
-      expect(host.logs.some((log) => log.msg.includes('略过成文'))).toBe(true);
+
+      expect(host.logs.some((log) => log.msg.includes('已过滤重复的直播状态通知'))).toBe(true);
     });
 
     it('首个状态观察只定基线:开播中启动不冒充"刚开播"', async () => {

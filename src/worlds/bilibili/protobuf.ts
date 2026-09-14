@@ -1,6 +1,6 @@
 /**
  * protobuf 线格式读取器，仅解字段号、wire type 与原始值，不使用 .proto 或执行类型映射；调用方解释字段布局。
- * 读取失败返回 null、undefined 或空串，不抛异常、不编造默认值，由调用方决定省略或告警。
+ * 读取失败返回 null、undefined 或空串,由调用方处理。
  * 单值字段按 protobuf 语义取同字段号最后一次出现的值。
  */
 
@@ -12,12 +12,10 @@ export interface PbField {
   readonly bytes?: Uint8Array;
 }
 
-/** 非 UTF-8 就当没读到,别把嵌套消息的字节当字符串端出去 */
 const TEXT = new TextDecoder('utf-8', { fatal: true });
 
 /**
- * 拆一层字段。返回 null = 这段字节不是完整的 protobuf(截断、越界、或者
- * 撞上早已废弃的 group wire type),调用方按"读不出来"处理。
+ * 解析一层字段;内容截断、长度越界或 wire type 不受支持时返回 null。
  */
 export function pbDecode(buf: Uint8Array): PbField[] | null {
   const out: PbField[] = [];
@@ -54,7 +52,7 @@ export function pbDecode(buf: Uint8Array): PbField[] | null {
   return out;
 }
 
-/** base64 字符串 → 字段表。不是字符串、base64 坏了、或者不是 protobuf 都给 null。 */
+/** 按 Node Buffer 的 base64 规则解码;空输入、空结果或 protobuf 解析失败时返回 null。 */
 export function pbFromBase64(value: unknown): PbField[] | null {
   if (typeof value !== 'string' || !value) return null;
   let bytes: Buffer;
@@ -67,13 +65,13 @@ export function pbFromBase64(value: unknown): PbField[] | null {
   return pbDecode(bytes);
 }
 
-/** 取嵌套消息。不是长度分隔字段、或者内容不是完整 protobuf 都给 null。 */
+/** 将字段字节解析为嵌套消息；缺少字节或解析失败时返回 null。 */
 export function pbSub(fields: readonly PbField[] | null, field: number): PbField[] | null {
   const bytes = pick(fields, field)?.bytes;
   return bytes ? pbDecode(bytes) : null;
 }
 
-/** 取字符串。没有这个字段、不是长度分隔、或者不是合法 UTF-8 一律 ''。 */
+/** 将字段字节解码为 UTF-8；缺少字节、解码失败或包含控制字符时返回空串。 */
 export function pbText(fields: readonly PbField[] | null, field: number): string {
   const bytes = pick(fields, field)?.bytes;
   if (!bytes) return '';
@@ -83,13 +81,11 @@ export function pbText(fields: readonly PbField[] | null, field: number): string
   } catch {
     return '';
   }
-  // 有控制字符 = 多半把嵌套消息当成字符串读了
   return hasControlChars(text) ? '' : text;
 }
 
 /**
- * 取整数。超出安全整数范围就当没读到——uid、金瓜子、等级都在范围内,
- * 越界只说明字段号对错了,这时候端一个精度已经掉了的数出去更糟。
+ * 读取 varint;缺失或超出 JavaScript 安全整数范围时返回 undefined。
  */
 export function pbInt(fields: readonly PbField[] | null, field: number): number | undefined {
   const value = pick(fields, field)?.varint;
@@ -105,7 +101,6 @@ function hasControlChars(text: string): boolean {
   return false;
 }
 
-/** 单数字段取最后一条(protobuf 语义) */
 function pick(fields: readonly PbField[] | null, field: number): PbField | undefined {
   if (!fields) return undefined;
   for (let i = fields.length - 1; i >= 0; i -= 1) {
@@ -114,7 +109,7 @@ function pick(fields: readonly PbField[] | null, field: number): PbField | undef
   return undefined;
 }
 
-/** varint。10 字节封顶(64 位的上限),越界或没有终止位都算读不动。 */
+/** varint 最多读取 10 字节;没有终止位时返回 null。 */
 function readVarint(buf: Uint8Array, from: number): { value: bigint; next: number } | null {
   let value = 0n;
   let shift = 0n;

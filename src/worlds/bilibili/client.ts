@@ -1,16 +1,13 @@
 /**
  * 直播间长连客户端(web 弹幕协议,只读)。
  *
- * 一次连接要走四步握手:
- *   1. `finger/spi` 取 buvid3——2025-06-27 起 getDanmuInfo 要求它非空
+ * 连接前的 HTTP 请求:
+ *   1. `finger/spi` 取 buvid3
  *   2. `x/web-interface/nav` 取 WBI 密钥(未登录也返回,只是 code=-101)与自己的 uid
  *   3. `Room/get_info` 把短号换成真实房间号(认证包只认真实号)
  *   4. `getDanmuInfo`(WBI 签名)拿弹幕服务器列表与 token
  * 然后 wss 连上去发认证包,每 30 秒一个心跳。
  *
- * **登录态决定脱敏**:匿名连上时服务端把弹幕的 uid 抹成 0、昵称打码成「老***」,
- * 同一房间同一时刻的对照实测是 5/5 对 0/5。所以要认人就得给 `BILIBILI_SESSDATA`。
- * cookie 过期不会报错,只会静默变回匿名的样子——World 据此在控制台报警。
  */
 import { createHash } from 'node:crypto';
 import WebSocket from 'ws';
@@ -39,7 +36,7 @@ export const RECONNECT_WATCHDOG_MS = 60_000;
  * 运行期 live_status 只读轮询，补充 WS 断连窗口或漏推的状态读数。此层仅更新状态，转沿成文与告警由 onStatus → onLiveStatus 处理。
  */
 export const ROOM_POLL_MS = 100_000;
-/** 轮询触发 412 风控时的退避:整整歇够这么久再问下一次,严禁热重试(重试正是触发它的原因) */
+/** HTTP 412 后的状态轮询退避时间。 */
 export const ROOM_POLL_RISK_HOLD_MS = 600_000;
 /** 关机验证属于 World 停机预算的一小段，不新增全局关机步骤。 */
 export const SHUTDOWN_VERIFY_TIMEOUT_MS = 2_500;
@@ -302,9 +299,8 @@ export class LiveClient {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes('412')) {
-        // 412 是风控:退避到十分钟档再问,热重试只会把号越触越死
         nextMs = ROOM_POLL_RISK_HOLD_MS;
-        this.opts.log.warn(`直播间状态轮询触发风控(412),退避 ${Math.round(ROOM_POLL_RISK_HOLD_MS / 60_000)} 分钟`);
+        this.opts.log.warn(`直播间状态轮询失败(412),等待 ${Math.round(ROOM_POLL_RISK_HOLD_MS / 60_000)} 分钟后重试`);
       } else {
         this.opts.log.warn('直播间状态轮询失败', { err: msg });
       }
@@ -400,8 +396,7 @@ export class LiveClient {
         ...(cookie ? { Cookie: cookie } : {}),
       },
     });
-    // 412 是风控,退避重来;别在这里重试,重试正是触发它的原因
-    if (res.status === 412) throw new Error('触发风控(412),稍后重试');
+    if (res.status === 412) throw new Error('HTTP 412');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const body: unknown = await res.json();
     return obj(body);

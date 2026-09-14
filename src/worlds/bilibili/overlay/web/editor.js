@@ -6,12 +6,7 @@
   'use strict';
 
   const WALL_MODE_KEY = 'bilibili.overlay-editor.wall.v1';
-  /**
-   * 控制台交接配色用的 fragment 键。**必须与 `src/web/client/theme/handoff.ts` 的
-   * `THEME_HANDOFF_FRAGMENT_KEY` 一字不差**:本页是纯 JS,import 不到那个常量,两边
-   * 对不上的后果是静默的(本页退回自己的默认配色)。`tests/web/theme-handoff.test.ts`
-   * 逐字比对这两处。
-   */
+  /** 须与 src/web/client/theme/handoff.ts 的 THEME_HANDOFF_FRAGMENT_KEY 一致。 */
   const THEME_FRAGMENT_KEY = 'cortico-theme';
   const THEME_KEYS = [
     'paper', 'paper-2', 'sheet', 'sheet-2', 'sheet-3',
@@ -710,7 +705,7 @@
     if (builtin) {
       const body = h('div');
       body.append(
-        h('p', 'placeholder', '内置样式保持稳定；复制后可编辑全部属性。'),
+        h('p', 'placeholder', '复制后可编辑。'),
         button('复制为自定义样式', () => createStyle(style), 'small-button accent'),
       );
       refs.inspector.append(section('内置样式', body));
@@ -765,7 +760,7 @@
     borderWidth.disabled = radius.disabled = padding.disabled = readonly;
     body.append(
       field('边框宽度', borderWidth),
-      field('圆角半径', radius, '新样式默认为 0；需要时再设置圆角。'),
+      field('圆角半径', radius),
       field('内边距', padding),
     );
     const preview = h('div', 'font-preview');
@@ -796,7 +791,7 @@
     applyTextPreview(line, style.body);
     preview.append(username, line);
     body.append(divider(), preview);
-    return section('文字系统', body);
+    return section('文字', body);
   }
 
   function textStyleFields(textStyle, readonly) {
@@ -1261,7 +1256,7 @@
     refs.inspector.append(section('组定义', basics));
     const ruleBody = h('div');
     ruleBody.append(renderRule(group.rule, (next) => { group.rule = next; }));
-    refs.inspector.append(section('准入规则', ruleBody));
+    refs.inspector.append(section('匹配条件', ruleBody));
     const overrides = h('div');
     overrides.append(h('div', 'field-label', '用户名覆写'), textPatchFields(group.username));
     overrides.append(divider(), h('div', 'field-label', '正文覆写'), textPatchFields(group.body));
@@ -1453,7 +1448,7 @@
     if (component.kind === 'danmaku') {
       body.append(
         field('滚动方向', selectInput(component.axis, [['vertical', '纵向列表'], ['horizontal', '横向弹幕']], (value) => { component.axis = value; }, { render: false })),
-        field('准入策略', selectInput(component.admission, [['danmaku', '仅弹幕'], ['gift', '仅礼物'], ['all', '弹幕 + 礼物']], (value) => { component.admission = value; }, { render: false })),
+        field('显示内容', selectInput(component.admission, [['danmaku', '仅弹幕'], ['gift', '仅礼物'], ['all', '弹幕 + 礼物']], (value) => { component.admission = value; }, { render: false })),
         checkInput('显示用户头像', component.showAvatar, (value) => { component.showAvatar = value; }),
         field('速度 px/s', numberInput(component.speed, (value) => { component.speed = value; }, 10, 500, 1)),
         field('条目间距', numberInput(component.gap, (value) => { component.gap = value; }, 0, 500, 1)),
@@ -1467,7 +1462,7 @@
         field('滚动方向', selectInput(component.axis, [['horizontal', '横向'], ['vertical', '纵向']], (value) => { component.axis = value; }, { render: false })),
         field('公告文本', textInput(component.text, (value) => { component.text = value; }, { multiline: true, maxLength: 5000 }), '每个非空行是一条公告。'),
         field('行间暂留 ms', numberInput(component.lineHoldMs, (value) => { component.lineHoldMs = value; }, 0, 60000, 1)),
-        field('行间交替时长 ms', numberInput(component.lineTransitionMs, (value) => { component.lineTransitionMs = value; }, 0, 10000, 1), '越短切换越快；设为 0 时整段连续滚动。'),
+        field('行间交替时长 ms', numberInput(component.lineTransitionMs, (value) => { component.lineTransitionMs = value; }, 0, 10000, 1), '0 表示整段连续滚动。'),
         field('单行速度 px/s', numberInput(component.speed, (value) => { component.speed = value; }, 10, 500, 1)),
         field('连续滚动间距', numberInput(component.gap, (value) => { component.gap = value; }, 0, 500, 1)),
         field('边缘淡出 px', numberInput(component.edgeFadePx, (value) => { component.edgeFadePx = value; }, 0, 512, 1), '沿滚动方向的两端淡出；设为 0 可关闭。'),
@@ -1655,7 +1650,7 @@
 
   function showCreateComponent() {
     const body = h('div', 'modal-body');
-    body.append(h('h2', null, '新建组件'), h('p', null, '选择组件类型。行为参数稍后在同一工作区中配置。'));
+    body.append(h('h2', null, '新建组件'));
     const grid = h('div', 'asset-grid');
     for (const [kind, [label, glyph]] of Object.entries(componentKinds)) {
       const choose = button(`${glyph}  ${label}`, () => {
@@ -1854,7 +1849,7 @@
         });
         refs.layer.append(hotspot);
       }
-      refs.selectionStatus.textContent = editor.mode === 'styles' ? '样式修改实时投送到草稿预览' : '组件参数实时投送到草稿预览';
+      refs.selectionStatus.textContent = '草稿预览';
       return;
     }
     const sorted = [...editor.design.placements].filter((item) => item.visible).sort((a, b) => a.z - b.z);
@@ -2067,14 +2062,13 @@
     const body = h('div', 'modal-body');
     body.append(
       h('h2', null, '编辑器使用说明'),
-      h('p', null, '样式、组件和布局共享一份草稿。切换工作区不会重载或丢弃修改。'),
       helpLine('Ctrl / ⌘ + S', '保存并热更新 OBS 页面'),
       helpLine('Ctrl / ⌘ + Z', '撤销；Shift + Ctrl / ⌘ + Z 重做'),
       helpLine('方向键', '移动选中的布局项 1 px；按住 Shift 移动 10 px'),
       helpLine('Delete / Backspace', '删除选中的布局实例（输入框内不会触发）'),
       helpLine('Mock 测试', '只在中央预览中填充选中组件；不会改写设计或真实公告'),
       helpLine('背景 浅 / 深', '切换透明组件背后的检查背景；该偏好不进入 OBS 设计'),
-      helpLine('九宫格', '源图红线定义切片像素；输出宽度定义最终边框厚度。二者互不覆盖。'),
+      helpLine('九宫格', '源图红线定义切片像素；输出宽度定义最终边框厚度。'),
     );
     const actions = h('div', 'modal-actions');
     actions.append(button('知道了', () => refs.modal.close(), 'small-button accent'));

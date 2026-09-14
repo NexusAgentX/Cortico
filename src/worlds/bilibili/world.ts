@@ -1,27 +1,4 @@
-/**
- * BilibiliWorld — B 站直播间接入与本机 Overlay。
- *
- * 直播间协议仍然只入站，不向 B 站账号写入。唯一工具写本机 Agent 公告栏，
- * Overlay 通过回环 HTTP 服务交给 OBS browser source。
- *
- * 事件词表与投递分档(何时唤醒 × 何时成文):
- *   bilibili.superchat     醒目留言        flush     付费且限时展示
- *   bilibili.guard         上舰            flush
- *   bilibili.gift          礼物 ≥ 阈值     flush     阈值见 worlds.bilibili.giftFlushYuan
- *   bilibili.gift          礼物 < 阈值     debounce
- *   bilibili.guard-renew   大航海 TOAST    debounce  同 uid 短窗内与 GUARD_BUY 去重
- *   bilibili.danmaku       弹幕            debounce
- *   bilibili.enter-guard   舰长进场        debounce
- *   bilibili.block         观众被禁言      debounce
- *   bilibili.room          开播/下播/禁言  flush;标题变更 debounce
- *   bilibili.feed          弹幕接入中断/恢复 flush / debounce  中断超 FEED_OUTAGE_MS 才成文
- *   bilibili.warning       超管警告/切断   flush     只告诉她,不替她收嘴
- *   bilibili.superchat-del SC 被删         piggyback
- *   bilibili.audience      人流读数        piggyback + 投递成文(发车刻现渲染)
- *
- * 进场/点赞/免费礼物/看过/在线/人气/粉丝数这些**只有读数没有发生时刻**的东西
- * 不单独成事件:累加在本 World 里,搭下一班车带出去,正文在发车刻才成文。
- */
+/** B 站直播间接入与本机 Overlay。直播间协议仅入站；公告工具写本机公告栏，Overlay 通过回环 HTTP 服务供 OBS 读取。 */
 import { mkdirSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -66,7 +43,7 @@ const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url
 
 const PANEL_LOG = 'log';
 
-/** 面板声明。导出是给 dev 截图器用的:它照这一份铺面板,不另抄一份措辞。 */
+/** 开发控制台复用此面板声明。 */
 export const BILIBILI_PANEL_DECLS: readonly WorldPanelDecl[] = [
   {
     id: PANEL_LOG,
@@ -75,58 +52,40 @@ export const BILIBILI_PANEL_DECLS: readonly WorldPanelDecl[] = [
   },
 ];
 
-/** 控制台事件流保留条数 */
 const RECENT_CAP = 200;
-/** 判定"服务端在脱敏"要看的最近弹幕条数 */
+/** 最近弹幕的观众 uid 检查窗口。 */
 const ANON_WINDOW = 20;
-/**
- * 归并折叠诊断的汇总窗口；保留异常频次，同时限制常态折叠的日志量。
- */
+
 const COALESCE_LOG_WINDOW_MS = 60_000;
-/**
- * 挂单超过此时限仍未渲染时允许重挂。渲染是正常复位点；陈旧窗口处理挂单被清空或隐藏期丢弃后无法复位的情况。
- */
+/** 延迟渲染的队列项被清除后不会复位 armedAt；超过此时限允许重新排队。 */
 const ARM_STALE_MS = 300_000;
 
-/**
- * 原始 WS 帧采样名单，可由 rawSampleCmds 覆盖。名单内命令不设量控，普通弹幕不采样；SEND_GIFT 仅在礼物名未知或无法读取时另行采样。
- */
+/** 名单内命令逐条采样；SEND_GIFT 另按礼物名采样，见 maybeSampleRaw。 */
 const RAW_SAMPLE_DEFAULT_CMDS: readonly string[] = [
   'GUARD_BUY',
   'USER_TOAST_MSG',
   'USER_TOAST_MSG_V2',
   'SUPER_CHAT_MESSAGE',
 ];
-/** 本场已见过的礼物名集合的内存上限;超出后不再采新名字,防极端刷屏撑爆 */
+
 const SEEN_GIFT_NAMES_CAP = 512;
-/** 礼物名读不出来的帧,本场最多留这么多样。够定位一次布局变更,又不会写满盘 */
+
 const UNNAMED_GIFT_SAMPLE_CAP = 16;
 
-/**
- * 大航海族按同 uid 作短窗去重，guardLevel 可比时还须相同。GUARD_BUY 始终投递并记账，以保留金额与开通语义；后到且匹配的 TOAST 抑制。guard 仍作为 flush trigger，不进入归并缓冲。
- */
+/** GUARD_BUY 始终投递；同 uid、等级不冲突的后续 TOAST 在窗口内去重。 */
 const GUARD_DEDUP_WINDOW_MS = 8_000;
 
-/**
- * 直播状态沿(开播/下播)的双源短窗去重。弹幕 WS 的 LIVE/PREPARING 与 client 的
- * live_status 轮询(见 client.ts ROOM_POLL_MS)是同一张网的两根线:正常情况下
- * WS 实时到、轮询最迟 100 秒后跟着确认同一件事,不去重就是每个沿双报。
- * 同一状态的沿在这个窗内只成文一次;窗取轮询间隔 + 余量。
- */
+/** WS 与轮询共用状态变化去重窗口；窗口长于轮询间隔。 */
 const ROOM_EDGE_DEDUP_MS = 180_000;
 
-/**
- * 接入离开 connected 超过此窗口才成文、告警并转红；窗口内的重连抖动不报告。一段中断只成文一次，已报告的中断恢复时再报告恢复及持续时长。
- */
+/** 中断超过此窗口才告警并投递事件；每段中断只报告一次，恢复时报告持续时长。 */
 const FEED_OUTAGE_MS = 60_000;
-
-
 
 export interface BilibiliWorldOptions {
   roomId: number;
   /** 登录 cookie 的 SESSDATA;空串=匿名接入 */
   sessdata?: string;
-  /** 热改:礼物插队门槛(元) */
+  /** 热改：触发即时投递的礼物金额下限（元）。 */
   giftFlushYuan?: () => number;
   /** 热改:相同弹幕与常规礼物进入总线前的固定归并窗 */
   coalesceWindowMs?: () => number;
@@ -142,10 +101,7 @@ export interface BilibiliWorldOptions {
   audienceImportantShare?: () => number;
   /** World 私有观众准入账本；不存昵称或正文。 */
   audienceLedgerFile?: string;
-  /**
-   * 原始 WS 帧采样落盘路径(jsonl)。不给时从 audienceLedgerFile 推导
-   * dataDir 下的 bilibili-raw-samples.jsonl;两者都没有(纯内存测试)则不采样。
-   */
+  /** 原始帧 jsonl 路径；默认位于 audienceLedgerFile 上两级目录，两者都未提供时关闭采样。 */
   rawSampleFile?: string;
   overlay?: BilibiliOverlayConfig;
   onOverlayConfig?: (config: BilibiliOverlayConfig) => void | Promise<void>;
@@ -153,11 +109,10 @@ export interface BilibiliWorldOptions {
   agentNoticeFile?: string;
   overlayAssetDir?: string;
   timezone?: string;
-  /** 测试替身:不给就连真直播间 */
+  /** 自定义直播源；默认使用 LiveClient。 */
   source?: (handlers: LiveHandlers) => LiveSource;
 }
 
-/** 长连的最小接口。真实实现是 `LiveClient`,测试注入假的。 */
 interface LiveSource {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -234,50 +189,49 @@ export class BilibiliWorld implements World {
   private eventWrites: Promise<void> = Promise.resolve();
   private pendingEventWrites = 0;
 
-  /** 原始 WS 帧采样落盘路径;null = 不采样(见 rawSampleFile 选项注释) */
+  /** null 表示关闭原始帧采样。 */
   private readonly rawSampleFile: string | null;
   private rawSampleWrites: Promise<void> = Promise.resolve();
   private rawSampleDirReady = false;
-  /** 落盘失败只报一次,别把一场日志刷满 */
+
   private rawSampleErrorReported = false;
-  /** 本场见过的礼物名;没见过的 SEND_GIFT 采一帧原始 cmd */
+
   private readonly seenGiftNames = new Set<string>();
-  /** 本场已经为"读不出礼物名"留过几帧样(见 UNNAMED_GIFT_SAMPLE_CAP) */
+
   private unnamedGiftSamples = 0;
-  /** 大航海族短窗去重的 recent-map:uid → 最近一条的时刻与档位 */
+
   private readonly recentGuard = new Map<string, { at: number; guardLevel?: number }>();
-  /** 最近一次见过的直播状态沿(WS 指令与轮询双源共用,见 ROOM_EDGE_DEDUP_MS) */
+
   private lastRoomEdge: { living: boolean; at: number } | null = null;
-  /** 最近一次观察到的 living;null = 还没拿到过带 realRoomId 的状态(转沿检测的基线) */
+  /** null 表示尚未取得有效房间状态。 */
   private lastKnownLiving: boolean | null = null;
-  /** 接入 phase 离开 connected 的时刻;null = 已接入或未起。见 FEED_OUTAGE_MS */
+  /** 中断开始的时间戳；null 表示已连接或未启动。 */
   private feedDownSince: number | null = null;
   private feedOutageTimer: ReturnType<typeof setTimeout> | null = null;
-  /** 这段中断已成文过;恢复时据此补一条恢复 */
+
   private feedOutageReported = false;
 
-  /** 待带出的人流读数;发车刻成文后清空 */
+  /** 渲染后清空的聚合读数。 */
   private agg = emptyAggregate();
-  /** 已布置的待成文事件挂在总线上的时刻;null = 没挂单。见 ARM_STALE_MS */
+  /** 延迟渲染事件的入队时间；null 表示尚未入队。 */
   private armedAt: number | null = null;
 
-  /** 控制台最近事件的文本。 */
   private readonly recent: string[] = [];
-  /** 记过的总条数(含已被 RECENT_CAP 挤掉的);控制台据此只取自己没见过的那一截 */
+  /** 累计事件数，包含已从 recent 移除的条目。 */
   private noteSeq = 0;
-  /** 控制台用:各 cmd 计数,没见过的 cmd 也在里面 */
+  /** 包含未识别命令。 */
   private readonly cmdCounts = new Map<string, number>();
-  /** 最近若干条弹幕是否带 uid;全 false = 服务端在脱敏(多半是 cookie 过期) */
+  /** 最近弹幕是否具有观众 uid。 */
   private readonly identified: boolean[] = [];
-  /** 配了 sessdata 却拿到匿名登录态时只报一次,别每次状态回调都刷一条 */
+
   private anonymousLoginReported = false;
-  /** 服务端自报的登录 uid;0 = 匿名。控制台面板据此说清"当前为匿名" */
+  /** 登录 uid；0 表示匿名。 */
   private loginUid = 0;
-  /** 归并折叠埋点的分钟汇总(见 COALESCE_LOG_WINDOW_MS) */
+
   private coalesceFolds = 0;
   private coalesceFoldedItems = 0;
   private coalesceLogAt = 0;
-  /** 准入筛除累计;控制台面板与日志共用同一份数 */
+
   private admissionDropped = 0;
 
   constructor(opts: BilibiliWorldOptions) {
@@ -290,8 +244,7 @@ export class BilibiliWorld implements World {
       onPersistError: (error) => this.host?.log.warn('B站观众准入账本落盘失败', { err: error.message }),
     });
     this.timezone = opts.timezone ?? 'Asia/Shanghai';
-    // 装配层没有专门的采样路径入参时,借 audienceLedgerFile(dataDir/bilibili-audience/
-    // ledger.json)往上推一层拿 dataDir。纯内存测试两者都不给,自然不落盘。
+
     this.rawSampleFile = opts.rawSampleFile
       ?? (opts.audienceLedgerFile
         ? join(dirname(dirname(opts.audienceLedgerFile)), 'bilibili-raw-samples.jsonl')
@@ -320,11 +273,7 @@ export class BilibiliWorld implements World {
       retrying: '重连中',
     };
     return {
-      // 接入、开播、身份与 Overlay 各报一颗灯。
-      //
-      // 重连中先报黄:抖动会自己回来。超过 FEED_OUTAGE_MS 仍没回来才转红——握手
-      // 挂死时它不会自己回来。开播与否不是故障,所以「直播间」那颗在未开播时是灰——
-      // 房间在那儿,只是没人在播。
+
       lamps: [
         {
           label: '接入',
@@ -484,10 +433,10 @@ export class BilibiliWorld implements World {
   async stop(): Promise<void> {
     ++this.lifecycleGeneration;
     this.coalescing.flush('stop');
-    // 最后不满一分钟的那一段折叠账要落下来,不然收尾前的那一批永远没有日志。
+
     this.flushCoalesceLog(true);
     await this.eventWrites;
-    // 只在采样启用时等队列:别给未启用采样的收尾路径平添一个微任务拍
+
     if (this.rawSampleFile) await this.rawSampleWrites;
     const client = this.client;
     const overlay = this.overlayServer;
@@ -594,11 +543,9 @@ export class BilibiliWorld implements World {
         },
         handler: async (args) => {
           if (typeof args.text !== 'string') return '[bad input] text must be a string';
-          /*
-           * 公告板拒绝空串或纯空白，保持内容不变；清空通过 Overlay 编辑器完成。拒绝回执点明入参并保留 warn 计数。
-           */
+
           if (args.text.trim() === '') {
-            this.host?.log.warn('bilibili_set_announcement 传入空串,已拒绝执行,公告板未动', {
+            this.host?.log.warn('bilibili_set_announcement 拒绝空白 text', {
               limit: this.agentNoticeLimit(),
               textLength: args.text.length,
             });
@@ -619,8 +566,6 @@ export class BilibiliWorld implements World {
     ];
   }
 
-  // ── 消息处理 ─────────────────────────────────────────────────────────────
-
   private onCmd(msg: Record<string, unknown>): void {
     const cmd = String(msg.cmd ?? '').split(':')[0] || '(无 cmd)';
     this.cmdCounts.set(cmd, (this.cmdCounts.get(cmd) ?? 0) + 1);
@@ -630,7 +575,7 @@ export class BilibiliWorld implements World {
       warn: (message, extra) => this.host?.log.warn(message, extra),
     });
     const overlayEvent = projectOverlayEvent(msg, item);
-    // 大航海族弹窗经过同 uid 短窗去重后发送，其余事件立即发送。
+
     const guardFamily = item !== null && item.kind === 'event'
       && (item.type === 'bilibili.guard' || item.type === 'bilibili.guard-renew');
     if (overlayEvent && !guardFamily) this.emitOverlayAudience(overlayEvent);
@@ -641,7 +586,7 @@ export class BilibiliWorld implements World {
     if (cmd === 'LIVE') {
       this.admission.startStream({ roomId: this.status?.realRoomId ?? this.opts.roomId });
       this.lastKnownLiving = true;
-      // 与轮询短窗去重:轮询先确认过同一个沿时,这条 WS 指令不再重复成文
+
       if (!this.markRoomEdge(true, '弹幕服务器 LIVE 指令')) return;
     } else if (cmd === 'PREPARING') {
       this.admission.endStream();
@@ -692,11 +637,7 @@ export class BilibiliWorld implements World {
     this.pushLiveEvent([pending], pending);
   }
 
-  /**
-   * 原始 WS 帧采样:RAW_SAMPLE_DEFAULT_CMDS 名单内的 cmd 每条都采;
-   * SEND_GIFT 族只在礼物名读不出或本场没见过时采。原样落盘,不做任何字段裁剪——
-   * 这份 jsonl 是「照着猜字段」类修复唯一的回归依据。
-   */
+  /** 名单内命令逐条保存原帧；礼物仅采样新名字或无名帧，分别受集合与计数上限约束。 */
   private maybeSampleRaw(cmd: string, msg: Record<string, unknown>): void {
     if (!this.rawSampleFile) return;
     const listed = RAW_SAMPLE_DEFAULT_CMDS.includes(cmd);
@@ -705,7 +646,7 @@ export class BilibiliWorld implements World {
       const raw = msg.data !== null && typeof msg.data === 'object'
         ? (msg.data as Record<string, unknown>)
         : {};
-      // 礼物名从 protobuf 归一化后的帧读取，避免将 V2 的 data.giftName 缺席误判为每笔都需留样。
+      // V2 礼物名须先从 protobuf 中读取。
       const data = giftFrameData(raw);
       const name = typeof data.giftName === 'string' && data.giftName
         ? data.giftName
@@ -715,7 +656,7 @@ export class BilibiliWorld implements World {
         if (this.seenGiftNames.size >= SEEN_GIFT_NAMES_CAP) return;
         this.seenGiftNames.add(name);
       } else {
-        // 读不出名字的照采——那是"布局又变了"唯一的回归依据,但要有量控
+
         if (this.unnamedGiftSamples >= UNNAMED_GIFT_SAMPLE_CAP) return;
         this.unnamedGiftSamples += 1;
       }
@@ -740,11 +681,6 @@ export class BilibiliWorld implements World {
       });
   }
 
-  /**
-   * 大航海族同 uid 短窗去重(见 GUARD_DEDUP_WINDOW_MS 注释)。
-   * 返回 true = 这条该吞掉。GUARD_BUY 永不吞、永远刷新记账;TOAST 在窗内撞上
-   * 同 uid 且 guardLevel 不冲突(任一侧没读出档位也算不冲突)就吞。
-   */
   private suppressDuplicateGuard(item: LiveEvent): boolean {
     if (!item.senderKey) return false;
     const now = Date.now();
@@ -760,7 +696,7 @@ export class BilibiliWorld implements World {
     const duplicate = recent !== undefined
       && (recent.guardLevel === undefined || level === undefined || recent.guardLevel === level);
     if (duplicate) {
-      this.host?.log.info('大航海 TOAST 与近窗事件同 uid,吞掉', {
+      this.host?.log.info('已过滤重复的大航海 TOAST', {
         senderKey: item.senderKey,
         text: item.text,
         windowMs: GUARD_DEDUP_WINDOW_MS,
@@ -969,10 +905,7 @@ export class BilibiliWorld implements World {
     this.flushCoalesceLog(false);
   }
 
-  /**
-   * 归并折叠埋点。`force` 只在收尾时给 true——不然最后不满一分钟的那一段永远不落。
-   * 只报数,不作判断:几条原始被折成几条投影,是唯一能事后对上账的事实。
-   */
+  /** force 在停止时输出尚未满统计窗口的累计值。 */
   private flushCoalesceLog(force: boolean): void {
     if (this.coalesceFolds === 0) return;
     const now = Date.now();
@@ -1085,9 +1018,8 @@ export class BilibiliWorld implements World {
     this.checkAnonymousLogin(status);
     this.trackFeedPhase(status.phase);
     const roomId = status.realRoomId ?? status.roomId;
-    // 转沿检测只认带 realRoomId 的状态——那才是真读过 Room/get_info 的观察,
-    // 接入前的默认 living:false 不算。首个观察只定基线不成文:开播中启动
-    // 不该被当成"刚开播"。
+    // 首个有效房间状态仅建立基线；后续状态变化参与去重。
+
     if (status.realRoomId !== null) {
       const prev = this.lastKnownLiving;
       this.lastKnownLiving = status.living;
@@ -1103,15 +1035,13 @@ export class BilibiliWorld implements World {
     }
   }
 
-  /**
-   * 记录直播状态沿并按 ROOM_EDGE_DEDUP_MS 去重；返回 true 表示新沿需要成文，同时发送操作员告警。仅报告事实，不自动停止演出或推流。
-   */
+  /** 记录状态变化并去重；新变化写日志并返回 true。 */
   private markRoomEdge(living: boolean, via: string): boolean {
     const now = Date.now();
     const last = this.lastRoomEdge;
     this.lastRoomEdge = { living, at: now };
     if (last && last.living === living && now - last.at <= ROOM_EDGE_DEDUP_MS) {
-      this.host?.log.info('直播状态沿与近窗已报信号重复,略过成文', {
+      this.host?.log.info('已过滤重复的直播状态通知', {
         living,
         via,
         sinceMs: now - last.at,
@@ -1123,16 +1053,14 @@ export class BilibiliWorld implements World {
       this.host?.log.warn(`平台侧直播间已开播(${via})`, { roomId });
     } else {
       this.host?.log.error(
-        `[事故] 平台侧直播间已关播(${via}):观众已看不到画面。只报事实,演出与推流的处置留给人`,
+        `平台侧直播间未开播(${via})`,
         { roomId },
       );
     }
     return true;
   }
 
-  /**
-   * 成文投递轮询发现的状态沿；WS 路径由 normalize 的 LIVE/PREPARING 分支成文。明确平台状态及其可观测后果：下播后观众看不到画面，留场聊天不代表仍在播；不添加行为指令。
-   */
+  /** 投递轮询发现的状态变化；WS 状态事件由 normalize 生成。 */
   private announceRoomEdge(living: boolean): void {
     this.pushNotice(living
       ? {
@@ -1150,7 +1078,7 @@ export class BilibiliWorld implements World {
         });
   }
 
-  /** World 自己成文的一条事实(状态沿、接入中断):进控制台面板,再作为顺序屏障投递 */
+  /** 投递本 World 生成的通知前，先输出归并缓冲中的事件。 */
   private pushNotice(item: LiveEvent): void {
     if (!this.host) return;
     this.note(item.text);
@@ -1159,11 +1087,7 @@ export class BilibiliWorld implements World {
     this.pushLiveEvent([pending], pending);
   }
 
-  /**
-   * 接入 phase 的中断计时(见 FEED_OUTAGE_MS)。connecting/retrying 之间的往复
-   * 不重新计时——一段中断从离开 connected 起算,到回到 connected 为止。
-   * stopped 只清计时,不算恢复:停机不是「弹幕又收得到了」。
-   */
+  /** connecting/retrying 连续计时；connected 报告已记录中断的恢复，stopped 仅清除计时。 */
   private trackFeedPhase(phase: LivePhase): void {
     if (phase === 'connecting' || phase === 'retrying') {
       if (this.feedDownSince !== null) return;
@@ -1186,7 +1110,6 @@ export class BilibiliWorld implements World {
     });
   }
 
-  /** 中断持续到 FEED_OUTAGE_MS 才跑到这里;只报事实:断了多久、在重连、这段弹幕收不到 */
   private reportFeedOutage(): void {
     this.feedOutageTimer = null;
     const since = this.feedDownSince;
@@ -1212,9 +1135,6 @@ export class BilibiliWorld implements World {
     this.feedDownSince = null;
   }
 
-  /**
-   * 已配置 sessdata 但服务端仍返回匿名登录态时告警。报告认证未生效的事实，不将配置存在视为认证成功。
-   */
   private checkAnonymousLogin(status: LiveStatus): void {
     if (status.phase !== 'connected') return;
     if (!this.opts.sessdata) return;
@@ -1225,7 +1145,7 @@ export class BilibiliWorld implements World {
     if (this.anonymousLoginReported) return;
     this.anonymousLoginReported = true;
     this.host?.log.error(
-      '配了 worlds.bilibili.sessdata,但服务端返回的登录态是匿名(selfUid=0):观众 uid 会被抹成 0、昵称打码,去更新 sessdata',
+      '已配置 worlds.bilibili.sessdata,登录接口仍返回匿名状态(selfUid=0)',
       { roomId: status.realRoomId ?? status.roomId },
     );
   }
@@ -1287,14 +1207,13 @@ export class BilibiliWorld implements World {
     if (this.identified.length > ANON_WINDOW) this.identified.shift();
   }
 
-  /** 最近这一窗弹幕全都没有 uid = 服务端在脱敏 */
   private desensitized(): boolean {
     return this.identified.length > 0 && !this.identified.includes(true);
   }
 
   private identityLabel(): string {
     if (this.identified.length === 0) return '待观察';
-    return this.desensitized() ? '脱敏中(登录凭证可能已过期)' : '可认人';
+    return this.desensitized() ? '近期弹幕缺少观众 uid' : '可认人';
   }
 }
 
@@ -1369,7 +1288,6 @@ function numberOption(
   return Math.min(max, Math.max(min, candidate));
 }
 
-/** 没有任何可报的东西时返回 null——整条蒸发,不占一行 */
 function renderAggregate(agg: Aggregate): string | null {
   const events: string[] = [];
   if (agg.enter > 0) events.push(`${agg.enter} 人进场`);
@@ -1414,7 +1332,7 @@ function mergeLiveEvents(items: readonly LiveEvent[]): LiveEvent {
     };
   }
   const giftSpecs = items.map((item) => item.coalesce as typeof spec);
-  // 有一笔金额读不出来,合并后的总额就是不可信的:整条不写 ¥,别拿部分和冒充总额
+  // 任一礼物金额未知时，合并正文省略总金额。
   const yuan = giftSpecs.some((item) => item.yuan === null)
     ? null
     : roundedMoney(giftSpecs.reduce((sum, item) => sum + (item.yuan ?? 0), 0));

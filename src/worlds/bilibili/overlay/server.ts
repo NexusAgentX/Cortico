@@ -73,8 +73,6 @@ export class BilibiliOverlayServer {
   async start(log: Logger): Promise<void> {
     if (this.http) return;
     const preferred = this.options.preferredPort;
-    // 顺延上限 5(原为 50):顺延一两个是"上次没退干净",顺延到第 20 个只可能是
-    // 有人在反复起实例,继续顺延等于把两个实例都留着跑。
     const attempts = preferred === 0 ? 1 : Math.min(5, 65536 - preferred);
     let lastError: unknown;
     for (let index = 0; index < attempts; index += 1) {
@@ -98,11 +96,9 @@ export class BilibiliOverlayServer {
         });
         this.http = server;
         this.boundPort = (server.address() as AddressInfo).port;
-        // warn 而不是 info:端口顺延是"另一个实例还在跑"最早也最便宜的旁证。
         if (index > 0) {
           log.warn(
-            `B站 Overlay 端口 ${preferred} 被占用,改用 ${this.boundPort}`
-            + '——如果没在跑第二个实例,说明上一次没退干净',
+            `B站 Overlay 端口 ${preferred} 被占用,改用 ${this.boundPort}`,
           );
         }
         break;
