@@ -25,7 +25,7 @@ Node 22+,pnpm 11(版本由 `package.json` 的 `packageManager` 指定)。规则�
 
 ## 两份 tsconfig
 
-Node 侧与浏览器侧的 lib 互斥:`tsconfig.json` 排掉 `src/web/client/**`、`src/web/shared/**`、
+Node 侧与浏览器侧分别配置类型库:`tsconfig.json` 排掉 `src/web/client/**`、`src/web/shared/**`、
 各 `console/**` 与 jsdom 测试;`tsconfig.web.json` 使用 DOM 类型并移除 `@types/node`。
 浏览器配置的 `include` 必须覆盖根配置排除的文件,并显式清空继承的 `exclude`。
 该配置设有 `files: []`,遗漏上述设置可能导致没有文件被检查而仍以状态 0 退出。
@@ -46,7 +46,8 @@ Node 侧与浏览器侧的 lib 互斥:`tsconfig.json` 排掉 `src/web/client/**`
 | `tests/integration/` | 整机:启动即暂停、QQ 起草确认、彩排 |
 | `tests/helpers/` | `fake-host.ts`(World 的假宿主)、`mock-napcat.ts`(假 OneBot 协议端) |
 
-只有模型是脚本化的;git 仓库、端口、事件库都是真的。测试不出网。
+测试使用脚本化模型、本地 git 仓库、端口与事件库;World 宿主和平台服务使用 `FakeHost`、
+`MockNapCat` 等替身,部分 HTTP 响应由测试提供。测试不访问外部网络。
 
 ## 目录
 

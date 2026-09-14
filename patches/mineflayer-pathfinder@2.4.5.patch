@@ -1,27 +1,16 @@
 diff --git a/index.js b/index.js
-index b38bd30c0c1babb4d7d3d396067ed828d9dc9f6a..73fdddd490c0873bf89a222f2bf35393c0650347 100644
+index b38bd30c0c1babb4d7d3d396067ed828d9dc9f6a..0aab92b17f1f75b01006dc4b9af49ee64a9d5a0b 100644
 --- a/index.js
 +++ b/index.js
-@@ -567,6 +567,23 @@ function inject (bot) {
+@@ -567,6 +567,12 @@ function inject (bot) {
                  placing = false
                  lastNodeTime = performance.now()
                })
 +          }, function (_ignoreError) {
-+            // Release on failure too. With the release written only on the
-+            // fulfilled branch, a single failed equip (scaffolding item just ran
-+            // out, a window is busy, a slot swap is in flight) leaves the lock
-+            // held forever: every later tick turns around at tryAcquire above,
-+            // and that `return` sits *before* the futility check that would call
-+            // resetPath('stuck') -- so nothing ever recovers. The bot keeps a
-+            // goal and a path and never moves again until something outside
-+            // calls resetPath. Keeping `placing`/`placingBlock` as they are lets
-+            // the next tick retry the same step, which is what the sibling
-+            // lockUseBlock error branch already does.
-+            //
-+            // This must be the second argument of .then(), not the trailing
-+            // .catch(): that catch also receives errors thrown by the fulfilled
-+            // body (`refBlock.name` throws when blockAt returns null), and
-+            // releasing there as well would be a second, spurious release.
++            // Release the equip lock on rejection, retaining placement state
++            // so the next tick can retry. Handle rejection in then's second
++            // argument: the trailing catch also receives fulfilled-handler
++            // errors, which must not release the lock twice.
 +            lockEquipItem.release()
            })
            .catch(_ignoreError => {})

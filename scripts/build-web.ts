@@ -1,12 +1,11 @@
 /**
  * 浏览器端产物构建:自动发现入口 → esbuild 打包 → 写 asset-manifest.json。
  *
- * 入口只由目录约定决定,没有中央名单:World 把 client.ts 放进自己的 console/
- * 目录就会被收进构建。asset key 同样只从目录名推导 —— World 无法自己指定
- * 产物路径,这是服务端把 key 映射回 URL 时的安全边界。
+ * 入口与 asset key 按以下目录约定生成:
  *
  *   src/web/client/main.ts        → core
- *   src/worlds-<x>/console/client.ts  → worlds:<x>
+ *   src/worlds/<x>/console/client.ts → world:<x>
+ *   src/providers/<x>/console/client.ts → llm:<x>
  *   bots/<y>/console/client.ts    → persona:<y>
  */
 import * as esbuild from 'esbuild';
@@ -21,7 +20,7 @@ import {
 
 /** 一个浏览器端入口:asset key 与它的源文件绝对路径。 */
 export interface WebEntry {
-  /** core,或 `world:<x>` / `persona:<y>`。 */
+  /** core、world:<id>、llm:<id> 或 persona:<id>。 */
   key: string;
   /** 入口源文件的绝对路径。 */
   entry: string;
@@ -42,8 +41,7 @@ function subdirs(dir: string): string[] {
 }
 
 /**
- * 扫出仓库里所有浏览器端入口。顺序稳定(core 在前,其余按 key 排序),
- * 让产物与清单可复现。
+ * 发现浏览器入口;core 在前,其余按 key 排序。
  */
 export function discoverEntries(root: string): WebEntry[] {
   const found: WebEntry[] = [];
@@ -154,7 +152,7 @@ function writeManifest(outdir: string, manifest: ConsoleAssetManifest): void {
   writeFileSync(join(outdir, 'asset-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 }
 
-/** 逐产物报体积。sourcemap 不计入,它不进浏览器的关键路径。 */
+/** 产物体积统计不包含 sourcemap。 */
 function reportSizes(outdir: string, metafile: esbuild.Metafile): void {
   const rows = Object.entries(metafile.outputs)
     .filter(([p]) => !p.endsWith('.map'))

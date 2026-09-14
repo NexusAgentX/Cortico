@@ -13,19 +13,15 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    // bin/cortico.mjs 是纯 JS(它得在 node_modules 存在之前就跑得起来,所以不能过 tsx)。
-    // 它照样受检:文件头有 `// @ts-check`,类型写在 JSDoc 里。
+    // bin/cortico.mjs 需在安装依赖前执行,使用 JS 与 JSDoc 类型。
     "allowJs": true,
     "checkJs": true,
-    // 仓内 bot 包与扩展写同一种 import(`cortico/<src 下路径>`):搬出去成扩展包时代码零改。
-    // 运行时由 src/extensions/runtime.ts 的模块钩子解析(tsx 也认这份 paths),vitest 用同形 alias。
+    // 运行时由 src/extensions/runtime.ts 解析相同前缀,vitest 使用对应 alias。
     "paths": { "cortico/*": ["./src/*"] }
   },
   "include": ["src/**/*.ts", "bots/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "templates/**/*.ts", "bin/**/*.mjs"],
-  // 浏览器端源码由 tsconfig.web.json 用 DOM lib 单独 check。这里排掉它们,否则
-  // 会拿 Node 的 lib 去 check DOM 代码。exclude 只影响初始文件表——被 Node 侧
-  // import 到的仍然照常检查,所以服务端也 import 的 shared/console-protocol.ts
-  // 不会漏检(它本来就不许碰 DOM)。
+  // 浏览器源码由 tsconfig.web.json 检查。exclude 只限制初始文件表,
+  // 被 Node 侧导入的共享文件仍参与检查。
   "exclude": [
     "node_modules",
     "dist",
@@ -33,7 +29,7 @@
     "src/providers/*/console/client.ts",
     "src/providers/*/console/*-panel.ts",
     "src/web/shared/**",
-    // 跑在 jsdom 上的测试同理:它直接摸 document/HTMLElement,归 web 那份 check
+    // 以下 jsdom 测试由浏览器配置检查。
     "tests/web/feature-prompts.test.ts",
     "tests/web/feature-firstturn.test.ts",
     "tests/web/client-language.test.ts",
