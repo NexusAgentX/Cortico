@@ -1,15 +1,7 @@
-/**
- * `save_blob` 工具 —— 她把看见过的一份二进制留进自己记忆的那只手。
- *
- * 字节住在哪、句柄长什么样归记忆层(`memory.ts` 的 `WorkspaceBlobStore`);
- * 这里只有工具定义:schema、准入、回执措辞。
- */
+/** save_blob 工具的参数、权限检查与回执；附件存储由 WorkspaceBlobStore 提供。 */
 import type { BlobStore, CoreApi, ToolDef } from 'cortico/core/types.ts';
 
-/**
- * `save_blob(handle, path)`:把她看见过的一份二进制(`log:` 句柄)存进自己的记忆,回 `mem:` 句柄。
- * 哪些值得留是她的判断;工具只搬字节。回执以 `[saved]` 起头,变体据此决定要不要提交版本。
- */
+/** 将 log: 附件复制到工作区并返回 mem: 句柄；成功回执以 [saved] 开头，供写后提交钩子识别。 */
 export function saveBlobTool(deps: {
   blobs: BlobStore;
   core: () => CoreApi | null;

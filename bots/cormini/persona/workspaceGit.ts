@@ -1,32 +1,20 @@
 /**
- * 用 git 维护工作区的版本历史 —— `GitWorkspaceMemory` 的成员。
- *
- * 工作区是一个独立的 git 仓(与项目根无关):
- *  - 她自己的落笔提交一次,author=self;控制台的编辑/删除立即提交,author=operator
- *  - 首次打开控制台时幂等 init,当前干净态打 checkpoint0
- *  - 历史/diff = git log/show;checkpoint = git tag,回滚 = reset --hard 到某 tag
- *
- * 全部经 execFileSync 调 git(`-C` workspace)。父进程里的 GIT_DIR / GIT_WORK_TREE
- * 不带进子进程——启动器跑在项目仓里时,那些变量会把命令指到项目根,
- * `git config` 就会报 not in a git directory 并把整个 bot 拖死。
- *
- * git 不可用或建仓失败时 available/isRepo 为假:写路径跳过提交(文件本身照写),
- * 读路径抛可读错误。
+ * 工作区的独立 Git 仓库。命令固定在工作区执行，并隔离影响仓库定位的环境变量。
+ * 首次使用时初始化，创建 checkpoint0；checkpoint 为 annotated tag，回滚执行 reset --hard。
+ * Git 不可用或建仓失败时，文件写入继续，版本读取报告错误。
+ * 异步提交由调用方串行执行；操作员和 Persona 的提交使用不同作者。
  */
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-/**
- * 仓自带的两份附件,新建仓与老仓都幂等补齐。
- * `* -text` 关掉行尾改写:她的笔记与台本里有靠原样文本对齐的地方,git 不该替她改。
- */
+/** 幂等补齐 Git 忽略规则与禁止行尾转换的属性文件，已有文件保持原样。 */
 const REPO_FILES: ReadonlyArray<readonly [string, string]> = [
   ['.gitignore', '# workspace 版本管理:忽略原子写临时文件\n*.tmp-*\n'],
   ['.gitattributes', '# 行尾一律原样:笔记里有靠原文对齐的地方,git 不替她改写\n* -text\n'],
 ];
 
-/** 超过这个时长没动过的索引锁按死锁处理。自己串行提交,单实例锁挡住了第二个进程。 */
+/** 超过此时长的索引锁可移除；调用方须保证单实例、串行提交。 */
 const STALE_INDEX_LOCK_MS = 60_000;
 
 export interface GitAuthor {
@@ -35,10 +23,6 @@ export interface GitAuthor {
 }
 
 export const AUTHOR_OPERATOR: GitAuthor = { name: 'operator', email: 'operator@persona.local' };
-/**
- * 她自己的笔记写入(记忆工具与后台整理都算);与操作员的编辑分开署名,
- * 历史页一眼看得出是谁改的。合并前 corti-soulmate 叫它 AUTHOR_BOT,是同一个概念的两个名字。
- */
 export const AUTHOR_SELF: GitAuthor = { name: 'corti', email: 'corti@persona.local' };
 
 export interface CommitInfo {
@@ -75,12 +59,9 @@ export interface GitStatus {
   head: string | null;
   lastCommit: CommitInfo | null;
   tags: string[];
-  /** 建仓失败原因(null = 正常);仓半建/属主问题在这里现形,不再静默。 */
+  /** 建仓失败原因；null 表示没有错误。 */
   initError: string | null;
-  /**
-   * 最近一次提交失败的原因(null = 正常)。仓是好的、但某次写入没记上历史
-   * (索引锁残留、盘满、属主变更)——这条路以前整段被吞掉,文件照写而历史停更。
-   */
+  /** 最近一次提交失败的原因；文件可能已写入。提交成功后清空。 */
   commitError: string | null;
 }
 
@@ -89,13 +70,8 @@ const RS = '\x1e';
 const LOG_FMT = `%H${FS}%an${FS}%ae${FS}%aI${FS}%s${RS}`;
 
 /**
- * revision(commit hash / tag / `HEAD~1`)来自控制台的 query,先卡形状。
- *
- * 关键不是"怕注入 shell"(execFileSync 没有 shell),而是**怕它被 git 当选项读**:
- * `git show --output=<file>` 会把 diff 写到任意文件——一个读接口就成了写原语。
- * 所以两道:字形不许以 `-` 开头,命令里再加 `--end-of-options`(git ≥2.24)。
- *
- * 不许出现 `:`——`fileAt` 把 revision 和路径拼成 `rev:path`,冒号能挪走分界。
+ * revision 不得以 '-' 开头，命令另用 --end-of-options（Git >= 2.24）终止选项解析。
+ * 禁止 ':'，因为 fileAt 用 rev:path 表示指定版本中的文件。
  */
 function assertRevision(rev: string): string {
   if (!rev || rev.length > 200 || rev.startsWith('-') || !/^[\w./\-~^{}@一-鿿]+$/.test(rev)) {
@@ -121,7 +97,7 @@ export class WorkspaceGit {
   private warnedInitFail = false;
   /** 最近一次提交失败的原因;成功一次就清空。进 status() 供控制台展示。 */
   private commitError: string | null = null;
-  /** 已经说过的提交失败原因:同一条不刷屏(她每写一个文件就提交一次)。 */
+  /** 去重提交失败日志；提交成功后清空。 */
   private warnedCommitError: string | null = null;
   private readonly warn: (msg: string, data?: unknown) => void;
 
@@ -141,11 +117,7 @@ export class WorkspaceGit {
     return this.availCache;
   }
 
-  /**
-   * `.git` 存在不等于仓可用:2026-08-16 那次 init 在第一条 `git config` 就死了
-   * (目录属主是 BUILTIN\Administrators,git 判 dubious ownership),留下一个
-   * 半建仓卡了五天——所以这里必须真问一次 git,不能只看目录。
-   */
+  /** 用 Git 命令检查仓库是否可用；仅存在 .git 目录不足以确认初始化完成。 */
   isRepo(): boolean {
     if (!existsSync(join(this.dir, '.git'))) return false;
     if (this.repoCache !== null) return this.repoCache;
@@ -158,10 +130,7 @@ export class WorkspaceGit {
     return this.repoCache;
   }
 
-  /**
-   * 只留下找 git 二进制需要的 PATH,把会改「当前仓」的 GIT_* 剥掉。
-   * 启动器从项目仓拉起时,Cursor / 外壳常带着 GIT_DIR=.git(相对项目根)。
-   */
+  /** 保留进程环境，移除影响仓库、索引和对象目录定位的 Git 变量。 */
   private gitEnv(): NodeJS.ProcessEnv {
     const env = { ...process.env };
     for (const key of Object.keys(env)) {
@@ -182,11 +151,8 @@ export class WorkspaceGit {
   }
 
   private run(args: string[]): string {
-    // safe.directory 走命令行(protected config 之一):workspace 可能属主是
-    // BUILTIN\Administrators(dubious ownership),没有这条 init 之后所有命令全灭。
-    // 每次调用都钉死 -C,env 已剥净,放开 * 不会波及别的仓。
-    // quotepath=false:她的笔记文件名大量是中文,默认会被转义成 \344\275 那种八进制,
-    // 历史页与 --numstat 的路径就对不上了。走命令行,新旧仓一视同仁。
+    // safe.directory 仅作为本次 Git 调用的配置；-C 固定目标工作区。
+    // quotepath=false 保留非 ASCII 路径，供历史记录与 numstat 匹配。
     return execFileSync('git', ['-C', this.dir, '-c', 'safe.directory=*', '-c', 'core.quotepath=false', ...args], {
       cwd: this.dir,
       env: this.gitEnv(),
@@ -195,11 +161,7 @@ export class WorkspaceGit {
     });
   }
 
-  /**
-   * 同 `run`,但不阻塞事件循环。她每写一个文件就提交一次,而在这台机器上一次
-   * `add -A` + `commit` 走满 744 个文件要三百多毫秒——同步做会在直播中一次次
-   * 卡住主循环。调用方负责串行(git 索引不容并发)。
-   */
+  /** 非阻塞 Git 调用；同一仓库的调用必须串行。 */
   private runAsync(args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
       execFile(
@@ -215,8 +177,7 @@ export class WorkspaceGit {
     return ['-c', `user.name=${a.name}`, '-c', `user.email=${a.email}`];
   }
 
-  /** 幂等初始化:无 .git 则 git init + .gitignore + 首个 commit + tag checkpoint0。 */
-  /** 幂等补齐仓的附件;已存在的不动。老仓也走这里,所以 `.gitattributes` 是补发的。 */
+  /** 幂等补齐仓库属性文件，已有文件不修改。 */
   private ensureRepoFiles(): void {
     for (const [name, body] of REPO_FILES) {
       const file = join(this.dir, name);
@@ -224,24 +185,21 @@ export class WorkspaceGit {
     }
   }
 
-  /**
-   * 残留的索引锁。Ctrl+C 打在 commit 中间就会留下它,之后每次提交都失败——
-   * 而提交失败以前是静默的,一整场的历史会停在那一刻没人知道。
-   */
+  /** 超时锁的处理依赖单实例、串行提交的使用约束。 */
   private clearStaleIndexLock(): void {
     const lock = join(this.dir, '.git', 'index.lock');
     try {
       const age = Date.now() - statSync(lock).mtimeMs;
       if (age < STALE_INDEX_LOCK_MS) return;
       rmSync(lock, { force: true });
-      this.warn('清掉残留的 git 索引锁(上一次提交被打断)', { dir: this.dir, ageMs: Math.round(age) });
+      this.warn('已移除超时的 Git 索引锁。', { dir: this.dir, ageMs: Math.round(age) });
     } catch { /* 没有锁,或读不到:照常往下走 */ }
   }
 
   init(): { created: boolean } {
     if (!this.available() || this.isRepo()) return { created: false };
     this.ensureRepoFiles();
-    this.run(['init']); // 对半建仓幂等:重跑 init 不动已有对象,后面把没走完的步骤补齐
+    this.run(['init']); // 重复 init 保留已有对象，并补齐初始化步骤。
     this.repoCache = null;
     if (!this.isRepo()) throw new Error(`git init 之后 ${this.dir} 里仓不可用`);
     this.run(['config', 'core.autocrlf', 'false']);
@@ -251,8 +209,7 @@ export class WorkspaceGit {
       ...this.authorArgs(AUTHOR_OPERATOR),
       'commit', '--allow-empty', '-m', 'checkpoint0:出厂/重置后的干净状态',
     ]);
-    // annotated tag 的 tagger 同样取 user.name/user.email:机器上没配全局身份时
-    // (干净的 CI runner 就是)不带这两条,git tag -a 会以「Committer identity unknown」直接失败。
+    // annotated tag 的 tagger 使用指定身份，不依赖机器全局配置。
     this.run([
       ...this.authorArgs(AUTHOR_OPERATOR),
       'tag', '-a', 'checkpoint0', '-m', '出厂/重置后的干净状态(init 自动)',
@@ -267,9 +224,8 @@ export class WorkspaceGit {
     try {
       this.init();
       this.initError = null;
-      if (this.isRepo()) this.ensureRepoFiles(); // 老仓补发 .gitattributes
+      if (this.isRepo()) this.ensureRepoFiles();
     } catch (e) {
-      // 建仓失败不挡读写,但必须出声:上一次它一声不吭,半建仓卡了五天没人发现
       this.initError = e instanceof Error ? e.message : String(e);
       if (!this.warnedInitFail) {
         this.warnedInitFail = true;
@@ -287,16 +243,12 @@ export class WorkspaceGit {
     }
   }
 
-  /**
-   * 提交失败必须出声。仓是好的、这一次没记上历史——索引锁残留、盘满、属主变更
-   * 都走这条路。以前它整段被吞:文件照写、历史停更,一场直播下来才发现。
-   * 同一条原因只说第一次(她每写一个文件就提交一次),成功一次就清账。
-   */
+  /** 相同提交错误只记录一次；提交成功后允许再次报告。 */
   private noteCommitFailure(e: unknown): null {
     this.commitError = e instanceof Error ? e.message : String(e);
     if (this.warnedCommitError !== this.commitError) {
       this.warnedCommitError = this.commitError;
-      this.warn('workspace 提交失败(文件已落盘,这一次没进版本历史)', { dir: this.dir, err: this.commitError });
+      this.warn('workspace 提交失败（文件已保存，本次修改未提交）', { dir: this.dir, err: this.commitError });
     }
     return null;
   }
@@ -354,18 +306,13 @@ export class WorkspaceGit {
   }
 
   /**
-   * 带增删行数的提交流水。她自己查笔记历史时,「这一版比上一版少了 350 行」才是
-   * 她要的信号——光有 hash 和时刻,看不出笔记是哪一次缩水的。
-   *
-   * 记录分隔符放在**每条记录前面**:`--numstat` 的行紧跟在该条的 pretty 头之后,
-   * 分隔符前置才能让 split 之后「首行=头,其余行=numstat」对齐到同一条提交。
-   */
+ * 按提交返回文件增删行数。记录分隔符放在 pretty 头之前，使紧随其后的 numstat 行归属该提交。
+ */
   logStat(opts?: { path?: string; limit?: number }): CommitStat[] {
     this.ensureRepo();
     if (!this.available() || !this.isRepo()) return [];
     const args = [
-      // quotepath 默认开着,`地图.md` 在 numstat 行里会印成 "\345\234\260…",
-      // 按路径挑本文件那一档就永远挑不中。全部 -c 都排在子命令之前才生效。
+      // Git 配置选项必须位于子命令之前。
       '-c', 'core.quotepath=false',
       'log', `--pretty=format:${RS}%H${FS}%an${FS}%ae${FS}%aI${FS}%s`,
       '--numstat', `-n${opts?.limit ?? 20}`,
@@ -488,7 +435,7 @@ export class WorkspaceGit {
       throw new Error(`没有这个 checkpoint:${name}`);
     }
     this.run(['reset', '--hard', name]);
-    this.run(['clean', '-fd']); // 清掉 tag 里没有的未跟踪文件,保证与 checkpoint 完全一致
+    this.run(['clean', '-fd']); // 删除未跟踪且未被忽略的文件。
   }
 
   status(): GitStatus {

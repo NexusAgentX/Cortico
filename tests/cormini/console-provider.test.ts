@@ -51,10 +51,9 @@ describe('Persona卡:只有 ORIENTATION 与宪法', () => {
     expect(orient?.path.replaceAll('\\', '/')).toContain('bots/cortiv/persona/ORIENTATION.md');
   });
 
-  /** 这些是某份人格实现的设计知识,Cormini 身上没有。 */
   const FORBIDDEN = ['workspace', 'tree', 'file', 'memory', 'memo', 'checkpoint', 'checkpoints', 'dream', 'reset', 'history', 'diff'];
 
-  it('Cormini 的Persona不声明面板/配置——最小案例守住;存储只有工作区一条', () => {
+  it('Cormini 不声明面板或配置组，工作区列入存储清单', () => {
     const { parts } = buildOf(corminiDefinition);
     const decl = parts.persona.console?.();
     expect(decl?.panels ?? []).toEqual([]);

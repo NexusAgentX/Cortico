@@ -1,17 +1,7 @@
 /**
- * Cormini(可缇mini)——Workspace Memory 的范例Persona,可直接实例化。
- *
- * 本文件是与记忆形态**无关**的那一半:节律、前缀装配、上下文压力裁量、session 声明、
- * 交接时机。记忆那一半在同目录的几份里,换一种记忆实现就是换掉它们——
- *  - `memory.ts` 这份记忆在磁盘上是什么(`GitWorkspaceMemory`:路径安全、读写、
- *    遍历、检索、二进制工件、版本历史)
- *  - `workspaceTools.ts` 平铺工作区的文件工具(她对记忆的全部动作)
- *  - `blobs.ts` `save_blob` 那只手
- *  - `handoffNote.ts` 清空前那一段渲染成什么带进新 session
- *
- * 变体不走构造选项开关,而是**独立的类**:CortiV(可缇Corti,bots/cortiv/persona/persona.ts)
- * 继承本类,把直播 memory 系统(观众档案唤起/并行梦)内建为自己的行为。
- * 为此少数成员是 protected 扩展点,不是公共 API。
+ * 文件式工作区 Persona：声明 session 与工具，装配前缀，管理心跳、上下文压力和交接。
+ * memory.ts 提供存储，workspaceTools.ts 与 blobs.ts 提供工具，handoffNote.ts 渲染交接笔记。
+ * protected 成员供变体继承，不属于公共 API。
  */
 import { existsSync, readFileSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -58,7 +48,7 @@ export const FIRST_TURN_FILES = {
   reply: 'FIRST_TURN_REPLY.md',
 } as const;
 
-/** 段的人类可读名与可编辑源。**只用于控制台标签**,一个字也不进前缀。 */
+/** 控制台段名与可编辑源映射，不写入前缀。 */
 const CORMINI_SEGMENT_TITLES: Record<string, string> = {
   'persona.orientation': 'ORIENTATION',
   'persona.constitution': 'CONSTITUTION',
@@ -96,7 +86,7 @@ export function endTurnTool(): ToolDef {
   };
 }
 
-/** 上下文阶段的三个裁量:塞满多少交接、越过多少比例先预警、交接留多大比例的尾巴。 */
+/** 阶段预算、软阈值比例和交接笔记预算比例。 */
 export interface ContextStagePolicy {
   maxTokens: number;
   softRatio: number;
@@ -158,7 +148,7 @@ export interface CorminiOptions {
 const CONSOLE_TEXT = {
   zh: {
     orientation: 'Persona的存在方式与元认知说明。',
-    constitution: '宪法:长期原则。这份文件她自己也会改——编辑前留意乐观锁提示。',
+    constitution: 'Persona 的长期原则。重载系统前缀或开始新上下文后生效。',
     memoryNote: '记忆约定:她的档案怎么存、什么时候会自动浮现。',
     workspaceLabel: '工作区(她自己写的记忆文件)',
     workspaceNote: '宪法之外的全部工作区文件不可恢复地删除;宪法与人格检查点不动',
@@ -173,7 +163,7 @@ const CONSOLE_TEXT = {
   },
   en: {
     orientation: 'How the Persona exists and its metacognition notes.',
-    constitution: 'Constitution: long-term principles. She edits this file herself; watch the optimistic-lock notice before editing.',
+    constitution: 'The Persona\'s long-term principles. Changes take effect after a system prefix reload or when a new context starts.',
     memoryNote: 'Memory conventions: how her files are stored and when they surface on their own.',
     workspaceLabel: 'Workspace (memory files she wrote herself)',
     workspaceNote: 'Every workspace file except the constitution is deleted irrecoverably; the constitution and persona checkpoints are untouched',
@@ -206,16 +196,15 @@ export class Cormini implements Persona {
   protected pressureWarnedAt: number | null = null;
   /** 最近一份交接笔记的工作区路径;醒来那句话用它指路 */
   protected lastHandoffFile: string | null = null;
-  /** 这份记忆在磁盘上是什么(路径安全、读写、遍历、检索、二进制工件、版本历史) */
   readonly memory: GitWorkspaceMemory;
-  /** 记忆里的二进制工件:工作区 blobs/ 下的文件,`mem:` 句柄即相对路径(Persona 契约要求的那个字段) */
+  /** 工作区二进制附件；mem: 句柄保存相对路径。 */
   readonly blobs: WorkspaceBlobStore;
 
   constructor(opts: CorminiOptions) {
     this.memory = new GitWorkspaceMemory({
       memoryDir: opts.memoryDir,
       ...(opts.blobsDir !== undefined ? { blobsDir: opts.blobsDir } : {}),
-      // 版本历史出声走 core 日志;还没 attach 上就退回 console(现取,故用闭包)
+      // attach 前使用 console；闭包在调用时选择当前日志入口。
       warn: (msg, data) => {
         if (this.core) this.core.log.warn(msg, data);
         else console.warn(`[workspaceGit] ${msg}`, data ?? '');
@@ -237,12 +226,10 @@ export class Cormini implements Persona {
     this.heartbeat = new Heartbeat(
       baseline,
       () => {
-        // 投递成文:安静时长按投递那一刻算,投出的文本就是库里记的文本。
-        // World 状态不再由心跳收集——各 World 自己推投递成文事件。
+        // 心跳文本在投递时按当前安静时长生成，并以同一文本入库。
         this.core?.injectDeferred('tick', () => this.tickText(this.heartbeat.quietSeconds()));
       },
     );
-    // 出厂种子:文件不在才写,内容由这一层给(哪份文件是宪法、写什么是人格约定)
     this.memory.seed([[
       CONSTITUTION_FILE,
       opts.seedConstitution ?? '# Who I am\n\n(Write here, or let the bot write here.)\n',
@@ -265,12 +252,7 @@ export class Cormini implements Persona {
       : this.orientationFile;
   }
 
-  /**
-   * Persona自报的控制面:只有两份静态前缀源——ORIENTATION 与宪法。
-   * 它们是"这个人格是怎样的"的文本,归Persona卡;
-   * 模型档位/provider 是部署的事,走框架的 /api/models,不在这里。
-   * 文案按 `language`(这次请求的界面语言);key、路径与清除动作不随语言变。
-   */
+  /** 按界面语言声明控制台文案；源 key、路径与清除动作保持一致。 */
   console(language: Language = 'zh'): PersonaConsoleDecl {
     const t = pick(language, CONSOLE_TEXT);
     return {
@@ -377,7 +359,7 @@ export class Cormini implements Persona {
     });
   }
 
-  /** 前缀装配模板(PREFIX.md / ENV_SECTION.md)此刻该读的那份;变体按文件名覆写(部署侧覆盖也在这一层解析)。 */
+  /** PREFIX.md、ENV_SECTION.md 等模板路径；变体可按文件名覆盖。 */
   protected templateFile(name: string): string {
     return join(CORE_DIR, name);
   }

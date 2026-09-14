@@ -1,18 +1,6 @@
 /**
- * `GitWorkspaceMemory` —— Persona持有的那份记忆:**这份记忆在磁盘上是什么**。
- *
- * 一句话分界:这里只管**能不能安全地做**,
- * 不管**该不该做**。于是留在Persona的有——
- *  - 权限:`Cormini.writeGuard` / `readOverride` 两个钩子、corti-soulmate 的 `permissions.ts`;
- *  - 内容特判:corti-soulmate 的 `CORE.md`(读这个名字返回软件包里的那份)走 `readOverride`;
- *  - 前缀渲染:`prefixWorkspaceListing` / MEMORY 0~4 / `memoTiers`;
- *  - 工具定义:`workspaceTools.ts` 的七个 ToolDef(schema、usage 文案、回执措辞);
- *  - 清库策略:哪些文件算可清除。
- * 它们一个字也不在这里。反过来,这一层也不持有工具表——那是反向绑定。
- *
- * 本文件由三份平行实现合并而来:cormini 的工具底层(`workspaceTools.ts` 的自由函数)、
- * corti-soulmate 的 `Workspace`、CortiV 的精简 `Workspace`。分歧处取更严格或更完整的那一份,
- * 逐处在注释里写明为什么。版本历史那一半是它的成员 `git`(见 `workspaceGit.ts`)。
+ * 文件式工作区记忆：路径检查、文件读写、遍历、检索、二进制附件和 Git 历史。
+ * Persona 提供权限、虚拟文件、前缀渲染及清除策略；工具定义在 workspaceTools.ts。
  */
 import {
   appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync,
@@ -50,9 +38,8 @@ export function normalizeWorkspacePath(relPath: string): string {
 }
 
 /**
- * 工具层的路径护栏:按 `path.normalize` 的结果算,只要落在工作区内就放行
- * (`a/../b` 这种解析后仍在区内的算过关)。写类工具历来走这条,措辞也是它的。
- * 更严的那条是 `resolveSafe`(连 `..` 段本身都拒),两条各有各的调用点,不合并。
+ * 规范化后检查路径是否位于工作区内，允许区内的 a/../b。
+ * resolveSafe 另拒绝所有 '..' 段；调用方按接口的路径约束选用。
  */
 function insideWorkspace(root: string, rel: string): string {
   const abs = resolve(root, pathNormalize(rel));
@@ -131,11 +118,9 @@ function visibleEntry(name: string): boolean {
 }
 
 /**
- * 记忆里的二进制工件后端。
- *
- * `mem:` 句柄 = `mem:` + 工作区相对路径,与 list_files 里看到的路径一致。字节和她的
- * 笔记一样住在工作区,随人格包走。put 的名字提示不带目录时落进 `dir`(缺省 `blobs/`);
- * get 认工作区里任何一个文件,路径逃逸经 insideWorkspace 拒绝。
+ * 工作区的二进制附件。mem: 句柄携带工作区相对路径，字节保存在部署的工作区中。
+ * put 的路径不含目录时使用 dir（默认 blobs/）；get 可读取工作区内任意文件。
+ * insideWorkspace 拒绝越出工作区的路径。
  */
 export class WorkspaceBlobStore implements BlobStore {
   constructor(private readonly root: string, private readonly dir: string = BLOBS_DIR) {}
@@ -225,10 +210,7 @@ export class GitWorkspaceMemory {
   // 首次初始化
   // -------------------------------------------------------------------------
 
-  /**
-   * 种子文件:不在才写,已有的一个字不动。**内容由调用方给**——哪份文件叫什么、
-   * 出厂写什么是人格约定(宪法),不是"记忆在磁盘上是什么"。
-   */
+  /** 仅创建尚不存在的种子文件；文件名和内容由调用方提供。 */
   seed(files: ReadonlyArray<readonly [string, string]>): void {
     for (const [rel, body] of files) {
       const abs = this.resolveSafe(rel);
@@ -253,10 +235,7 @@ export class GitWorkspaceMemory {
     return normalizeWorkspacePath(relPath);
   }
 
-  /**
-   * 相对路径 → 绝对路径,拒绝绝对路径(含盘符)与任何 `..` 段。
-   * 三份实现里 corti-soulmate 那份最严(连 `a/../b` 这种解析后仍在区内的也拒),合并取它。
-   */
+  /** 相对路径转绝对路径，拒绝盘符、绝对路径和任何 .. 段。 */
   resolveSafe(relPath: string): string {
     const s = this.normalize(relPath);
     if (/^[a-zA-Z]:/.test(s) || s.startsWith('/') || isAbsolute(s)) {
@@ -308,7 +287,7 @@ export class GitWorkspaceMemory {
     return readFileSync(abs, 'utf8');
   }
 
-  /** 原子写:同目录临时文件再 rename,避免半份正文落盘;失败清掉临时文件(取更完整的那份)。 */
+  /** 同目录临时文件写完后 rename；失败时移除临时文件并保留原始错误。 */
   writeFileAtomic(relPath: string, content: string): void {
     const abs = this.resolveSafe(relPath);
     if (existsSync(abs) && statSync(abs).isDirectory()) {
@@ -371,7 +350,7 @@ export class GitWorkspaceMemory {
   // 遍历
   // -------------------------------------------------------------------------
 
-  /** 返回一层目录内容;目录带尾部 "/" 并排在文件前。不存在/不是目录都抛(取更严的那份)。 */
+  /** 列出一层目录，目录名带尾部 / 并排在文件前；路径无效时抛错。 */
   listDir(relPath = ''): string[] {
     const abs = this.resolveSafe(relPath);
     if (!existsSync(abs)) throw new WorkspaceError(`目录不存在:${this.normalize(relPath) || '工作区根'}`);
@@ -392,11 +371,9 @@ export class GitWorkspaceMemory {
   }
 
   /**
-   * `list_files` 的回执正文。`dir`(相对工作区,空 = 根)本身全量列出;它之下的每个
-   * 子目录只列前 `LIST_DIR_CAP` 项,余下折叠成一行计数——几十份交接笔记、几百份人物
-   * 档案不该一次撑满回执。要看全部,把那个目录单独指定为 `dir`。
-   * 前缀里那份走模板(见 prefixWorkspaceListing),不受此上限约束。
-   */
+ * 完整列出 dir（空值为工作区根）；各子目录最多显示 LIST_DIR_CAP 项，其余报告计数。
+ * 指定该子目录可查看全部。前缀的 prefixWorkspaceListing 不受此上限限制。
+ */
   listing(dir = ''): string {
     const abs = this.insideWorkspace(dir || '.');
     if (!existsSync(abs)) return `[not found] ${dir}`;
@@ -453,14 +430,9 @@ export class GitWorkspaceMemory {
   }
 
   /**
-   * 按内容搜的底层:从 `path`(文件或目录,空 = 整个工作区)起逐文件逐行判定,
-   * 交回每个命中文件的整份行表与命中行号——只列文件、按文件计数、带上下文行
-   * 都在这之上拼(见 grep_files 工具)。
-   *
-   * 二进制(字节里含 NUL)整份跳过;原子写的临时文件不进检索(corti-soulmate grepFiles 的
-   * 口径,取更严的那份)。换行按 `\r?\n` 切(取更完整的那份:CRLF 的笔记里
-   * 行尾的 `\r` 不该跟着进回执)。
-   */
+ * 从 path（文件或目录，空值为工作区）检索，返回命中文件的行表和命中行号。
+ * 跳过含 NUL 的二进制文件及原子写临时文件；按 CRLF/LF 切行。
+ */
   grep(opts: { match: (line: string) => boolean; path?: string; filter?: RegExp | null }): GrepFileHit[] {
     const where = opts.path ?? '';
     const abs = this.insideWorkspace(where || '.');

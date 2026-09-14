@@ -1,9 +1,4 @@
-/**
- * `GitWorkspaceMemory`:路径安全、读写、遍历、检索。
- *
- * 这里只问"能不能安全地做";"该不该做"(权限、CORE.md 这类虚拟文件、清库策略)
- * 在Persona那边,见 tests/corti-soulmate/tools.test.ts 与 permissions.test.ts。
- */
+/** GitWorkspaceMemory 的路径、读写、遍历与检索；Persona 权限和虚拟文件测试在 tests/corti-soulmate。 */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
