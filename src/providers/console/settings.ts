@@ -131,6 +131,8 @@ export class ProviderSettings {
     this.config.providers = { ...this.config.providers, [name]: next };
     this.config.activeProvider = activeProvider;
     this.config.providerSchemaVersion = 3;
+    // 端点 .env 的内容按 provider 实例缓存。
+    this.registry.invalidate(name);
   }
 
   save(name: string, entry: LLMProviderEntry, language: Language = 'zh'): void {
