@@ -1,33 +1,12 @@
 /**
- * Console Page Protocol —— 控制台与"贡献控制台表面的那一方"之间的唯一契约。
- *
- * **一个贡献方 = 控制台导航上的一页(page)。** 这个词是刻意选的:仓库里 `Provider`
- * 曾同时指 LLM 供应端点(`LLMProviderEntry`)和这里的控制台数据面,两个毫不相干的
- * 东西共用一个名字。现在 `Provider` 只留给前者;控制台这一侧一律叫 page。
- * LLM 端点仍是**其中一类** page(`llm:<模块>`),与 `world:` / `persona:` 并列。
- *
- * 这份文件是**边界权威**。归属判据只有一句:凡是需要知道"这个 bot 是怎样的"
- * 才成立的表面,都不属于框架。可机械执行的问法是「明天出现 world-discord /
- * Persona-X,这段代码要改吗」——要改就不属于 Web Core。两条硬规则：
- *
- * 1. **不出现任何具体一页的名字。** 没有 World 名、没有 bot 名,连举例也不用——
- *    本文件里的示例一律是占位名(world:chat / persona:demo)。协议只认识 page /
- *    panel / badge / config / prompt / storage / link / invoke / asset 这几个词。
- *    为某一个现有页添加专用概念 = 协议失败。这条规则由
- *    tests/web/architecture.test.ts 的 Guard B 常驻执行。
- * 2. **不引入宿主依赖。** 本文件同时被 Node 服务端与浏览器端 import，所以既不碰
- *    DOM 也不碰 node:*。类型 import 仅限 `src/core/` 的纯结构类型。
- *
- * 声明侧（`ConsolePageContribution`）与线上侧（`ConsoleManifest`）**故意不是
- * 同一组类型**：声明侧带本地绝对路径与可执行的 `invoke`，这两样都不能上线。
- *
- * 线上字段与 URL 里仍写着 `providers`：那是**线协议形状**，改动它要连同
- * `pnpm build:web` 一起走,不属于这次纯改名。
+ * 控制台贡献与 manifest 协议，供 Node 和浏览器共用，不依赖 DOM 或 node:*。
+ * 页面类别为 world、llm、persona；声明可含本地路径与回调，manifest 仅含可公开字段。
+ * 协议保持通用，具体页的语义和实现由贡献方提供。
  */
 
 import type { ConfigGroup, StoragePart } from '../../core/types.ts';
 
-/** 线协议版本。前端拿到不认识的版本时拒绝渲染，而不是猜。 */
+/** 前端拒绝渲染不支持的协议版本。 */
 export const CONSOLE_PROTOCOL_VERSION = 1;
 
 /**
@@ -37,15 +16,7 @@ export const CONSOLE_PROTOCOL_VERSION = 1;
 export const CONSOLE_LANGUAGE_HEADER = 'x-cortico-language';
 export const CONSOLE_LANGUAGE_QUERY = 'language';
 
-/**
- * 一页的类别。
- *
- * - `worlds`      —— 一个 World 带来的控制面
- * - `llm`     —— 一个 LLM 供应模块带来的控制面(这里,也只有这里,`Provider` 指端点)
- * - `persona` —— bot / 人格侧带来的控制面（经 `ConsoleContribution.consolePages`）
- * - `framework` —— **保留**：框架自身的表面不走这套协议，它就是控制台本体。
- *   这个成员存在只是为了让"框架不是一页"这件事在类型上说得出口。
- */
+/** world：World 控制面；llm：LLM 供应模块；persona：bot/Persona 控制面。framework 为保留类别，不经贡献协议提供页面。 */
 export type ConsolePageKind = 'framework' | 'world' | 'persona' | 'llm';
 
 /** 能真正贡献一页的类别（框架除外）。 */
@@ -55,13 +26,7 @@ export type ContributingKind = Exclude<ConsolePageKind, 'framework'>;
 // 1. 命名空间规则
 // ---------------------------------------------------------------------------
 
-/**
- * Page ID 形如 `world:chat` / `persona:demo` / `llm:grok`。
- *
- * **Page ID 提供 namespace；Panel ID 只在一页内唯一。** 旧的全局扁平
- * panel id（`chat-gate` / `sensor-align` 这种把 World 名写进 id 里的做法）就此作废：
- * 它把"哪个 World 的"编进了字符串，于是中央前端必须持一张全局表才能路由。
- */
+/** Page ID 使用 kind:name 命名空间，如 world:chat、persona:demo、llm:sample；Panel ID 仅在页内唯一。 */
 const PAGE_ID_RE = /^(world|persona|llm):[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 /** Panel ID 只需在自己这一页内唯一，所以不带任何前缀。 */
@@ -84,27 +49,14 @@ export function isPanelId(id: string): boolean {
   return PANEL_ID_RE.test(id);
 }
 
-/**
- * 内置面板名:控制台核心自带的那批面板实现,在内核里的键。
- *
- * 与 panel id 用的是不同的字符集(必须字母开头):它不是路由段也不是目录名,而是
- * 内核代码里的一个标识符,数字开头的键在那一侧没有意义。
- */
+/** 内置面板名以小写字母开头，后续允许小写字母、数字和连字符。 */
 const BUILTIN_PANEL_RE = /^[a-z][a-z0-9-]*$/;
 
 export function isBuiltinPanel(name: unknown): name is string {
   return typeof name === 'string' && BUILTIN_PANEL_RE.test(name);
 }
 
-/**
- * 由目录约定推出 page id —— 构建脚本与服务端注册表**必须**用同一个函数，
- * 否则两边各推一次就会悄悄漂移。
- *
- * ```
- * src/worlds/terminal/console/client.ts → world:terminal
- * bots/demo/console/client.ts    → persona:demo
- * ```
- */
+/** 构建脚本与服务端注册表共用的目录到 page id 映射。 */
 export function pageIdFor(kind: ContributingKind, name: string): string {
   return `${kind}:${name}`;
 }
@@ -113,17 +65,7 @@ export function pageIdFor(kind: ContributingKind, name: string): string {
 // 2. Asset 安全模型
 // ---------------------------------------------------------------------------
 
-/**
- * **贡献方永远不提供路径。**
- *
- * 它只有一个 asset key，而这个 key 就是它自己的 page id——所以协议里根本没有
- * 一个字段可以让贡献方塞进 `../../foo.js`、`C:\foo.js`、`file://…` 或
- * `http://evil/…`。构建产物 `dist/web/asset-manifest.json` 是 key → URL 的唯一映射，
- * 服务端只答 manifest 里有的 key，其余一律当作"这一页没有扩展"。
- *
- * 这个函数是恒等映射。它存在的意义是把这条规则变成一处可 grep 的事实，而不是
- * 散落在注册表与构建脚本里的两句巧合。
- */
+/** 资源 key 等于 page id；资源 URL 由构建清单和服务端资源表提供，贡献声明不提供路径。 */
 export function assetKeyForPage(pageId: string): string {
   return pageId;
 }
@@ -138,29 +80,14 @@ export interface ConsoleAssetManifest {
   protocolVersion: typeof CONSOLE_PROTOCOL_VERSION;
   /** 内核入口；尚未构建时为 null */
   core: string | null;
-  /** key = page id。字段名是线协议形状,与 `pnpm build:web` 的产物同步,故未改名。 */
+  /** key 为 page id。 */
   providers: Record<string, ConsoleAssetEntry>;
 }
 
 /** 静态资源 URL 的唯一合法前缀。服务端把它映射到 `dist/web/`。 */
 export const CONSOLE_ASSET_PREFIX = '/assets/';
 
-/**
- * 出网前的最后一道闸：即使 manifest 被人手改坏，也不放行能跳出 `/assets/` 的值。
- *
- * **用白名单字符集，不用黑名单。** 黑名单天然漏——先前的版本只挡字面 `..`，
- * 于是 `/assets/%2e%2e/%2e%2e/etc/passwd`、`/assets/..%2f..%2fx`、
- * `/assets/x\n.js`（换行进响应头就是头注入面）全都放行。构建产物的文件名由
- * 我们自己生成，字符集本来就窄，所以直接只认这个窄集：
- *
- * ```
- * 字母数字 . _ - /
- * ```
- *
- * `%` 不在集合里，编码回溯自然无从谈起；控制字符、反斜杠、协议、协议相对
- * 写法（`//host/x`）、查询串一并出局。查询串被拒是有意的——产物带内容 hash，
- * 不需要 cache-buster。
- */
+/** 资源 URL 仅允许 /assets/ 下的字母、数字、点、下划线、横线和斜杠；拒绝路径回溯、编码、控制字符、反斜杠和查询串。 */
 const ASSET_URL_RE = /^\/assets\/[A-Za-z0-9._/-]+$/;
 
 export function isSafeAssetUrl(url: unknown): url is string {
@@ -169,23 +96,7 @@ export function isSafeAssetUrl(url: unknown): url is string {
   return !url.split('/').includes('..');
 }
 
-/**
- * `ConsoleLink.href` 的闸门。
- *
- * asset 那条路被堵得很干净，但 `links.href` 是**同一类**"贡献方给路径"的口子:
- * 控制台把它原样渲染成打开按钮,于是 `javascript:` 直通就是控制台里的 XSS——
- * 而 href 常常来自 World 配置(用户填的地址),不是纯代码常量。
- *
- * 分三类处理，判据是**会不会在控制台自己的页面源里执行脚本**：
- *
- * - 放行 `http:` / `https:` / 以单个 `/` 开头的同源相对路径。
- * - **永久拦截执行类协议**（见 `EXECUTING_SCHEMES`）。`javascript:` 在控制台自己的
- *   源里跑，而控制台没有身份认证、能回滚人格、能清空存储——拿到脚本执行等于拿到全部。
- * - 其余自定义应用协议（`vscode:` / `obs:` 这类）放行：浏览器不执行它们，而是把 URL
- *   交给操作系统去拉起本地程序。风险跑到浏览器外面去了，由部署环境自己管。
- *
- * 协议相对写法（`//host`）按同源相对路径解释会跑到外站，拒。
- */
+/** 链接允许 HTTP(S)、单斜杠开头的同源路径及非执行类应用协议；拒绝执行类协议、协议相对 URL 与控制字符。 */
 const EXECUTING_SCHEMES = new Set([
   'javascript:', 'data:', 'vbscript:', 'blob:', 'filesystem:',
 ]);
@@ -195,7 +106,6 @@ const CONTROL_CHARS_RE = new RegExp(`[${String.fromCharCode(0)}-${String.fromCha
 
 export function isSafeLinkHref(href: unknown): href is string {
   if (typeof href !== 'string' || href === '') return false;
-  // 控制字符(含换行)一律拒:它们只在注入场景里出现
   if (CONTROL_CHARS_RE.test(href)) return false;
   if (href.startsWith('//')) return false;
   if (href.startsWith('/')) return true;
@@ -217,13 +127,7 @@ export interface ConsoleBadge {
   tone?: 'on' | 'off' | 'plain';
 }
 
-/**
- * 一条链路的状态灯。四态，贡献方自报；控制台只按 `state` 上色，不从徽标反推。
- *
- * 与 `src/core/types.ts` 的 `WorldLamp` **同形**（那边写着四态各自的判据）。
- * 两边各写一份的理由与 `WorldStreamSocket` 相同：这份文件被浏览器 import，
- * 不能反向依赖 core。
- */
+/** 贡献方自报的四态链路灯，与 core 的 WorldLamp 同形；浏览器协议独立声明该结构。 */
 export interface ConsoleLamp {
   /** 这是哪条链路。导航上没有它的位置，只进悬停说明。 */
   label: string;
@@ -240,15 +144,7 @@ const LAMP_STATES: readonly ConsoleLamp['state'][] = ['online', 'loading', 'erro
  */
 export const LAMP_MAX = 7;
 
-/**
- * 上线前的灯消毒：`state` 不是那四个字面量之一、或没有 `label`，这一颗丢掉；
- * 超过 `LAMP_MAX` 的截掉。
- *
- * 前端拿 `state` 拼 CSS class，所以一个写歪的值（`'green'`、`'ok'`）会渲染成一颗
- * 永远不亮的灰灯——那比没有灯更糟：它看起来在报"这条链路关着"。宁可不画。
- * `label` 是那颗点唯一的自我说明（导航上只有悬停能读到它），没有就等于一颗
- * 说不出自己是谁的灯。
- */
+/** 丢弃缺少 label 或 state 非法的灯，并截断到 LAMP_MAX。 */
 export function sanitizeLamps(value: unknown): ConsoleLamp[] {
   if (!Array.isArray(value)) return [];
   const out: ConsoleLamp[] = [];
@@ -369,7 +265,7 @@ export interface ConsolePageContribution {
 /**
  * - `active`   已装配并运行
  * - `inactive` 本地有实现但这次没载入（面板仍可露出，比如激活前的接入配置）
- * - `missing`  Persona定义了、本地没有实现
+ * - `missing`  不可用：缺少实现、构造失败或工具冲突；原因见 reason
  */
 export type ConsolePageAvailability = 'active' | 'inactive' | 'missing';
 
@@ -464,11 +360,7 @@ export interface ConsolePageManifest {
   agentVisible?: boolean;
   prefixDrifted?: boolean;
 
-  /**
-   * 浏览器扩展资源。**由服务端查构建产物解析得到，贡献方不提供路径**。
-   * 缺省 = 这一页没有构建出扩展；此时它声明的**非内置** panel 会渲染成一张
-   * "扩展未构建"的错误卡，而不是静默消失。内置面板不经过它。
-   */
+  /** 浏览器扩展资源由服务端解析构建产物得到；缺省时非内置面板显示缺少产物错误，内置面板不依赖该字段。 */
   client?: ConsoleAssetEntry;
 }
 
@@ -489,13 +381,7 @@ export interface ConsoleManifest {
 /** Manifest 端点。 */
 export const CONSOLE_MANIFEST_ROUTE = '/api/console/manifest';
 
-/**
- * 状态灯端点：`{ lamps: { '<page id>': ConsoleLamp[] } }`，只报灯。
- *
- * 灯本来就在 manifest 里（首屏那一帧靠它），这条端点存在的理由是**刷新频率**：
- * 灯要跟得上"引擎起来了没"，而 manifest 带着每一页的面板、前缀源索引与
- * 配置组归属，秒级重取一份是拿几十 KB 换四个字节的状态。
- */
+/** 状态灯接口：{ lamps: { [pageId]: ConsoleLamp[] } }，用于独立轮询灯状态。 */
 export const CONSOLE_LAMPS_ROUTE = '/api/console/lamps';
 
 /** `CONSOLE_LAMPS_ROUTE` 的响应体：page id → 它那排灯。 */
@@ -599,23 +485,7 @@ export function validateContributions(
   return problems;
 }
 
-/**
- * 把声明侧的贡献投影成线上侧的 manifest 条目。
- *
- * 这个函数是**唯一**的降维口子：`invoke`、`promptDocs.path`、`config.schema`、
- * `storage` 都在这里被挡下。前缀源只上线 key、标题与说明，配置组只上线 id
- * （归属信息，用来决定这组旋钮画在哪一页），正文与 schema 仍从专用端点读取。
- * 新增字段时先问一句"它上线安全吗"，再决定加不加到这里。
- *
- * 它同时是 `links` 与 `panels.builtin` 的消毒点：不安全的 href（`isSafeLinkHref`）
- * 与写歪的内置面板名（`isBuiltinPanel`）在这里连同它所在的那一项被丢掉。
- * 放在这里而不是 `validateContributions` 里，是因为**一处写错不该让整页
- * 下线**——注册表丢一整页是给结构性错误准备的。调用方应当比对
- * 前后条数并记一条日志，让被丢掉的项可见。
- *
- * 数组一律浅拷一层：manifest 与声明侧共享引用的话，消费方一改就污染贡献方
- * 内部状态，而 `badges` 是每次重取的活数据。
- */
+/** 序列化可公开的 manifest 字段，省略回调、本地路径、schema 与存储动作。独立过滤不安全链接和非法 builtin 面板；数组浅拷贝，调用方记录被过滤项。 */
 export function toPageManifest(
   c: ConsolePageContribution,
   client?: ConsoleAssetEntry,

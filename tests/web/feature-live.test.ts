@@ -847,7 +847,7 @@ describe('live feature 挂载', () => {
       'ws://test/ws/providers/world%3Aterminal/panels/chat',
     ]);
     expect(fetched).toEqual(['/api/status']);
-    expect((root.find('tlinner') as FakeEl).textContent).toContain('调试通道未挂载');
+    expect((root.find('tlinner') as FakeEl).textContent).toContain('调试通道不可用');
 
     sockets[0].up();
     sockets[0].emit({

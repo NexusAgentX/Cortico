@@ -1,15 +1,4 @@
-/**
- * `ConsoleUi` 的组装口。host 每挂一个面板就造一个实例，把该面板的 `memo`、生命周期
- * `signal` 与浮层宿主绑进去；扩展拿到的 `ctx.ui` 就是这里的返回值。
- *
- * 为什么要按面板造实例、而不是全局单例：
- *
- * - `foldSheet` 的折叠状态必须落在该面板的 `memo` 命名空间里，两个 provider 用同一个
- *   卡片 id 才不会互相顶掉；
- * - `signal` 是**该面板的**生命周期。浮层与监听都绑在它上面，面板一卸，这个 ui 实例
- *   造出来的所有活物（开着的抽屉、挂起的 confirm、待摘的监听）当场结束。单例做不到
- *   这件事——它不知道现在这句 `toast` 是谁喊的。
- */
+/** 每次面板挂载创建 ConsoleUi，绑定 memo 命名空间、signal 与浮层宿主。 */
 
 import type { ConsoleMemo, ConsoleUi, Disposable } from '../../shared/client-panel.ts';
 import { esc, h } from './dom.ts';
@@ -42,12 +31,9 @@ export interface ConsoleUiDeps {
    * **不能是面板的 `root`**——那个在 unmount 时会被清空。
    */
   overlayHost: HTMLElement;
-  /**
-   * 面板的 `ctx.signal`。**必填**：这不是可选的加固，而是这套原语能不能收场的前提。
-   * 少了它，一个 `await ui.confirm(...)` 就能在面板卸载后永远挂着。
-   */
+  /** 面板的 ctx.signal，用于取消弹窗与释放资源。 */
   signal: AbortSignal;
-  /** 缺省取 `overlayHost.ownerDocument`。留出口子是为了测试与离屏文档。 */
+  /** 缺省为 overlayHost.ownerDocument。 */
   doc?: Document;
 }
 
@@ -100,8 +86,4 @@ export function createConsoleUi(deps: ConsoleUiDeps): ConsoleUi {
   };
 }
 
-/**
- * 粘滞判定单独导出：它是 `log` 里唯一容易算错的一步，而 DOM 上又最难验
- * （测试里 `scrollTop` / `scrollHeight` / `clientHeight` 全是 0）。拿出来直接钉。
- */
 export { LOG_STICK_PX, shouldStick } from './log.ts';

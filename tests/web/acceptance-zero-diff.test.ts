@@ -1,44 +1,4 @@
-/**
- * 新增 IO / 人格时 `src/web/**` 零 diff 的硬验收，机械化。
- *
- * ```
- * 新增 IO：     改 src/worlds/new/**、bot 装配、 World 目录、配置默认值
- *              diff src/web/**  → EMPTY
- * 新增 Persona：改 bots/new/**、launcher 注册
- *              diff src/web/**  → EMPTY
- * ```
- *
- * 在此之前这两条只是文档里的一段话。写成测试有一个陷阱要绕开：**用假件与静态断言
- * 是验不出边界的**——假件可以被特殊对待，静态断言只能证明"某个字符串没出现"。
- * 所以这份测试选了更贵但更真的做法：
- *
- * 1. **在真仓库里真的造出两个 provider 目录**（`src/worlds/zzz-acceptance/console/client.ts`
- *    与 `bots/zzz-acceptance/console/client.ts`），跑完在 `finally` 里删干净。验的
- *    因此是真实的目录约定发现，而不是临时仓骨架里的一份模仿。
- * 2. **逐段走完真链路**：构建发现（`discoverEntries`）→ 装配适配
- *    （`ioPageContribution` / `personaPageContribution` + `mergePersonaContributions`）
- *    → 协议校验（`validateContributions`）→ 真 esbuild 出产物 → 真 `WebApp` 起服务
- *    → `GET /api/console/manifest` → `POST` 打面板。中间没有一步是 mock。
- * 3. **零 diff 的证明方式是内容哈希**，不是 `git status`。仓库本来就可能有未提交
- *    改动，`git diff --name-only src/web` 会把它们一并算进来，那条断言就只能在
- *    干净工作树上成立——**验收不该依赖工作树状态**。这里改成：测试开始前把
- *    `src/web/**` 每个文件的 sha256 记下来，链路跑完再算一次，断言两次完全相同。
- *
- *    这条断言的已知局限，写在明处：它只能证明**这条链路没有逼着谁去改框架**，
- *    不能证明"没人偷偷改过框架"。真去改了 `src/web/**` 再让新 provider 跑通的话，
- *    改动会先落在提交里，快照的两次都包含它——这里照样绿。那种情形归
- *    `tests/web/architecture.test.ts` 的 Guard A/B（框架源码里不许出现具体 World 名）
- *    与人工评审管，两者是互补的，不是重复的。同理，若另一个执行者在本文件跑的
- *    这两三秒内正好写了 `src/web/**`，这条会红——那是误报，看一眼 git 就能分辨。
- *
- * 另外两组是"硬化那一路点名缺的"：
- *
- * - **验收件 World 的贯通**：`src/worlds/console-fixture` 是仓库里的活体验收件，先前只活在
- *   单测的引用里，没人验证它真的能被构建发现、真的能产出 asset 条目。
- * - **前端对结构性坏 manifest 的容忍**：服务端已经挡住这些形状（`validateContributions`
- *   会把整个 provider 丢掉），但**前端拿到时会怎样**从来没定义过。这里驱动真的
- *   `ConsolePageHost` 把它喂进去，记录现状。
- */
+/** 集成验证目录发现、贡献适配、esbuild 产物、manifest 与面板调用。测试前后对 src/web 内容取 hash，仅证明运行期间未改源码，不证明此前未修改；并发编辑可能改变快照。构建输出使用临时目录。 */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createHash } from 'node:crypto';
 import {
@@ -73,15 +33,11 @@ import { FakeStore } from './fakes.ts';
 
 const REPO = resolve(import.meta.dirname, '../..');
 
-/**
- * 临时 provider 的名字。`zzz-` 前缀有两个作用：目录排序时永远在最后（不打断
- * 真 World 的顺序），以及一眼看得出它不是真东西。
- */
+/** zzz 前缀使临时贡献目录排在现有目录之后。 */
 const IO_NAME = 'zzz-acceptance';
 const BOT_NAME = 'zzz-acceptance';
 const IO_PROVIDER = pageIdFor('world', IO_NAME);
 const PERSONA_PROVIDER = pageIdFor('persona', BOT_NAME);
-/** 仓库里那个常驻的活体验收件。 */
 const FIXTURE_PROVIDER = pageIdFor('world', 'console-fixture');
 
 const IO_DIR = join(REPO, 'src', 'worlds', IO_NAME);
@@ -90,14 +46,8 @@ const IO_ENTRY = join(IO_DIR, 'console', 'client.ts');
 const BOT_ENTRY = join(BOT_DIR, 'console', 'client.ts');
 
 // ---------------------------------------------------------------------------
-// 临时 provider 的源码
 // ---------------------------------------------------------------------------
 
-/**
- * 扩展源码。刻意写成与真 provider 一模一样的形状：只 `import type` 一份契约、
- * 只经 `ctx` 借东西——`tests/web/architecture.test.ts` 的 Guard F 会在它存在的
- * 这几秒里一起扫到它，写歪了那边就红，那正是"它是真 provider"的另一个证据。
- */
 const bundleSource = (contractPath: string, mark: string): string =>
   `/**
  * 临时验收 provider 的浏览器扩展。由 tests/web/acceptance-zero-diff.test.ts 造出来，
@@ -133,7 +83,6 @@ const dropTempProviders = (): void => {
 
 const WEB_ROOT = join(REPO, 'src', 'web');
 
-/** 一个文件一行：`相对路径  sha256`。排序后可直接 `toEqual`，差异一眼能读。 */
 function webFingerprint(dir = WEB_ROOT): string[] {
   const out: string[] = [];
   for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -159,14 +108,7 @@ const expectWebUntouched = (): void => {
 // 真构建：把发现到的那几个入口用真 esbuild 打一遍
 // ---------------------------------------------------------------------------
 
-/**
- * 构建在**临时根**里做，不在真仓库里做。
- *
- * `buildWeb` 的第一件事是 `rm -rf <root>/dist/web` 再全量重打——对着真仓库跑，
- * 等于测试顺手把开发者的构建产物换成一份含临时 provider 的、马上就会过期的产物。
- * 临时根里放的是**`discoverEntries(真仓库)` 真找到的那几个入口文件本身**，
- * 所以走的仍是真发现 + 真 esbuild，只有落盘位置是临时的。
- */
+/** 真实发现的入口在临时根构建，避免覆盖仓库 dist/web。 */
 let buildRoot: string;
 let built: ConsoleAssetManifest;
 const builtDist = (): string => join(buildRoot, 'dist', 'web');
@@ -184,7 +126,6 @@ async function buildDiscovered(keys: Set<string>): Promise<ConsoleAssetManifest>
 // ---------------------------------------------------------------------------
 
 beforeAll(async () => {
-  // 上一次跑崩了可能留下残骸;先清干净,否则基线快照会把它们算进"本来就有的"。
   dropTempProviders();
   webBefore = webFingerprint();
 
@@ -279,7 +220,6 @@ class NewWorld implements World {
   async stop(): Promise<void> {}
 }
 
-// 新增一个 IO
 
 describe('新增一个 IO,src/web/** 零 diff', () => {
   it('第 1 步 · 目录一放好,构建发现自己收进来,asset key 由目录名推导', () => {
@@ -287,7 +227,6 @@ describe('新增一个 IO,src/web/** 零 diff', () => {
     const mine = entries.find((e) => e.key === IO_PROVIDER);
     expect(mine).toBeDefined();
     expect(mine!.entry).toBe(IO_ENTRY);
-    // key 是推导出来的,不是 World 自己指定的——这是服务端把 key 映射回 URL 的安全边界
     expect(mine!.key).toBe(`world:${IO_NAME}`);
     expectWebUntouched();
   });
@@ -332,7 +271,6 @@ describe('新增一个 IO,src/web/** 零 diff', () => {
       expect(p?.availability).toBe('active');
       expect(p?.panels?.map((x) => x.title)).toEqual(['打招呼']);
       expect(p?.badges).toEqual([{ label: '状态', value: '刚装上', tone: 'on' }]);
-      // 构建产物接回来了:前端进这一页时才会去 import 它
       expect(p?.client?.js).toBe(built.providers[IO_PROVIDER]!.js);
     });
     expectWebUntouched();
@@ -357,7 +295,6 @@ describe('新增一个 IO,src/web/** 零 diff', () => {
   });
 
   it('结论 · 整条链路跑完,src/web/** 一个字节都没变', () => {
-    // 前面每一步都顺手验过一次;这条是把它当**结论**单独钉一遍,失败信息里
     // 会直接列出是哪个文件的哈希变了。
     expectWebUntouched();
     expect(webBefore.length).toBeGreaterThan(20); // 快照不是空的(否则上面全是废话)
@@ -366,22 +303,14 @@ describe('新增一个 IO,src/web/** 零 diff', () => {
 
 // 新增一个 Persona
 
-/**
- * 人格侧有**两条接缝**：
- * `Persona.console?()` 出认知绑定的，`ConsoleContribution.consolePages()`
- * 出部署绑定的。两条以同一个 `persona:<bot>` 命名，由 `mergePersonaContributions`
- * 合成一个 provider —— 所以两条都要验，且要验它们合得起来。
- */
+/** Persona.console 与 ConsoleContribution.consolePages 使用同一个 persona:<bot> id，并合并为一页。 */
 describe('新增一个 Persona,src/web/** 零 diff', () => {
-  /** 认知绑定那半:Persona自报。只用得到 `console()`,其余契约不参与。 */
   const cognitiveHalf = (): Persona => {
     const decl: PersonaConsoleDecl = {
       badges: [{ label: '记忆', value: '3 层', tone: 'plain' }],
       panels: [{ id: 'memory', title: '记忆视图' }],
       invoke: async (panel, method) => ({ half: 'core', panel, method }),
     };
-    // 只读 `console()`：`personaPageContribution` 不碰 Persona 的其余方法，
-    // 为一条边界验收造一份完整Persona，反而会把"接控制台要写多少代码"说糊。
     return { console: () => decl } as unknown as Persona;
   };
 
@@ -470,11 +399,6 @@ describe('新增一个 Persona,src/web/** 零 diff', () => {
 // 活体验收件:src/worlds/console-fixture 真的进得了构建
 // ===========================================================================
 
-/**
- * `src/worlds/console-fixture` 存在的意义是"证明新增 IO 不用改框架"，但它先前只被
- * 单测按文件路径 import 过——**没有人验证过它真的能被构建发现、真的能打出产物**。
- * 一个进不了构建的验收件是自欺：它证明的是"这份源码存在"，不是"这条路走得通"。
- */
 describe('活体验收件 · src/worlds/console-fixture 的贯通', () => {
   it('构建按目录约定发现它,key 是 worlds:console-fixture', () => {
     const mine = discoverEntries(REPO).find((e) => e.key === FIXTURE_PROVIDER);
@@ -525,18 +449,7 @@ describe('活体验收件 · src/worlds/console-fixture 的贯通', () => {
 // 前端对结构性坏 manifest 的容忍
 // ===========================================================================
 
-/**
- * 服务端已经挡住这些形状：`validateContributions` 会把声明不合法的 provider
- * **整个丢掉**，坏 manifest 出不了服务端。但"服务端挡住了"不等于"前端定义过拿到
- * 时该怎么办"——manifest 也可能来自旧版本的服务端、来自中间层、或者某天协议加了
- * 字段而校验没跟上。
- *
- * 这一组因此只问一个问题：**坏的那一条会不会把整页带走。** 判据是"框架其余部分
- * 照常"，不是"坏的那条也能渲染"——后者不可能，也不该追求。
- *
- * 三条环境约定与 `tests/web/hardening-console.test.ts` 一致（specifier 存变量、
- * 手写迷你 DOM、不引 jsdom）；迷你 DOM 只实现被测代码真的用到的那几样。
- */
+/** 真实 Host 配合最小 DOM、假 manifest 与 import，验证坏声明不影响其他面板。 */
 
 const HOST_SPEC = '../../src/web/client/console-pages/host.ts';
 const LOADER_SPEC = '../../src/web/client/console-pages/loader.ts';
@@ -722,10 +635,6 @@ describe('前端对结构性坏 manifest 的容忍', () => {
     }
   });
 
-  /**
-   * **本组的核心断言。** 先进坏的那一格（爱怎么坏怎么坏），再进好的那一格，
-   * 好的必须照常挂上。这条要是红，说明一条坏 manifest 能把整个控制台带死。
-   */
   it('进过坏 provider 之后,好 provider 照常挂载(框架没被带死)', async () => {
     for (const [name, bad] of BAD_SHAPES) {
       const stage = badStage(bad);
@@ -764,8 +673,6 @@ describe('前端对结构性坏 manifest 的容忍', () => {
   });
 
   it('可迭代的垃圾也不当数组用:badges 是字符串时不画出一排 undefined', async () => {
-    // `for...of 'nope'` 逐字符跑不会抛,只会画出四颗写着 "undefined undefined"
-    // 的徽标。可迭代的坏值比不可迭代的坏值更难查,所以迭代前先确认真是数组。
     const stage = badStage({ badges: 'nope' as never });
     await stage.host.load();
     expect(await tryShow(stage, 'world:bad')).toBeNull();

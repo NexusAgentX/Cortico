@@ -67,11 +67,11 @@ class FakeDoc {
   }
 }
 
-/** Map 版存储。`fail` 打开后读写都抛，模拟无痕模式。 */
+/** Map 存储；fail 模拟读取和写入被拒绝。 */
 class FakeStorage {
   readonly map = new Map<string, string>();
   fail = false;
-  /** 只让写失败(读得到旧键、搬不过去)。无痕模式两头都失败,那条另有用例。 */
+  /** 仅写入失败，读取仍可用。 */
   failWrite = false;
   getItem(key: string): string | null {
     if (this.fail) throw new Error('无痕');
@@ -108,7 +108,7 @@ class FakeMedia {
 const KEY = storageMod.THEME_STORAGE_KEY as string;
 const LEGACY_KEY = storageMod.LEGACY_THEME_STORAGE_KEY as string;
 
-/** 迁移前 `theme.js` 真正写出来的那种记录（含一条自定义方案）。 */
+/** 兼容的旧主题记录，包含一条自定义方案。 */
 function legacyRecord(): string {
   return JSON.stringify({
     selectedId: 'custom-legacy',
@@ -195,7 +195,7 @@ describe('主题词表', () => {
   it('groupedThemeTokens：按 group 归并且保持词表出现顺序', () => {
     const groups = registry.groupedThemeTokens();
     expect(groups.map((g: Any) => g.group)).toEqual([
-      '纸面层级', '文字与边界', '交互与状态', '终端时间线', '图表系列',
+      '背景层级', '文字与边界', '交互与状态', '终端时间线', '图表系列',
     ]);
     expect(groups.reduce((n: number, g: Any) => n + g.tokens.length, 0)).toBe(registry.THEME_TOKENS.length);
     expect(groups[0].tokens[0].key).toBe('paper');

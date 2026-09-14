@@ -1,9 +1,6 @@
 /**
  * @vitest-environment jsdom
- *
- * 「语言模型」页:左侧次级菜单是 manifest 里 kind 为 `llm` 的 provider,右侧由嵌入的
- * provider 宿主渲染选中模块的面板。这一页不认识任何具体模块,所以夹具里的模块一律
- * 用占位名;判据是"换一份 manifest / 换一条路由,菜单与宿主调用跟不跟得上"。
+ * 使用模拟 DOM 与接口验证页面行为；浏览器源码由变量动态 import 加载，类型由 tsconfig.web.json 检查。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -156,7 +153,7 @@ describe('语言模型页', () => {
     const { ctx, root } = await mk();
     delete ctx.consolePageHost;
     await mountProviders(ctx);
-    expect(root.textContent).toContain('provider 宿主');
+    expect(root.textContent).toContain('语言模型设置不可用');
   });
 
   it('离开页面:宿主卸载,路由监听不再触发', async () => {

@@ -1,11 +1,6 @@
 /**
  * @vitest-environment jsdom
- *
- * 「系统提示词」页。**这一份必须跑在真 DOM 上**——页面核心是一个 CodeMirror 文档,
- * 而整体感(某一块写长了把下面顶下去)恰恰是文档模型给的,拿手写 DOM 桩测不出来:
- * 桩里没有 range、没有测量,块区间映射也就无从验证。
- *
- * 其余用假 DOM 的页面照旧留在 `feature-core.test.ts`。
+ * 使用模拟 DOM 与接口验证页面行为；浏览器源码由变量动态 import 加载，类型由 tsconfig.web.json 检查。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -191,7 +186,6 @@ describe('整条前缀是一份文档', () => {
     (root.querySelector('.prompt-toolbar') as HTMLElement).click();
     expect(root.querySelector('.varpop')).toBe(null);
 
-    // 关键回归:这次关闭不是"点它自己"关的,所以下一次点它应该**重新打开**
     chip.click();
     expect(root.querySelector('.varpop')).toBeTruthy();
 
@@ -271,7 +265,6 @@ describe('按 Ctrl+S 保存', () => {
     const view = viewOf(root);
     view.dispatch({ changes: { from: 0, insert: '新' } }); // 落在 ORIENTATION 块
     await flush();
-    // 关键回归:这一页**不自动保存**。等多久都不该有请求
     expect(calls.filter((c) => c.body !== undefined).length).toBe(0);
 
     ctrlS(root);
@@ -289,17 +282,14 @@ describe('按 Ctrl+S 保存', () => {
     const { ctx, root } = mkCtx();
     await prompts.mountPrompts(ctx);
     await flush();
-    // 提示的字挂在那一行的 data-save-hint 上、由 CSS 伪元素画:它不是文本节点,
-    // 所以划选与复制都带不走它。读断言也就只能读属性。
     const hint = (): string => hintLabel(root);
 
-    expect(hint()).toBe(''); // 还没动过,不提示
+    expect(hint()).toBe('');
 
     const view = viewOf(root);
     view.dispatch({ changes: { from: 0, insert: '新' } });
     await flush();
     expect(hint()).toContain('Ctrl+S');
-    // 提示跟着光标那一行走,而**那一行的文本里没有它**——划过去也复制不到
     const line = root.querySelector('.cm-line[data-save-hint]')!;
     expect(line.textContent).toBe('新定向第一行');
 

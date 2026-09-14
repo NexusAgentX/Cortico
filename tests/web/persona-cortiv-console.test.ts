@@ -1,12 +1,3 @@
-/**
- * 可缇Corti 的人格侧控制面:工作区 / Memory / 版本历史。
- *
- * 钉四件事:
- * 1. `CortiV.console()` 在 Cormini 的 promptDocs/storage 之上加上三块面板与 invoke。
- * 2. 声明与扩展同进同退:三个局部 id 就是浏览器扩展 `panels` 的三个键。
- * 3. 写带 sha256 底本核对;冲突回执不覆盖。
- * 4. Memory 页报的是 viewers/ 与宪法,不是 corti-soulmate 的 MEMORY 0–4。
- */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -38,7 +29,7 @@ describe('CortiV 控制面声明', () => {
     expect(validateContributions([c!])).toEqual([]);
   });
 
-  it('CortiV.console() 保留 Cormini 的 promptDocs 与工作区清除面,并接上 invoke', () => {
+  it('CortiV.console() 保留 promptDocs、排除工作区清除项，并提供 invoke', () => {
     const core = new CortiV({ memoryDir: dir });
     const decl = core.console();
     // 没给 firstTurnDir(部署的 prompts/)就没有首轮对话三份;装配层会给
@@ -105,7 +96,6 @@ describe('工作区 invoke', () => {
   });
 
   it('路径逃逸与绝对路径都拒绝', async () => {
-    // 三份实现合并后拒绝理由里那个词统一成中性的「工作区」(原来 corti-soulmate 说 persona/、CortiV 说 workspace/)
     await expect(invoke('workspace', 'read', ['../secret.md'])).rejects.toThrow('工作区');
     await expect(invoke('workspace', 'write', ['C:\\\\abs.md', 'x', null])).rejects.toThrow();
   });

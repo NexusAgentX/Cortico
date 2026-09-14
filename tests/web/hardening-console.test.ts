@@ -414,13 +414,7 @@ function buttonWithText(root: FakeEl | undefined, text: string): FakeEl | undefi
   return undefined;
 }
 
-/**
- * 把挂起的 microtask 链跑完。
- *
- * 不用定时器（这几组都开着 fake timers），而 `show()` 从 import 到 mount、
- * 再到 `invoke` 的 abort 拒绝穿过好几层 `await`——一两次 `Promise.resolve()`
- * 不够，链条中间的任何一环加一个 await 都会让断言变成薛定谔的。
- */
+/** 在 fake timers 下推进微任务，完成 import、mount 与 abort 的异步链。 */
 async function flush(n = 20): Promise<void> {
   for (let i = 0; i < n; i++) await Promise.resolve();
 }
@@ -489,7 +483,6 @@ describe('provider 独立页面入口', () => {
 const TWO_PANELS: PanelDecl[] = [{ id: 'one', title: '第一格' }, { id: 'two', title: '第二格' }];
 
 // ===========================================================================
-// 9.1 扩展失败隔离
 // ===========================================================================
 
 describe('扩展失败隔离', () => {
@@ -567,7 +560,6 @@ describe('扩展失败隔离', () => {
       const stage = solo(() => mod);
       await stage.host.load();
       await stage.host.show('world:a', 'one');
-      // 空白是最贵的失败：这里断言"槽里确实有东西，且写着为什么"
       expect([name, stage.slot()?.children.length ?? 0]).toEqual([name, 1]);
       expect([name, stage.slotText().includes('default')]).toEqual([name, true]);
       expect([name, stage.slotText().includes('world:a')]).toEqual([name, true]);
@@ -593,7 +585,6 @@ describe('扩展失败隔离', () => {
 
     const txt = stage.slotText();
     expect(txt).toContain('ghost');
-    // 关键：把真相摆出来，别让人去猜是拼错了还是没构建
     expect(txt).toContain('one');
     expect(txt).toContain('two');
   });
@@ -789,7 +780,6 @@ describe('扩展失败隔离', () => {
 });
 
 // ===========================================================================
-// 9.1（续）provider 之间的键空间隔离
 // ===========================================================================
 
 describe('memo 的命名空间隔离', () => {
@@ -815,16 +805,6 @@ describe('memo 的命名空间隔离', () => {
     expect(a2.get('fold:x', '缺省')).toBe('缺省');
   });
 
-  /**
-   * 拼前缀最容易出的错：`pageId + panelId` 直接相接的话，两个 id 互为前缀时
-   * 键空间就会撞车——`world:abc` 的面板 `d` 与 `world:ab` 的面板 `cd` 会落在同一串上。
-   * World 名互为前缀（`world:mine` / `world:minecraft`）完全可能出现，撞了之后的表现是
-   * 两个面板的折叠状态跨 World 互相顶掉，极难查。
-   *
-   * 实现用了一个**不可见的分隔符**（源码里是裸的 0x1F 单元分隔符），而 provider id
-   * 与 panel id 的字符集里都不可能有它，所以撞不上。这条测试同时是那个不可见字节的
-   * 保险：它哪天被某个"清理空白/规范化"的工具吃掉，这里当场红。
-   */
   it('provider id 互为前缀时也不撞车（分隔符必须真的在）', () => {
     const back = backing();
     const one = namespacedMemo(back, 'world:abc', 'd');
@@ -841,7 +821,6 @@ describe('memo 的命名空间隔离', () => {
 });
 
 // ===========================================================================
-// 9.2 生命周期泄漏
 // ===========================================================================
 
 /** "什么都借"的扩展借到手的东西，测试从这里读回来。 */
@@ -861,14 +840,6 @@ interface Greedy {
   rec: Borrowed;
 }
 
-/**
- * 一个把 `ConsolePanelContext` 上每一样都借一遍的扩展。
- *
- * 它不干任何有意义的事——它的全部意义在于：`unmount` 之后这十来样东西必须**一样不剩**。
- * 借的清单刻意与 `client-panel.ts` 顶部那句"离开面板后必须为零"逐项对应：
- * 轮询 / 延时 / RAF / observer / listener / 挂起的 fetch / 音频 / ObjectURL /
- * 流式通道 / 离开拦截 / 浮层。
- */
 function greedyBundle(): Greedy {
   const rec: Borrowed = {
     ticks: 0,
@@ -999,7 +970,6 @@ describe('生命周期泄漏', () => {
     expect(fetches.aborted).toBe(1);
     expect(stage.sockets[0]?.closed).toBe(true);
     expect(stage.guards.size).toBe(0);
-    // 浮层挂在 overlayHost（不是 root），只能靠 signal 收——这条正是它存在的理由
     expect(stage.overlayHost.children).toHaveLength(0);
     // root 被清空，mount 返回的 Disposable 也被调过
     expect(stage.root.children).toHaveLength(0);
@@ -1047,13 +1017,11 @@ describe('生命周期泄漏', () => {
 
     for (let i = 0; i < 10; i++) {
       await stage.host.show('world:a', 'one');
-      // 每一轮都真的跑一会儿，免得"没累积"是因为压根没启动
       vi.advanceTimersByTime(120);
       raf.tick(16 * (i + 1));
       stage.host.unmount();
       await flush();
 
-      // 每一轮结束时都必须是干净的，而不是最后一轮才干净
       expect([i, vi.getTimerCount()]).toEqual([i, 0]);
       expect([i, raf.pending.size]).toEqual([i, 0]);
       expect([i, observers.live]).toEqual([i, 0]);
@@ -1065,20 +1033,17 @@ describe('生命周期泄漏', () => {
       expect([i, stage.overlayHost.children.length]).toEqual([i, 0]);
     }
 
-    // 十轮各借各的：数量对得上，一个都没漏掉释放
     expect([observers.created, audios.created, urls.created]).toEqual([10, 10, 10]);
     expect([fetches.started, fetches.aborted]).toEqual([10, 10]);
     expect(stage.sockets).toHaveLength(10);
     expect(stage.sockets.every((s) => s.closed)).toBe(true);
     expect(rec.returnedDisposed).toBe(10);
-    // bundle 仍然只 import 了一次（缓存住的是扩展，不是它借的东西）
     expect(stage.importModule).toHaveBeenCalledTimes(1);
-    // 十次挂起的 invoke 全部以 AbortError 收场，一条都没漏
     expect(rec.invokeErrors).toHaveLength(10);
     expect(rec.invokeErrors.every((e) => (e as Error).name === 'AbortError')).toBe(true);
   });
 
-  it('mount 里 await 之后才登记资源（"await 回来时面板已经没了"）→ 立即释放，不进死账本', async () => {
+  it('mount 返回前已卸载时，后登记的资源立即释放', async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => { release = r; });
     const late = { entered: false, disposedReturn: 0 };
@@ -1129,7 +1094,6 @@ describe('生命周期泄漏', () => {
     expect(urls.live).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
     expect(raf.pending.size).toBe(0);
-    // mount 返回的 Disposable 也被补了一刀
     expect(late.disposedReturn).toBe(1);
     // 而且这块 DOM 不该被贴回页面（它属于一个已经不存在的面板）
     expect(stage.root.children).toHaveLength(0);
@@ -1263,7 +1227,7 @@ describe('生命周期泄漏', () => {
 
     expect(vi.getTimerCount()).toBe(0);
     expect(raf.pending.size).toBe(0);
-    // 立即释放而不是挂进死账本
+    // 卸载后登记立即释放。
     expect(disposed.n).toBe(1);
     // 浮层静默不显示：面板都没了，弹一个没人认领的窗只会误导
     expect(stage.overlayHost.children).toHaveLength(0);
@@ -1312,7 +1276,6 @@ describe('生命周期泄漏', () => {
   });
 
   it('timeout 触发后自己从账本里摘掉：反复防抖不会攒成无界数组', async () => {
-    // 无界增长只费内存不改行为，正因如此没有别的观测点——只能从"释放次数"看。
     const disposes = { n: 0 };
     const stage = makeStage(
       [{ id: 'world:a', label: 'A World', panels: TWO_PANELS, client: { js: JS('a') } }],
@@ -1344,7 +1307,6 @@ describe('生命周期泄漏', () => {
 });
 
 // ===========================================================================
-// 9.4 懒加载
 // ===========================================================================
 
 describe('懒加载', () => {
@@ -1498,17 +1460,8 @@ describe('懒加载', () => {
 // 归属页：provider 自己声明的参数，画在它自己那一页上
 // ---------------------------------------------------------------------------
 
-/**
- * 参数**不再堆在一张总表里**。归属由 provider 自己报（manifest 的 `configGroups`
- * 只有组 id），框架据此在它那一页上通用渲染——所以 World 不必为一组旋钮写一行浏览器
- * 代码，也不必把自己的参数塞进别人的页面。
- *
- * 这一组问的就是那条线：**画的是不是只有自己认领的那几组**。`/api/config` 是全量的
- * （它一直是），所以"只画自己的"必须由前端按归属过滤——过滤漏了的表现是别人的旋钮
- * 出现在你的页面上，而且改动会照样落盘。
- */
 describe('provider 归属页的参数', () => {
-  /** 全量清单：一组属于 worlds:a，一组是框架的。 */
+  /** 全量清单：一组属于 world:a，一组是框架的。 */
   const CONFIG_PAYLOAD = {
     groups: [
       {
@@ -1601,10 +1554,6 @@ describe('provider 归属页的参数', () => {
   });
 });
 
-/**
- * 参数页整个架在 `/api/config` 上。那个表面没挂的部署里，这颗页签只会通向一张 503
- * 错误卡——把服务端的状态码当界面用。**没挂就不出现**，与外壳处置框架页同一条规矩。
- */
 describe('参数页与 capabilities', () => {
   it('部署没挂 /api/config：页签不出现，直接进 ~config 也只是一张"没有这个面板"的卡', async () => {
     const doc = new FakeDoc();

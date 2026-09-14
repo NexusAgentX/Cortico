@@ -6,8 +6,6 @@
 import type { ConsoleUi } from '../../../shared/client-panel.ts';
 import { consoleFormat } from '../../ui/format.ts';
 import { esc } from '../../ui/dom.ts';
-// 色彩换算的家在主题那一层：一族堆叠柱要从同一个语义色分出深浅，
-// 各自实现一份的话，同一个系列色在两张图上会分出不一样的深浅。
 import { clampNumber, hexToHsl, hslCss } from '../../theme/palette.ts';
 import { U_PALETTE, U_TYPES } from './labels.ts';
 import { S } from './strings.ts';
@@ -73,13 +71,7 @@ function dimKeys(d: UsageAggregate, dim: UsageDim): string[] {
   return dimGroups(d, dim).map((g) => g.key);
 }
 
-/**
- * 键 → 显示名。
- *
- * 角色与模型都是**不透明 id**，显示名只能来自数据本身（`UsageGroupStat.label`）；
- * 给不出就原样显示 id。控制台不认识任何一个具体角色，也就不会因为换了Persona
- * 而显示错的名字。
- */
+/** 显示 UsageGroupStat.label；缺少 label 时显示原 id。 */
 export function dimKeyLabel(d: UsageAggregate, dim: UsageDim, key: string): string {
   if (dim === 'type') return U_TYPES.find((t) => t.key === key)?.label ?? key;
   return groupLabel(dimGroups(d, dim), key);
@@ -90,13 +82,7 @@ function groupLabel(groups: readonly UsageGroupStat[], key: string): string {
   return groups.find((g) => g.key === key)?.label || key;
 }
 
-/**
- * 调色板位次：按**键的字典序**取。
- *
- * 不用数据里的出现序（`byRole` / `byModel` 是按成本降序排的）：那样成本排名一变，
- * 同一个角色的颜色就跟着换位置，两次刷新之间对不上。字典序只取决于键集本身，
- * 同一批键永远落在同一批颜色上。
- */
+/** 按键的字典序分配颜色，使同一键集的颜色不随成本排序变化。 */
 export function paletteSeat(keys: readonly string[], key: string): string {
   const sorted = [...keys].sort();
   const i = sorted.indexOf(key);
@@ -166,10 +152,7 @@ export function compVal(p: UsagePoint, comp: UsageComposite, metric: UsageMetric
   return type ? uTypeVal(acc, type.key as UsageTypeKey, metric) : uMetricVal(acc, metric);
 }
 
-/**
- * 配色：按**最外层维度**分色系（hue），同色系内按位次调明度。
- * 组合因此既唯一又成体系；而且颜色只由嵌套序决定，**排序不改色**。
- */
+/** 最外层维度决定色系，同色系按位次调整明度；排序不改色。 */
 export function compositeColors(
   d: UsageAggregate,
   composites: readonly UsageComposite[],
@@ -313,7 +296,7 @@ export function uTipHtml(
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 
-/** SVG 元素必须走 `createElementNS`；`ui.h` 那条路造出来的是 HTML 元素，画不出图。 */
+/** SVG 元素使用 SVG namespace。 */
 function mkSvgEl(
   doc: Document,
   tag: string,
@@ -346,7 +329,6 @@ export interface ChartOptions {
   sort?: boolean;
 }
 
-/** 版面常数。抽出来只为让下面的算式读起来是算式。 */
 const PAD_L = 52;
 const PAD_B = 46;
 const PAD_T = 12;
@@ -354,13 +336,7 @@ const CHART_H = 248;
 /** 横轴最多印几个刻度标签，超了按 stride 抽稀。 */
 const XLABEL_MAX = 18;
 
-/**
- * 主图（成本 / token）与调用图共用的堆叠柱图。
- *
- * 事件**统一挂在 svg 上**、按 `e.target` 定位当前块：离开图只有 `mouseleave` 这一条
- * 路径，无论鼠标从哪个边缘出去都收得起来。逐段挂 `mouseenter` 的写法在段与段之间的
- * 半像素缝里会漏事件，tooltip 就卡在那儿不走。
- */
+/** 成本、token 与调用次数的堆叠柱图；SVG 统一处理 hover 与离开事件。 */
 export function renderChart(deps: ChartDeps, d: UsageAggregate, opts: ChartOptions): void {
   const { doc, ui, box, legend, tip, color } = deps;
   box.replaceChildren();

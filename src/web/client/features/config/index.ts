@@ -18,12 +18,7 @@ export {
   type ConfigValue,
 } from './view.ts';
 
-/**
- * 被各控制台页认领的组 id。
- *
- * manifest 取不到就当**没人认领**：那样这一页会退回旧行为（全都画在这里），
- * 而不是把一批旋钮藏起来。少一次分页，好过让人找不到自己的参数。
- */
+/** manifest 不可用时返回空认领集合，使运行参数页展示全部配置组。 */
 async function claimedGroupIds(signal: AbortSignal): Promise<Set<string>> {
   try {
     const manifest = await fetchManifest({ signal });
@@ -39,7 +34,7 @@ async function claimedGroupIds(signal: AbortSignal): Promise<Set<string>> {
 
 export async function mountConfig(ctx: FeatureContext, opts: { embedded?: boolean } = {}): Promise<void> {
   const { ui, root } = ctx;
-  const intro = pageIntro(ui, S.pageTitle, S.pageIntro);
+  const intro = pageIntro(ui, S.pageTitle);
 
   const sheet = ui.sheet({
     title: S.sheetTitle,

@@ -31,7 +31,6 @@ const CORTI_BUNDLE_ENTRY = '../../bots/corti-soulmate/console/client.ts';
 // 假件:只实现两条接缝要用到的部分
 // ---------------------------------------------------------------------------
 
-/** 只声明 console() 的假Persona。其余成员用不到,`as` 一次比造一个真核心便宜。 */
 function fakeCore(decl: PersonaConsoleDecl): Persona {
   return { console: () => decl } as unknown as Persona;
 }

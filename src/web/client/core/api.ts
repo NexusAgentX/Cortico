@@ -1,25 +1,8 @@
 /**
- * Typed API Client —— 浏览器端与服务端之间的**唯一**网络出口。
- *
- * 控制台内核与所有页扩展的每一次 HTTP 都必须经过这里。扩展**不该自己
- * `fetch`**：自有数据走 `ctx.invoke`，路径选择与配置写回走 `ctx.pickPath` /
- * `ctx.setConfig`。绕开这些入口会让路由拼法、错误形状、取消语义各写各的，
- * `ConsolePanelContext.signal` 的生命周期保证也随之作废（挂起的请求不会随
- * unmount 停下）。扩展要的能力由 `ctx.invoke / invokeBinary` 提供，
- * 那两样就是本文件的薄封装。
- *
- * 两条约定钉在这里，别的地方不必再重复：
- *
- * 1. **错误归一化。** 服务端的错误一律是 `{ error: string }`（见 `server.ts`）。
- *    非 2xx 时取 `error` 当消息，取不到就退回 `HTTP <status>`；JSON 解析失败也
- *    带上响应片段。统统抛 `ConsoleInvokeError`，调用方只需 catch 一种错。
- * 2. **abort 是例外，原样抛。** `signal` 触发的中止抛原生的
- *    `DOMException/AbortError`，**不**包成 `ConsoleInvokeError`——调用方靠它区分
- *    "面板卸载了，请求被取消"和"请求真失败了，该显示错误卡"。包了就分不出来，
- *    于是每次切换面板都会闪一张假错误。
- *
- * 路径一律由 `panelRoute()` 拼（page id 含冒号，必须 encodeURIComponent），
- * 本文件不手写路由字符串。
+ * 控制台 HTTP 接口；面板通过 ctx.invoke、invokeBinary、pickPath、setConfig 调用。
+ * 请求携带界面语言并接受取消信号；panelRoute 负责 page id 的编码。
+ * 非 2xx 与解析失败抛 ConsoleInvokeError，消息优先使用服务端 error，附带响应片段。
+ * AbortError 原样抛出；空成功响应返回 null，二进制接口返回 Blob。
  */
 
 import {
@@ -52,7 +35,7 @@ export interface RequestOptions {
   keepalive?: boolean;
 }
 
-/** 错误消息里附带的响应片段长度。够定位，又不至于把整页 HTML 灌进 toast。 */
+/** 错误消息附带的响应片段长度上限。 */
 const SNIPPET_MAX = 200;
 
 function snippet(text: string): string {
@@ -60,11 +43,7 @@ function snippet(text: string): string {
   return s.length > SNIPPET_MAX ? `${s.slice(0, SNIPPET_MAX)}…` : s;
 }
 
-/**
- * 是不是 abort。用 `name` 判而不是 `instanceof DOMException`：Node 与浏览器给的
- * 构造器不是同一个，跨 realm 的 `instanceof` 也不可靠，而 `AbortError` 这个名字
- * 是规范定死的。
- */
+/** 按 name 识别 AbortError，兼容跨 realm 异常。 */
 function isAbortError(err: unknown): boolean {
   return (err as { name?: unknown } | null)?.name === 'AbortError';
 }
@@ -90,7 +69,7 @@ async function send(path: string, init: RequestInit, opts?: RequestOptions): Pro
   }
 }
 
-/** 读响应体文本；abort 会在这一步而不是 fetch 那一步抛出，所以同样要放行。 */
+/** 读取响应体也可能抛出 AbortError，原样传递。 */
 async function readText(res: Response): Promise<string> {
   try {
     return await res.text();
@@ -108,19 +87,12 @@ async function throwHttpError(res: Response): Promise<never> {
     const err = parsed?.error;
     if (typeof err === 'string' && err !== '') message = err;
   } catch {
-    // 不是 JSON（网关的 HTML 错误页、代理的纯文本）：把片段带上，否则只剩一个
-    // 光秃秃的状态码，排查时无从下手。
     if (text.trim() !== '') message = S.httpStatus(res.status, snippet(text));
   }
   throw new ConsoleInvokeError(message, res.status);
 }
 
-/**
- * 2xx 的响应体 → JSON。
- *
- * 204 与空 body 返回 `null`（不是所有接口都有返回值），别让 `JSON.parse('')` 炸；
- * 真的解析不动则归一化成 `ConsoleInvokeError`，消息里带响应片段。
- */
+/** 成功响应解析为 JSON；204 或空正文返回 null，解析失败抛 ConsoleInvokeError。 */
 async function readJson<T>(res: Response): Promise<T> {
   if (!res.ok) await throwHttpError(res);
   if (res.status === 204) return null as T;
@@ -163,7 +135,7 @@ export async function post<T>(path: string, body?: unknown, opts?: RequestOption
   return readJson<T>(await send(path, init, opts));
 }
 
-/** 二进制写入。头像裁剪这类浏览器已生成的文件不再绕成体积更大的 base64 JSON。 */
+/** 上传二进制正文。 */
 export async function postBlob<T>(
   path: string,
   body: Blob,

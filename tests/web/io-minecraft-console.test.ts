@@ -59,7 +59,7 @@ describe('Minecraft 的面板声明', () => {
 });
 
 describe('invoke 按局部 id 分派', () => {
-  it('mount 的方法名前缀是哪条链路,分派到既有的那三份控制面', async () => {
+  it('mount 按方法名前缀分派到对应链路', async () => {
     const c = ioPageContribution('minecraft', 'Minecraft', undefined, mc());
     // 客户端那条不碰网络:纯读配置与 versions/ 目录,拿它验分派到位
     const st = await c.invoke!('mount', 'client.state', []) as { username: string };
@@ -115,7 +115,7 @@ describe('invoke 按局部 id 分派', () => {
     await expect(c.invoke!('skin', 'nope', [])).rejects.toThrow('未知面板方法');
   });
 
-  it('旧路由那批 panel id(server/client)仍然认,迁移期两条路打同一批函数', async () => {
+  it('server/client panel id 调用对应控制接口', async () => {
     const c = ioPageContribution('minecraft', 'Minecraft', undefined, mc());
     const viaLane = await c.invoke!('client', 'state', []) as { versionId: string };
     const viaMount = await c.invoke!('mount', 'client.state', []) as { versionId: string };

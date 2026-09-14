@@ -74,8 +74,6 @@ export function table(doc: Document, opts?: ConsoleTableOptions): ConsoleTable {
       return tr;
     },
     clear(empty) {
-      // 逐个摘而不是 `innerHTML = ''`:这个模块里一处 innerHTML 都没有,留一处就等于
-      // 给"顺手拼一行 HTML"开了口子。
       while (body.children.length) body.children[0].remove();
       if (empty == null) return;
       const tr = h(doc, 'tr');
@@ -88,14 +86,7 @@ export function table(doc: Document, opts?: ConsoleTableOptions): ConsoleTable {
   };
 }
 
-/**
- * 键值两列表。**一件东西的属性清单**，与 `table`（数据表）是两种版式：这里没有表头，
- * 左列是字段名（`.kvtable td:first-child` 已经给了它 40% 宽与灰字）。
- *
- * `<tr>` 直接挂在 `<table>` 下、不铺 `<tbody>`：既有前端的 6 处 `kvtable` 都是这么拼的，
- * 而 `.kvtable tr:first-child td { border-top: none }` 那条选择器正好靠这个层级——
- * 中间插一层 tbody，浏览器解析出的结构变了，第一行会多出一道分隔线。
- */
+/** 键值表无表头；tr 直接挂在 table 下。 */
 export function kv(doc: Document, rows: readonly ConsoleKvRow[]): HTMLTableElement {
   const el = h(doc, 'table', 'kvtable');
   for (const row of rows) {
@@ -145,14 +136,7 @@ function fillRatio(value: number, max: number): number {
   return Math.min(1, Math.max(0, value / max));
 }
 
-/**
- * 细占比条。结构是 `.progress > .progresshead(.progresslabel + .progressnum) + .progresstrack > .progressfill`。
- *
- * 宽度走行内 `width: N%` 而不是 `<progress>` 元素：那个原生控件各家浏览器的
- * 内部结构与可样式化程度都不一样，想让它跟这套纸面配色一致得写三份 vendor 伪元素。
- * 两个 div 反倒是最省事、也最可控的那条路，无障碍那份语义由 `role=progressbar`
- * 与三个 `aria-value*` 补齐。
- */
+/** 占比条通过 role=progressbar 与 aria-value* 提供无障碍读数。 */
 export function progress(doc: Document, opts?: ConsoleProgressOptions): ConsoleProgress {
   const o = opts ?? {};
   const cls =

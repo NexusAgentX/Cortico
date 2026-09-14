@@ -1,8 +1,6 @@
 /**
  * @vitest-environment jsdom
- *
- * 「扩展」页:四种状态各画成什么、装卸打哪个端点、装完那一问、重启键跟能力位走。
- * 夹具里的包名一律无意义的占位;这一页不认识任何一个真扩展。
+ * 使用模拟 DOM 与接口验证页面行为；浏览器源码由变量动态 import 加载，类型由 tsconfig.web.json 检查。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

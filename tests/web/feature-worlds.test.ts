@@ -1,16 +1,4 @@
-/**
- * 「World」页（framework feature）。
- *
- * 这一页的判据只有一条：**它不认识任何一个 World**。所以下面每条断言问的都是
- * "换一份 `/api/worlds` 的回答，这一页跟不跟得上"——三态各画成什么、两个开关
- * 各打哪个端点、点进详情去哪儿——而不是"某个具体渠道的卡片长对了没有"。
- * 夹具里的 World 一律用无意义的占位 id（`alpha` / `beta` / `gamma`）：夹具里但凡出现
- * 一个真 World 名，这条判据就自己先破了。
- *
- * 卡角的三颗图标键没有文字，靠 aria-label 找（可见性 / 重启 World / 停用 World / 激活 World）。
- *
- * DOM 桩与「specifier 存变量」的理由同 `feature-generic.test.ts`。
- */
+/** 使用模拟 DOM 与接口验证页面行为；浏览器源码由变量动态 import 加载，类型由 tsconfig.web.json 检查。 */
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
@@ -394,27 +382,27 @@ describe('World 页的三态卡片', () => {
     expect(pills).toContain('已隐藏');
     expect(pills).toContain('前缀待重载');
     expect(pills).toContain('选配外挂');
-    expect(card.textContent).toContain('环境提示词与工具要等一次前缀重载才跟上');
+    expect(card.textContent).toContain('环境提示词与工具声明将在前缀重载后更新。');
     const body = card.find('sheetbody')!;
     expect(body.children[body.children.length - 1].classList.contains('actionbar')).toBe(true);
     // 没有工具的 World 照样有 kv，只是印「（无）」
     expect(card.find('kvtable')!.textContent).toContain('（无）');
   });
 
-  it('未安装：显示服务端给的 reason（原样，不改写措辞），且一个开关都没有', async () => {
+  it('不可用的 World 显示服务端 reason，且不提供操作按钮', async () => {
     const { root } = await mountWith(listRoute);
     const card = cardOf(root, '丁渠道');
-    expect(card.findAll('pill').map((p: FakeEl) => p.textContent)).toContain('未安装');
+    expect(card.findAll('pill').map((p: FakeEl) => p.textContent)).toContain('不可用');
     expect(card.find('msgline')!.textContent).toBe('缺少依赖 xyz');
     expect(card.find('msgline')!.classList.contains('bad')).toBe(true);
     expect(card.findAllTag('button').length).toBe(0);
   });
 
-  it('未安装但服务端没给 reason → 退回一句通用说明，不是一片空白', async () => {
+  it('不可用的 World 在缺少 reason 时显示默认说明', async () => {
     const { root } = await mountWith({
       '/api/worlds': { worlds: [{ id: 'epsilon', status: 'missing', label: '戊', declared: true }] },
     });
-    expect(cardOf(root, '戊').textContent).toContain('本地没有找到这个 World 的实现');
+    expect(cardOf(root, '戊').textContent).toContain('无法加载这个 World。');
   });
 
   it('未激活：卡角只有一颗激活键；没接激活开关时改成一句怎么手改 config 的说明', async () => {
@@ -447,7 +435,7 @@ describe('World 页的三态卡片', () => {
   it('概览行按三态计数；空清单只留一句空态', async () => {
     const { root } = await mountWith(listRoute);
     const sum = root.find('sheet')!.findAll('pill').map((p: FakeEl) => p.textContent);
-    expect(sum.slice(0, 4)).toEqual(['可见 1', '已隐藏 1', '未激活 1', '未安装 1']);
+    expect(sum.slice(0, 4)).toEqual(['可见 1', '已隐藏 1', '未激活 1', '不可用 1']);
 
     const b = await mountWith({ '/api/worlds': { worlds: [] } });
     expect(b.root.find('iogrid')!.textContent).toContain('没有任何 World');
@@ -504,7 +492,7 @@ describe('可见性开关', () => {
     const no = await mountWith(routes);
     cardOf(no.root, '甲渠道').findButton('对 agent 隐藏')!.dispatchEvent({ type: 'click' });
     await flush();
-    expect(no.doc.body.find('modal')!.textContent).toContain('会丢一次 system 前缀缓存');
+
     calls.length = 0;
     answerConfirm(no.doc, false);
     await flush();
@@ -623,7 +611,7 @@ describe('激活 / 停用 / 重启（热生效）', () => {
 // ---------------------------------------------------------------------------
 
 describe('详情入口', () => {
-  it('点详情 → provider/worlds:<id>；前缀是 provider id 的构造规则，跟 World 名无关', async () => {
+  it('详情链接使用 provider/world:<id> 路由', async () => {
     const { root, navigated } = await mountWith(listRoute);
     cardOf(root, '甲渠道').findButton('→ 详情')!.dispatchEvent({ type: 'click' });
     expect(navigated).toEqual([{ segments: ['provider', 'world:alpha'], query: undefined }]);

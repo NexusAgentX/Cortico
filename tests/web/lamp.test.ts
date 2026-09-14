@@ -1,17 +1,4 @@
-/**
- * 状态灯：画法与取数（`src/web/client/ui/lamp.ts`）。
- *
- * 一个 World 一排灯（一条链路一颗），而排灯是导航行上唯一的状态载体，所以两件事
- * 都得钉死：
- *
- * 1. **四态各自的颜色与措辞、以及链路名在悬停说明里的位置**——三处渲染共用这一份，
- *    错一处就会出现"左栏红的那个，进去看是黄的"。一排同样大小的点里，颜色说得清
- *    严重程度，说不清是哪条链路，所以 `label` 必须在 title 的最前面。
- * 2. **取数只有一条**——两个各自计时的轮询会让同一颗灯在两处差半拍，还把请求翻倍。
- *    这里咬住"多个订阅者共用一个定时器""最后一个走掉就停""上一拍没回不叠发"。
- *
- * DOM 桩与「specifier 存变量」的理由同 `tests/web/client-ui.test.ts`。
- */
+/** 验证状态灯的颜色、标签与共享轮询：多个订阅者共用定时器，请求不重叠，最后退订后停止。DOM 与动态 import 方式见 client-ui.test.ts。 */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -85,7 +72,6 @@ describe('灯的画法', () => {
     ]);
     expect(row.children.map((d: FakeEl) => d.className))
       .toEqual(['navdot on', 'navdot bad', 'navdot']);
-    // 链路名在最前面:颜色说得清多严重,说不清是哪一条
     expect(row.children[1].title).toBe('乙 故障 · 连不上');
     expect(row.children[1].getAttribute('aria-label')).toBe('乙 故障 · 连不上');
   });

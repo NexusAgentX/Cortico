@@ -14,24 +14,13 @@ import type {
 } from '../../shared/client-panel.ts';
 import { h } from './dom.ts';
 
-/**
- * 标题行 `<h3>标题 <span class="en">英文</span></h3>`。
- * 用 DOM 拼而不是 `innerHTML`：省掉一次转义，也就少一个注入口子。
- */
 function heading(doc: Document, title: string, en?: string): HTMLHeadingElement {
   const head = h(doc, 'h3', null, title);
   if (en) head.appendChild(h(doc, 'span', 'en', en));
   return head;
 }
 
-/**
- * 说明行 `.sh-desc`。**只有传了 `desc` 才建节点**：空的 `.sh-desc` 照样占
- * `margin-bottom: 14px`，白留一道空档比没有更难看。
- *
- * 位置是 `body` 的第一个孩子——两种卡上都命中既有选择器：不折叠的卡靠
- * `.sheet .sh-desc`（后代），折叠卡靠 `details.sheet.fold > .foldbody > .sh-desc`
- * （直接子代，所以只能挂在 `body` 上，不能再包一层）。
- */
+/** 有 desc 时将说明行作为 body 的首个子节点，以匹配折叠卡选择器。 */
 function descLine(doc: Document, body: HTMLElement, text?: string): HTMLElement | null {
   if (!text) return null;
   const el = h(doc, 'div', 'sh-desc', text);
@@ -52,10 +41,7 @@ export function sheet(doc: Document, opts: ConsoleSheetOptions): ConsoleSheet {
   return { el, body, note, desc: descLine(doc, body, opts.desc) };
 }
 
-/**
- * 可折叠档案卡。展开状态经 `memo` 存取（**不碰 `localStorage`**——那样就绕过了
- * panel 的命名空间隔离，两个 provider 用同一个 id 会互相顶掉）。
- */
+/** 折叠状态通过面板 memo 存取，键由面板命名空间隔离。 */
 export function foldSheet(
   doc: Document,
   memo: ConsoleMemo,

@@ -2,7 +2,7 @@
 
 # 控制台
 
-每份部署运行一个本机 Web 控制台:`http://127.0.0.1:<web.port>/`,端口被占时顺延(最多五次)。
+每份部署运行一个本机 Web 控制台:`http://127.0.0.1:<web.port>/`,端口被占时顺延,含配置端口最多尝试五个端口。
 服务仅绑定 `127.0.0.1`,拒绝跨站 Origin 的 WebSocket 升级请求。
 
 ## 页
@@ -34,7 +34,7 @@ World、Persona 与 provider 各自贡献自己的页,页 id `world:<id>` / `per
 数据接口)、`stream`(面板的推送通道)。World 通过 `World.console()` 声明,Persona 通过
 `Persona.console()` 声明。
 
-有面板就要有面板 bundle:`src/worlds/<id>/console/client.ts`(Persona 是
+自定义面板需要客户端 bundle,内建面板由框架提供。`src/worlds/<id>/console/client.ts`(Persona 是
 `bots/<名>/console/client.ts`)默认导出 `{ panels: { <id>: { mount(ctx) } } }`,
 `pnpm build:web` 自动发现并打包;扩展包自己 build,manifest 里声明产物路径。
 
@@ -57,7 +57,7 @@ World、Persona 与 provider 各自贡献自己的页,页 id `world:<id>` / `per
 ## 语言
 
 界面语言由浏览器选择,支持 `zh` / `en`。默认值在进程启动时读取:`config.json` 的 `language` >
-`CORTICO_LANGUAGE` > 系统区域(非中文即英文),写进 `<html lang>`。设置 → 通用的「简体中文 /
+`CORTICO_LANGUAGE` > 系统区域(中文区域使用中文,其他区域使用英文;区域不可用时回退到中文),写进 `<html lang>`。设置 → 通用的「简体中文 /
 English」把选择存在当前浏览器里,刷新页面生效,不重启 bot。
 
 之后每个请求自带语言(HTTP 头 `x-cortico-language`,WebSocket 握手查询串 `language`),服务端给

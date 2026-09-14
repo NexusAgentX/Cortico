@@ -87,13 +87,6 @@ interface CardEntry {
   haystack: string;
 }
 
-/**
- * 一张工具卡。
- *
- * 用 `ui.h` 拼 `.tool-schema-*` 那一套既有 class,而不是 `ui.foldSheet`:折叠是同一件事,
- * 但这张卡的收起态要在一行里同时印工具名、一句说明与参数个数(`.tool-schema-summary`
- * 是个三列 grid),`foldSheet` 的收起态只有一行 `note`。复用既有字面,不新增皮。
- */
 function toolSchemaCard(ui: ConsoleUi, schema: ToolSchemaDoc): CardEntry {
   const card = ui.h('details', 'tool-schema-card');
   const summary = ui.h('summary', 'tool-schema-summary');

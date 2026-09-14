@@ -514,8 +514,6 @@ describe('标签与配色', () => {
     expect(c.paletteSeat(keys, 'ghost')).toBe('chart-1');
   });
 
-  // `hexToHsl` 的家在主题层（`theme/palette.ts`）：一族堆叠柱要从同一个语义色分深浅，
-  // 图表这边只是它的使用者。这里仍然直测一遍——柱图的配色分级全靠它。
   it('hexToHsl：三位简写展开，灰色的饱和度是 0', async () => {
     const c = (await import(PALETTE)) as Any;
     expect(c.hexToHsl('#ffffff')).toEqual({ h: 0, s: 0, l: 100 });
@@ -819,7 +817,6 @@ describe('用量页挂载', () => {
     const { mountUsage } = (await import(USAGE)) as Any;
     mountUsage(ctx);
     await flush();
-    // 一张卡都不画:一排 0 读起来像数据坏了
     expect(root.findAll('stat').length).toBe(0);
     expect(root.find('usagecards')!.findAll('placeholder').length).toBe(1);
     expect(root.findAllTag('svg').length).toBe(0);

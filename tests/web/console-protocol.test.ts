@@ -1,13 +1,4 @@
-/**
- * Console Provider Protocol 的契约测试(计划书 Stage 1.7)。
- *
- * 这份协议是控制台的边界权威,所以测试钉的不是"函数能跑",而是三条边界:
- *
- * 1. **命名空间**:provider id 带 kind 前缀提供 namespace,panel id 只在 provider 内唯一。
- * 2. **Asset 安全**:provider 永远给不出路径,只有 key;出网前还有一道 URL 闸。
- * 3. **降维口子**:`toPageManifest` 是声明侧到线上侧的唯一投影,可执行的与带本地
- *    路径的东西必须在这里被挡下。
- */
+/** 验证 world、llm、persona 页命名空间、资源 URL 限制与 manifest 公开字段；面板 id 仅页内唯一。 */
 import { describe, it, expect } from 'vitest';
 import {
   CONSOLE_ASSET_PREFIX,
@@ -27,10 +18,7 @@ import {
   type ConsolePageContribution,
 } from '../../src/web/shared/console-protocol.ts';
 
-/**
- * `client-panel.ts` 用的是 DOM 类型,根 tsconfig 拿 Node 的 lib 去 check 它会炸,
- * 所以这里走"规格不可静态解析"的动态 import:运行期照常加载,tsc 不把它拉进文件表。
- */
+/** 变量动态 import 避免根 tsconfig 纳入 DOM 类型；浏览器契约由 tsconfig.web.json 检查。 */
 type ClientBundleModule = {
   toDisposable(cleanup: () => void): { dispose(): void };
   isConsoleClientBundle(v: unknown): boolean;
@@ -42,7 +30,7 @@ const loadClientBundle = async (): Promise<ClientBundleModule> =>
 // ---------------------------------------------------------------------------
 
 describe('ID 命名空间', () => {
-  it('provider id 形如 worlds:qq / persona:corti,拆解出 kind 与 name', () => {
+  it('page id 拆解为 kind 与 name', () => {
     expect(parsePageId('world:qq')).toEqual({ kind: 'world', name: 'qq' });
     expect(parsePageId('persona:corti')).toEqual({ kind: 'persona', name: 'corti' });
     expect(parsePageId('world:a')).toEqual({ kind: 'world', name: 'a' });
@@ -93,7 +81,7 @@ describe('ID 命名空间', () => {
     expect(isPanelId('a')).toBe(true);
   });
 
-  it('旧式全局 id 在新规则下只是个普通局部名,不再有特殊含义', () => {
+  it('含连字符的 panel id 按普通局部名处理', () => {
     // qq-gate 是 provider 内的局部面板 id，连字符不触发命名空间特例。
     expect(isPanelId('qq-gate')).toBe(true);
     expect(isPanelId('vtuber-align')).toBe(true);
@@ -138,7 +126,7 @@ describe('Asset 安全模型', () => {
     expect(assetKeyForPage('')).toBe('');
   });
 
-  it('前缀常量就是唯一合法起点', () => {
+  it('资源路径必须使用规定前缀', () => {
     expect(CONSOLE_ASSET_PREFIX).toBe('/assets/');
   });
 
@@ -218,8 +206,6 @@ describe('Asset 安全模型', () => {
     expect(isSafeAssetUrl('/assets/')).toBe(false);
   });
 
-  // 白名单字符集的回归测试。先前的实现是黑名单,只挡字面 `..`,以下全部放行过。
-  // 黑名单天然漏,所以这组用例存在的意义是钉住"字符集必须是白名单"这个决定。
   it('拦:百分号编码的 .. 回溯', () => {
     expect(isSafeAssetUrl('/assets/%2e%2e/%2e%2e/etc/passwd')).toBe(false);
   });
@@ -254,8 +240,6 @@ describe('Asset 安全模型', () => {
 });
 
 describe('链接 href 闸门', () => {
-  // asset 那条路堵得很干净,links.href 是同一类"provider 给路径"的口子——
-  // 而 href 常常来自 World 配置(用户填的地址),不是纯代码常量。
   it('放行:http / https 外链', () => {
     expect(isSafeLinkHref('http://127.0.0.1:8080/panel')).toBe(true);
     expect(isSafeLinkHref('https://example.org/x')).toBe(true);
@@ -283,9 +267,6 @@ describe('链接 href 闸门', () => {
     expect(isSafeLinkHref('//evil/x')).toBe(false);
   });
 
-  // 判据是"会不会在控制台自己的源里执行脚本",不是"看着眼生就拦"。
-  // 这些协议浏览器不执行,而是交给操作系统去拉起本地程序——风险跑到浏览器外面,
-  // 由部署环境自己管。
   it('放行:自定义应用协议(交给操作系统,不在控制台里执行)', () => {
     expect(isSafeLinkHref('vscode://file/c:/x')).toBe(true);
     expect(isSafeLinkHref('obs://x')).toBe(true);
@@ -422,8 +403,7 @@ describe('validateContributions', () => {
 
 // ---------------------------------------------------------------------------
 
-describe('toPageManifest 降维口子', () => {
-  /** 字段填满的声明侧贡献:凡是"可执行的"或"带本地路径的"都塞进来当靶子。 */
+describe('toPageManifest 序列化公开字段', () => {
   const full = (): ConsolePageContribution => ({
     id: 'world:alpha',
     kind: 'world',
@@ -477,7 +457,6 @@ describe('toPageManifest 降维口子', () => {
     const m = toPageManifest(full());
     expect(m.configGroups).toEqual(['alpha']);
     const text = JSON.stringify(m);
-    // 归属够决定"这组旋钮画在哪一页"了;声明本身没有一个字上线
     expect(text).not.toContain('阿尔法旋钮');
     expect(text).not.toContain('alpha.speed');
     expect(text).not.toContain('properties');
@@ -548,11 +527,7 @@ describe('toPageManifest 降维口子', () => {
 
 // ---------------------------------------------------------------------------
 
-/**
- * 内置面板名是**内核里的一个键**,前端拿它去查自带的那张表。写歪的名字只会指向
- * 一块不存在的实现,所以在投影这一层就把那块面板丢掉——与不安全 href 同一条惯例:
- * 一处写错不该让整页下线。
- */
+/** 非法 builtin 名仅过滤对应面板，其余声明保留。 */
 describe('内置面板声明', () => {
   const withBuiltin = (builtin: unknown) =>
     toPageManifest(provider({

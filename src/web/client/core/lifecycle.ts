@@ -7,15 +7,12 @@ import { toDisposable, type Disposable } from '../../shared/client-panel.ts';
 
 export class Lifecycle {
   private readonly controller = new AbortController();
-  /** 后进先出：后借的先还，跟资源之间的依赖方向一致。 */
+  /** 按后进先出顺序释放资源。 */
   private readonly owned: Disposable[] = [];
   private closed = false;
   private readonly onError: (err: unknown) => void;
 
-  /**
-   * `onError` 收 dispose 过程中抛出的错误。**一个资源释放失败不能挡住其余的**——
-   * 那正是"清理代码里再泄漏一次"的经典形状。
-   */
+  /** onError 接收释放错误；单项失败不阻止后续释放。 */
   constructor(onError: (err: unknown) => void = () => {}) {
     this.onError = onError;
   }
@@ -29,12 +26,7 @@ export class Lifecycle {
     return this.closed;
   }
 
-  /**
-   * 登记一个资源。
-   *
-   * **已经 dispose 之后再登记的，立即释放并原样返回**：异步 mount 里很容易出现
-   * "await 回来时面板已经没了"，那时候把资源默默挂进一个死账本就是纯泄漏。
-   */
+  /** 登记资源；已 dispose 时立即释放并原样返回。 */
   own<T extends Disposable>(d: T): T {
     if (this.closed) {
       this.safely(() => d.dispose());
@@ -62,12 +54,7 @@ export class Lifecycle {
     return this.own(toDisposable(() => clearInterval(id)));
   }
 
-  /**
-   * 一次性延时。dispose 时自动取消。
-   *
-   * 触发后**把自己从账本里摘掉**：长驻面板反复调 `timeout` 的话，不摘就是一条
-   * 无界增长的空闭包数组——只费内存不改行为，但正是"泄漏"这个词的意思。
-   */
+  /** 一次性延时；触发后移除登记，dispose 时取消。 */
   timeout(fn: () => void, ms: number): Disposable {
     if (this.closed) return toDisposable(() => {});
     let handle: Disposable | undefined;
@@ -112,9 +99,7 @@ export class Lifecycle {
         stopped = true;
         return;
       }
-      // 回调里把整个 Lifecycle dispose 掉是合法写法(面板自己决定收工)。此时
-      // `raf` 还指着**正在跑的这一帧**,cancel 它等于没 cancel;不在这儿早退的话
-      // 下面又会挂一帧,而且没人取消得了它。
+      // 回调可能已 dispose 当前生命周期，此时不再安排下一帧。
       if (stopped) return;
       raf = requestAnimationFrame(step);
     };
@@ -125,13 +110,7 @@ export class Lifecycle {
     }));
   }
 
-  /**
-   * 释放全部。**幂等**，重复调用无副作用。
-   *
-   * 顺序是 abort 在前：先让所有认识 signal 的东西（挂起的 fetch、监听）自己收手，
-   * 再逐个 dispose 那些不认识的。反过来的话，dispose 期间可能又触发一次
-   * 已被释放资源上的回调。
-   */
+  /** 幂等释放：先 abort 取消请求与监听，再按后进先出顺序 dispose。 */
   dispose(): void {
     if (this.closed) return;
     this.closed = true;

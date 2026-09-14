@@ -85,12 +85,7 @@ export interface ConsolePanelContext {
   /** 轮询。返回的 `Disposable` 已登记，unmount 自动停；提前停就手动 `dispose()`。 */
   interval(fn: () => void, ms: number): Disposable;
 
-  /**
-   * 一次性延时（防抖、合流、"过一会儿再问一次"）。unmount 自动取消。
-   *
-   * 触发后**自己从账本里摘掉**，所以逐次击键的防抖可以放心地一直建——不会攒成
-   * 一条无界增长的死记录。没有它的时候，扩展只能拿常驻 `interval` + 脏标顶替。
-   */
+  /** 一次性延时，触发后移除登记；unmount 自动取消。 */
   timeout(fn: () => void, ms: number): Disposable;
 
   /** RAF 循环。`fn` 返回 `false` 即自行结束；unmount 自动停。 */
@@ -102,11 +97,7 @@ export interface ConsolePanelContext {
    */
   own<T extends Disposable>(d: T): T;
 
-  /**
-   * 面板局部持久化（折叠状态、上次选中的标签这类）。
-   * 键自动按 `page:panel` 命名空间隔离，两页用同一个键不会打架。
-   * 无痕模式下静默降级为内存，不抛错。
-   */
+  /** 面板局部存储，按 page:panel 隔离键。浏览器存储不可用时退回内存，不抛错。 */
   readonly memo: ConsoleMemo;
 
   /**
@@ -124,7 +115,7 @@ export interface ConsolePanelContext {
   refresh(): Promise<void>;
 }
 
-/** `invoke` 的失败。带上 HTTP 状态与服务端给的中文措辞。 */
+/** invoke 失败，携带 HTTP 状态与服务端按界面语言提供的消息。 */
 export class ConsoleInvokeError extends Error {
   readonly status: number;
   constructor(message: string, status: number) {
@@ -173,7 +164,7 @@ export interface ConsoleUi {
   /** HTML 转义。拼 innerHTML 的场合用。 */
   esc(s: unknown): string;
 
-  /** 档案卡（`div.sheet.tabbed`）。控制台的基本视觉单元。 */
+  /** 档案卡。 */
   sheet(opts: ConsoleSheetOptions): ConsoleSheet;
 
   /**
@@ -182,13 +173,13 @@ export interface ConsoleUi {
    */
   foldSheet(id: string, opts: ConsoleSheetOptions & { defaultOpen?: boolean }): ConsoleSheet;
 
-  /** 一行按钮/状态条（`.rowbar`）。塞一个 `h('span','grow')` 可把后面的推到右边。 */
+  /** 按钮与状态行。 */
   rowbar(): HTMLDivElement;
 
-  /** 卡片内分区标题（`.sectionhead`）。用于区分同一卡片里的独立配置组。 */
+  /** 卡片分区标题。 */
   section(title: string, description?: string): HTMLDivElement;
 
-  /** 卡片内动作脚栏（`.rowbar.actionbar`）。状态靠左，提交类动作靠右。 */
+  /** 卡片动作行。 */
   actions(): HTMLDivElement;
 
   /** 按钮（`.btn` / `.btn.sm` / `.btn.primary` / `.btn.danger`）。 */
@@ -198,43 +189,19 @@ export interface ConsoleUi {
     onClick?: (ev: MouseEvent) => void;
   }): HTMLButtonElement;
 
-  /**
-   * 复制按钮（就是一颗 `.btn`，只是点下去把一段文本送进剪贴板并弹一条 toast）。
-   *
-   * 三件事写在通用层，是因为它们每一处手写都会漏掉其中一件：
-   *
-   * 1. **文本允许惰性求值**。给函数就是点的时候才算——面板上那串值常常是活的
-   *    （某个实时坐标、某次调用的最新回执），渲染时抓下来的快照到手就过期了。
-   * 2. **降级**。`navigator.clipboard` 只在安全上下文里有；没有就退回
-   *    `document.execCommand('copy')`。
-   * 3. **失败要出声**。两条路都不通时弹 `bad` toast **并把文本摊进 `drawer`**
-   *    让用户自己选取——静默失败的复制按钮比没有更糟：用户以为复制成功了，
-   *    粘出来的是上一次的剪贴板内容。
-   */
+  /** 点击时读取函数形式的文本。Clipboard API 失败后尝试 execCommand；均失败则显示错误和含原文的抽屉。 */
   copyButton(text: string | (() => string), opts?: ConsoleCopyOptions): HTMLButtonElement;
 
-  /**
-   * 药丸（`.pill` / `.pill.on` / `.pill.off`）。开关状态、"已连接/未连接"这类**二元
-   * 状态标**用它；`plain` 是不着色的中性态。与 host 渲染在导航上的 `ConsoleBadge`
-   * 同一套 tone，所以扩展把 badge 原样画进卡里时颜色是一致的。
-   */
+  /** 状态标签；on、off 分别使用启用和关闭色，plain 使用中性色。 */
   pill(text: string, tone?: ConsoleBadge['tone']): HTMLSpanElement;
 
-  /**
-   * 筹码（`.chip` / `.chip.warnc` / `.chip.dreamc`）。等宽小字的**读数**用它
-   * （"事件 128"、"缓存 1.5K"），与 `pill` 的分工是：pill 表状态，chip 表数字。
-   * 要把数值加粗就往回填一个 `<b>`：`c.appendChild(ui.h('b', null, v))`（`.chip b` 已有样式）。
-   */
+  /** 读数标签，支持中性、警示与强调色；可追加节点突出数值。 */
   chip(text: string, tone?: ConsoleChipTone): HTMLSpanElement;
 
   /** 一行消息（保存结果、错误）。`bad` 走警示配色（`.msgline` / `.msgline.bad`）。 */
   msgline(text?: string, bad?: boolean): HTMLDivElement;
 
-  /**
-   * 空态（`.placeholder`）。"还没有数据"、"接口不可用"、"需要先开启 X" 都用它，
-   * **别用 `msgline` 冒充空态**：那个是操作回执，居左小字，摆在一片空白里不像话。
-   * 也可以直接当 `<td>` 的内容用（既有前端就是这么铺空表格的）。
-   */
+  /** 空态说明节点，可作为表格单元格内容。 */
   placeholder(text: string): HTMLDivElement;
 
   /**
@@ -261,66 +228,22 @@ export interface ConsoleUi {
    */
   checkbox(label: string, opts?: ConsoleCheckboxOptions): ConsoleCheckbox;
 
-  /**
-   * 字段标签 + 控件（`label.fieldrow > span.fieldlabel` + 控件）。
-   *
-   * **为什么是包装函数而不是给 `ConsoleFieldOptions` 加 `label?`**：三个输入原语返回的是
-   * 控件本身（`input` / `select` / `textarea`），一旦带上标签，返回值就得改成包装节点
-   * ——那样调用方拿不到控件、读不了 `.value`；或者返回控件而把包装藏起来，那调用方
-   * 又 append 不了。包装函数两头都不牺牲，而且能包非输入控件（`checkbox` 组、
-   * `segmented`、一排按钮），标签这件事本来就不是输入框独有的。
-   *
-   * 用 `<label>` 而不是 `<div>`：控件嵌在 label 里，点标签即聚焦控件，不必配 `for`/`id`
-   * （扩展也就不必发明一套全局唯一的 id）。
-   */
+  /** 将标签与任意控件包在 label 中；返回包装节点，控件句柄由调用方保留。 */
   field(label: string, control: HTMLElement): HTMLLabelElement;
 
-  /**
-   * 分段选择器（`.segwrap > button.seg`，选中的那颗加 `.active`）。
-   *
-   * 与 `select` 的分工：挡位少（2–5 个）且值得一眼全看见时用 `segmented`，
-   * 挡位多或会变长时用 `select`。与 `button` 的分工：一排 `variant: 'primary'` 的按钮
-   * 能凑出同样的效果，但那是**把选中态编码进了配色**，切换时得自己逐颗重刷 class；
-   * 这里 `setValue` 一句话搞定，且点已经选中的那颗不会白白回调一次。
-   */
+  /** 分段选择器；点击已选项和 setValue 均不触发用户回调，重复 value 的选项一同更新。 */
   segmented(
     items: readonly (string | { value: string; label?: string })[],
     opts?: ConsoleSegmentedOptions,
   ): ConsoleSegmented;
 
-  /**
-   * 数据表（`div.tablewrap > table.data`，表头 sticky）。
-   * 返回的是**句柄**而不是干节点：表格几乎总要随流刷新，`clear()` / `addRow()`
-   * 就是那条刷新路径，省得扩展自己拼 `innerHTML`（那正是注入与转义出事的地方）。
-   */
+  /** 数据表返回节点及 clear/addRow 句柄；可选表头保持置顶。 */
   table(opts?: ConsoleTableOptions): ConsoleTable;
 
-  /**
-   * 键值两列表（`table.kvtable`：首列窄灰小字，次列等宽）。
-   *
-   * 与 `table` 的分工是**版式**而不是数据量：`table` 是数据表（有表头、可滚、每列同一种
-   * 东西），`kv` 是**一件东西的属性清单**（"状态：已连接 / 端口：8848"），没有表头，
-   * 左列是字段名。拿 `table()` 铺属性清单会得到一张没有表头的数据表——列宽平分、
-   * 字段名跟值一样重，读起来找不着重点。
-   *
-   * 值给节点就直接放（`pill`、按钮、链接）。值格是等宽字体且只 `break-word`，
-   * 要放带换行的大段正文，用 `table` 的 `.txt` 格。
-   */
+  /** 无表头的键值表，节点值直接挂入。值格使用等宽字体；需要保留换行时使用 table 的 txt 单元格。 */
   kv(rows: readonly ConsoleKvRow[]): HTMLTableElement;
 
-  /**
-   * 滚动日志（`.logview` 里一串 `.logline`）。带上限、带**尾部粘滞**。
-   *
-   * 与 `table` 的分工是**时间轴 vs 记录集**：`table` 是一份可以整份重画的当前状态
-   * （`clear()` + 重新 `addRow`），行与行之间没有先后可言；`log` 是只往末尾长的
-   * 事件流，旧行只会被上限挤掉、不会被重画。拿 `table` 接流的写法迟早会退化成
-   * "每来一帧整表重建"，那既刷掉了用户的选中，也把滚动位置弹回顶上。
-   *
-   * **尾部粘滞**是这个原语真正的理由：贴着底就跟着新行走，用户一往上翻就停住、
-   * 翻回底部再恢复。每个接流的面板都会自己写一遍这段，也都会以同一种方式写错
-   * （无条件 `scrollTop = scrollHeight`，于是用户永远读不完一段往上翻的历史）。
-   * 判定本身导出为纯函数 `shouldStick`，因为它是这里唯一容易算错的一步。
-   */
+  /** 追加式日志，有行数上限。贴底时随新增行滚动，上翻后暂停，返回底部后恢复。 */
   log(opts?: ConsoleLogOptions): ConsoleLog;
 
   /** 概览读数（`.stat`，内含 `.k` 小标题与 `.v` 大数字；`accent` 上强调色）。 */
@@ -329,17 +252,7 @@ export interface ConsoleUi {
   /** 读数网格（`.statgrid`，自适应列宽）。把一组 `stat` 排进去。 */
   statgrid(items?: readonly ConsoleStat[]): HTMLDivElement;
 
-  /**
-   * 细占比条（`.progress` = `.progresshead` 读数行 + `.progresstrack > .progressfill`）。
-   *
-   * 与 `chip` 的分工：`chip` 印的是**一个数**（"事件 128"），`progress` 印的是
-   * **这个数占多少**（"128 / 500"）。两者都表达不了对方——把占比写成一枚 chip，
-   * 用户得先在脑子里做除法；把绝对数值画成条，条满了也不知道满的是多少。
-   * 与 `stat` 的分工同理：`stat` 是一屏概览里的大数字，`progress` 贴着某件正在
-   * 推进的事，通常就摆在触发它的那一行按钮下面。
-   *
-   * `format` 不给就印百分比；给了可以印成 `3 / 12` 这类分数读法。
-   */
+  /** 占比条；默认显示百分比，可用 format 定义读数文本。 */
   progress(opts?: ConsoleProgressOptions): ConsoleProgress;
 
   /**
@@ -349,39 +262,13 @@ export interface ConsoleUi {
    */
   toast(text: string, tone?: 'ok' | 'bad'): Disposable;
 
-  /**
-   * 模态确认（`.modal` 遮罩 + `.modalcard`）。`danger` 时按钮换成危险配色、
-   * 文案换成"仍要继续"——确认键上写着后果，比通用的"确认"更难误按。
-   *
-   * **面板 unmount 时 resolve `false`**：调用方 `await` 之后的代码照常往下走，
-   * 只是走的是"用户没答应"这一支。
-   */
+  /** 模态确认；danger 使用危险配色与继续文案。取消或面板 unmount 时返回 false。 */
   confirm(opts: { title: string; body?: string; danger?: boolean }): Promise<boolean>;
 
-  /**
-   * 抽屉（`.modalcard`，Esc / 点遮罩 / 关闭键都能收）。
-   *
-   * 第二参给**字符串**就是老样子：铺进 `pre.mono`，看原始 JSON / 一段日志用。
-   * 给**节点**则原样放进 `.modalbody`——一张放大的图、一份 `log`、一张 `table`
-   * 都可以，抽屉不必知道里面是什么。
-   *
-   * 放宽入参而不是另开一个 `imageViewer` / `logViewer`：那些"看一眼大的"的需求
-   * 彼此只差内容节点，各自发明一个原语等于把同一层浮层的生命周期与关闭语义
-   * 复制三遍——而生命周期正是浮层唯一难的地方。
-   */
+  /** 抽屉响应 Esc、遮罩和关闭按钮。字符串放入 pre.mono，节点放入 modalbody；面板卸载时关闭。 */
   drawer(title: string, body: string | HTMLElement): Disposable;
 
-  /**
-   * 忙碌浮层（`.modal.busy` 遮罩 + `.modalcard`）。**不可关闭**：不听 Esc、不听点遮罩、
-   * 没有关闭键，只能靠返回的 `Disposable` 撤下。
-   *
-   * 与 `drawer` 的分工正在于此。等重启这类场景要的是"这段时间别动"，而 `drawer`
-   * 一按 Esc 就开了——用户以为操作取消了，其实进程照样在重启。反过来，看日志用 `busy`
-   * 就成了绑架：那里本来就该随时能关。
-   *
-   * 同样受面板 `signal` 约束：面板卸载时自动撤，不会留一层永远盖着页面的遮罩。
-   * abort 之后再调则静默不显示，仍给回一个可安全 `dispose()` 的空句柄。
-   */
+  /** busy 只能由 Disposable 或面板 abort 关闭，不响应用户关闭操作。abort 后不显示，并返回可释放的空句柄。 */
   busy(title: string, text?: string): Disposable;
 
   /**
@@ -412,31 +299,10 @@ export interface ConsoleSheet {
   desc: HTMLElement | null;
 }
 
-/**
- * `.chip` 的三种配色，对应既有样式表里的 `.chip` / `.chip.warnc` / `.chip.dreamc`。
- *
- * tone 按**角色**命名而不按用途命名：这是跨页通用的词表，一旦写进某个 bot
- * 的功能名（"这是给某某模式用的紫色"），别的页想用同一个配色就得先接受一个
- * 与它无关的概念。`accent` = 需要跳出来但不是警示的第三色。
- */
+/** chip 的中性、警示与强调配色。 */
 export type ConsoleChipTone = 'plain' | 'warn' | 'accent';
 
-/**
- * `input.field` / `select.field` / `textarea.field` 共通的选项。
- *
- * 三个回调是**三个不同的时刻**，别当成同一件事的三种写法：
- *
- * | 回调       | 时刻                     | 典型用途                       |
- * | ---------- | ------------------------ | ------------------------------ |
- * | `onInput`  | 每一次击键               | 实时筛选、字数统计、边打边校验 |
- * | `onChange` | 失焦且值变过 / 选中项变了 | 改完就存（改号、改地址）       |
- * | `onCommit` | 按下 Enter               | 敲完直接提交，不必先点别处     |
- *
- * "改完就存"这类场景拿 `onInput` 提交等于**边打字边存**：`10086` 会先存出一个 `1`、
- * 再存一个 `10`……所以后两个不是锦上添花，是那类场景唯一正确的钩子。
- *
- * 三个回调的监听一律带面板 `signal`，扩展不必自己收尾。
- */
+/** 输入控件的回调分别对应输入、change 与提交键；监听随面板 signal 释放。 */
 export interface ConsoleFieldOptions {
   value?: string;
   placeholder?: string;
@@ -445,23 +311,9 @@ export interface ConsoleFieldOptions {
   disabled?: boolean;
   /** 值变了。input/textarea 听 `input`，select 听 `change`。 */
   onInput?: (value: string) => void;
-  /**
-   * 敲完了：听 `change`（input/textarea 是失焦且值变过，select 是选中项变了）。
-   *
-   * 注意 select 上 `onInput` 与 `onChange` 是**同一个时刻**（下拉框没有"逐次击键"），
-   * 两个都给就都会响；那儿只给一个即可。
-   */
+  /** change 事件：input/textarea 值变化后失焦，select 选项变化。select 的 onInput 也监听 change，若两者均提供则都会触发。 */
   onChange?: (value: string) => void;
-  /**
-   * 按下 Enter 提交。`textarea` 上要 **Ctrl/⌘+Enter**（裸 Enter 在那儿是换行）。
-   *
-   * 输入法组词中的那次回车（`isComposing`）不算——中文候选词一敲回车就提交，
-   * 是这条钩子最容易踩的坑。
-   *
-   * 与 `onChange` 同时给的话，浏览器可能在 Enter 之后**再派发一次 `change`**
-   * （值确实变过时）。两条钩子做同一件事时，让那个函数自己幂等（新旧值相等就返回）
-   * ——这比在原语里猜"哪一次才算数"可靠。
-   */
+  /** Enter 提交；textarea 使用 Ctrl/⌘+Enter，IME 组词期间不提交。浏览器可能继续派发 change，同时使用两种提交回调时由调用方去重。 */
   onCommit?: (value: string) => void;
 }
 
@@ -633,12 +485,7 @@ export interface ConsoleLogOptions {
   maxHeight?: string;
   /** 一行都没有时铺的空态（`.placeholder`）。不给就留一个空框。 */
   empty?: string;
-  /**
-   * 距底多少像素之内仍算"贴着底"（缺省 24）。
-   *
-   * 不能取 0：浏览器报的 `scrollHeight` / `clientHeight` 带小数，滚到底时那三个数
-   * 几乎从不严格相等，取 0 等于粘滞永远不成立。
-   */
+  /** 贴底容差，单位像素，默认 24；scrollTop 可能包含小数。 */
   stickThreshold?: number;
 }
 
@@ -691,14 +538,7 @@ export interface ConsoleCopyOptions {
   okText?: string;
 }
 
-/**
- * `disable` 收得下的东西：任何带 `disabled` 的控件。
- *
- * 按结构而不是按 `HTMLButtonElement | HTMLInputElement | …` 列举：那串联合每加一种
- * 控件就得改一次，而且把 `checkbox` 句柄里的 `input`、未来某个自带 `disabled` 的
- * 复合控件都挡在外面。允许 null / undefined 是为了让调用方直接写
- * `ui.disable(btn, maybeInput)` 而不必先过滤。
- */
+/** 接受任意带 disabled 字段的控件，忽略 null 与 undefined。 */
 export type ConsoleDisablable = { disabled: boolean } | null | undefined;
 
 export interface ConsoleFormat {
@@ -727,22 +567,7 @@ export interface ConsolePanel {
   mount(ctx: ConsolePanelContext): void | Disposable | Promise<void | Disposable>;
 }
 
-/**
- * 一页的浏览器扩展。约定为 `console/client.ts` 的 **default export**。
- *
- * ```ts
- * import type { ConsoleClientBundle } from '../../web/shared/client-panel.ts';
- * const bundle: ConsoleClientBundle = {
- *   panels: {
- *     gate: { mount(ctx) { ctx.root.textContent = 'hello'; } },
- *   },
- * };
- * export default bundle;
- * ```
- *
- * 键是**局部 panel id**，与服务端 `ConsolePanelDecl.id` 对应。声明了但扩展里没有
- * 对应键 → host 渲染"扩展缺这个面板"的错误卡，而不是静默空白。
- */
+/** console/client.ts 的 default 导出。panels 以局部 panel id 为键；服务端已声明但扩展未提供的面板显示错误。 */
 export interface ConsoleClientBundle {
   panels: Record<string, ConsolePanel>;
 }

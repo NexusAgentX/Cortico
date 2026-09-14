@@ -9,7 +9,7 @@ Persona 定义一类 Bot 的语义:上下文怎么构造、有哪些 session、�
 
 ## Persona 契约
 
-Core 在生命周期节点调用 Persona 钩子。上下文中的语义内容由 Persona 提供,通过注入接口写入。
+Core 在生命周期节点调用 Persona 钩子。Persona 通过钩子返回值和注入接口提供上下文中的语义内容。
 
 必填:
 
@@ -22,7 +22,7 @@ Core 在生命周期节点调用 Persona 钩子。上下文中的语义内容由
 | `declareSessions()` | session 声明,恰好一个 `receivesEvents` 且 `persistent`(见 [sessions.md](sessions.md)) |
 
 可选时机钩子:`onOpening({ reason })`(session 开场)、`onDelivery({ events })`(一批唤醒项投递刻,
-钩子内注入的项加入本批)、`onBatchEnd()`(一批处理结束,可执行上下文容量策略)、
+钩子内同步调用 `injectInternal` 的项加入本批)、`onBatchEnd()`(一批处理结束,可执行上下文容量策略)、
 `onTurnEnded()`、`onIdle()`、`onStallsRecovered()`(回一句措辞或 null)、
 `onWorldLifecycle(event)`、`firstTurn()`(合成首轮对话,不落盘,开关 `context.firstTurn`)、
 `onHandoff(snapshot, { hardTokens })`(回 `{ tail, trim? }`)、`promptVarValues(ctx)`、
@@ -48,9 +48,9 @@ Persona 工具,Core 只认 `ToolDef.endsTurn`。
 | 字段 | 含义 |
 |---|---|
 | `id`、`description` | 包 id 与一句话 |
-| `defaults()` | 这个 bot 的建议配置。World 段不在这里:启动器用 `withWorlds()` 把本机全部实现(`src/worlds/index.ts` 的目录加扩展)的默认段补进来 |
+| `defaults()` | bot 默认配置,可包含 World 段。启动器用 `withWorlds()` 补充内建与扩展 World 中缺失的默认段,保留此处已有的段 |
 | `declares` | 默认启用的 World id;未安装时显示为不可用。已安装但未声明的 World 默认关闭,部署可自行启用 |
-| `build(loaded, worlds)` | 造 Persona,返回 `BotParts { persona, onStart?, onStop?, console? }` |
+| `build(loaded, worlds)` | 创建 Persona,返回 `BotParts { persona, worlds?, llm?, onStart?, onStop?, console? }` |
 
 `createBot()` 的顺序:算提示词覆盖目录 → 定默认语言 → `WorldAssembly` → `build()` → `Core` →
 装配层绑定挂载钩子 → 收配置组(含未激活槽位)→ provider 设置页 → `WebApp`。`start()`:单实例锁

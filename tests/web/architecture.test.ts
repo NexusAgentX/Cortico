@@ -1,9 +1,4 @@
-/**
- * Console 的模块边界与资源归属约束。
- *
- * 要守住的一句话:**中央前端不许认识任何具体 World 或具体人格**。
- * 面板、徽章、导航项一律由 provider 侧按目录约定自报,Web Core 只认框架级契约。
- */
+/** 扫描控制台代码的 import、领域词、目录发现与资源归属；例外必须使用带理由的 arch-allow。 */
 import { describe, it, expect } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -45,10 +40,7 @@ const SPECIFIER_PATTERNS = [
   /\bimport\s+['"]([^'"]+)['"]/g,
 ];
 
-/**
- * 把说明符归一成仓库相对路径,`../../worlds/qq/x` 这种绕法也要现原形。
- * 裸包名(io-ts 之类第三方)不是本仓源码,返回 null 放行。
- */
+/** 说明符转为仓库相对路径；第三方裸包名返回 null。 */
 function normalizeSpecifier(spec: string, fromFile: string): string | null {
   if (spec.startsWith('.')) return toPosix(relative(REPO, resolve(dirname(resolve(REPO, fromFile)), spec)));
   if (/^[@~]\//.test(spec)) return spec.slice(2); // 别名根写法 @/... ~/...
@@ -167,7 +159,6 @@ describe('Web Core 架构护栏', () => {
 });
 
 describe('护栏自检(合成样本)', () => {
-  /** 用假文件表喂检测函数,证明护栏真会咬人而不是永远返回空。 */
   const fake = (files: Record<string, string>) => ({
     names: Object.keys(files),
     read: (f: string) => files[f].split('\n'),
@@ -261,15 +252,7 @@ describe('护栏自检(合成样本)', () => {
 // Guard F:扩展不得绕过 ConsolePanelContext
 // ---------------------------------------------------------------------------
 
-/**
- * 整套隔离与生命周期都架在一个前提上:**扩展借的每一样东西都经过 `ctx`**。
- * 扩展自己 `fetch`、自己 `setInterval`、自己挂不带 signal 的监听,那么
- * unmount 时框架就无从收回——泄漏测试也测不到它(那组只能覆盖走 ctx 的资源)。
- *
- * 所以这条护栏扫描全部 provider 的浏览器端代码,禁止那几个裸调用。
- * 与 Guard B 同一套白名单机制:`// arch-allow: <理由>` 可以逐行豁免,
- * 但必须写明理由——豁免要看得见,不能是一句静默的例外。
- */
+/** 扫描扩展浏览器代码中的裸网络、定时器与无 signal 监听；带理由的 arch-allow 行可豁免。 */
 const BYPASS_RULES: Array<{ why: string; re: RegExp }> = [
   { why: '裸 fetch(应走 ctx.invoke / ctx.invokeBinary)', re: /(^|[^.\w])fetch\s*\(/ },
   { why: '裸 setInterval(应走 ctx.interval)', re: /(^|[^.\w])setInterval\s*\(/ },
@@ -287,13 +270,7 @@ function providerClientFiles(base = REPO): string[] {
   return out.sort();
 }
 
-/**
- * 逐行剥掉注释,返回每行的**代码部分**。
- *
- * 块注释必须跨行跟踪状态:扩展的文件头注释里几乎都写着"没有 fetch、没有
- * document.body、没有裸定时器"——只剥 `//` 的话,这条护栏会把**作者声明自己
- * 没做这件事的那句话**当成违规抓出来。第一版就是这么翻的车,16 处全是误报。
- */
+/** 逐行去除注释，跨行保留块注释状态，仅检查代码部分。 */
 function codeLines(lines: string[]): string[] {
   let inBlock = false;
   return lines.map((raw) => {

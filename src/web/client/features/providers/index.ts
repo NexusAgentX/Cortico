@@ -22,7 +22,7 @@ const PROVIDER_KIND = 'llm';
 export async function mountProviders(ctx: FeatureContext): Promise<void> {
   const { ui, root } = ctx;
   const doc = root.ownerDocument;
-  const intro = pageIntro(ui, S.pageTitle, S.pageIntro);
+  const intro = pageIntro(ui, S.pageTitle);
   const layout = ui.h('div', 'settings-layout providerhub');
   const index = ui.h('nav', 'settings-index');
   index.setAttribute('aria-label', S.modulesAria);

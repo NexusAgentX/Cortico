@@ -1,18 +1,4 @@
-/**
- * 控制台内核入口。路由分派一句话：
- *
- * ```
- * 贡献方的路由（#/provider/…）         → ConsolePageHost
- * 有对应 FrameworkFeature 的路由        → 那个 feature
- * 空路由                               → 默认去终端（首次打开不该停在空台面上）
- * 其余                                 → 清空台面（左栏保持可用）
- * ```
- *
- * 关于下面那张 `FEATURES` 表：它**不违反**"Web Core 不得持中央清单"那条禁令。
- * 禁的是**贡献方那些页的清单**（那会让新增一个 IO 就要改 Web Core 一行）；这张表
- * 列的是控制台**自己的页面**，本来就是它的一部分。贡献方那一路照旧完全
- * 由 manifest 驱动，这里一个 World 名都没有。
- */
+/** 控制台入口：贡献页路由交给 ConsolePageHost，框架路由交给对应 feature；空路由默认打开终端。 */
 
 import { fetchManifest, get } from './core/api.ts';
 import { pick, withLanguage } from './core/language.ts';
@@ -84,7 +70,7 @@ function createMemo(prefix: string): ConsoleMemo {
 }
 
 export function boot(doc: Document = document): { dispose(): void } {
-  // 主题先落地再谈别的:晚一步就是一帧错配色。
+  // 首次渲染前应用主题。
   try {
     applyStoredTheme(doc);
   } catch { /* 主题读坏了不该拦住整个控制台 */ }
@@ -162,7 +148,7 @@ export function boot(doc: Document = document): { dispose(): void } {
    */
   shellLife.own(subscribeLamps(doc, (lamps) => shell.setLamps(lamps)));
 
-  /** 框架能力清单。拿不到就当全都没挂——宁可少渲染，不要拿 503 当界面。 */
+  /** 框架能力清单；获取失败时不启用可选能力。 */
   let capabilities: Record<string, boolean> = {};
   /** capabilities 与 manifest 都到齐了吗。到齐之前不渲染任何一页。 */
   let ready = false;
@@ -217,12 +203,10 @@ export function boot(doc: Document = document): { dispose(): void } {
   };
 
   const apply = (route: Route): void => {
-    // 高亮不等 capabilities——否则首帧左栏一条都不亮。
     shell.setRoute(route);
-    // capabilities 没到齐之前一律不渲染。feature 的 needs 判定依赖它,早渲染会把
-    // 该有的页判成"不可用",而随后那次 apply 因为路由没变会提前返回、永远纠不回来。
+    // 页面加载依赖完整的 capabilities；就绪后重新应用当前路由。
     if (!ready) return;
-    // 空路由落去终端。替换而不新增历史条目:否则后退回到空路由又被送走。
+    // 空路由替换为终端页，不增加历史条目。
     if (route.segments.length === 0) {
       router.replace(['live']);
       return;
@@ -254,8 +238,7 @@ export function boot(doc: Document = document): { dispose(): void } {
   const offRoute = router.onChange(apply);
   const stopRouter = router.start();
 
-  // capabilities 与 manifest 都到齐再按当前路由渲染一次:
-  // feature 的 needs 判定依赖 capabilities，早渲染会把该有的页判成"不可用"。
+  // capabilities 与 manifest 就绪后按当前路由渲染。
   void Promise.allSettled([
     get<{ capabilities?: Record<string, boolean> }>('/api/capabilities')
       .then((r) => { capabilities = r?.capabilities ?? {}; }),

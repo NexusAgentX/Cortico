@@ -14,7 +14,7 @@ const zh = {
   configTitle: '参数',
   configDesc: '修改自动保存到 config.json。标注需重启的参数在重启后生效，其余立即生效。',
   assembly: '装配',
-  notInstalled: '未安装',
+  notInstalled: "不可用",
   notActivated: '未激活',
   hidden: '已隐藏',
   reloadPrefix: '前缀待重载 · 点此重载',
@@ -22,10 +22,10 @@ const zh = {
   configTab: '参数',
   promptsTab: '提示词模板',
   reloadTitle: '重载 system 前缀？',
-  reloadBody: '重读全部前缀源并替换当前 session 的 system 消息。会丢一次缓存前缀（下一轮要重新计费），不影响对话内容。',
+  reloadBody: '重读全部前缀源并替换当前 session 的系统前缀，保留已有对话。',
   prefixReloaded: '前缀已重载',
   noBundle: (pageId: string) =>
-    `「${pageId}」缺少面板构建产物。仓内页面请运行 pnpm build:web；`
+    `「${pageId}」缺少面板构建产物。仓内页面请先停止 bot，再运行 pnpm build:web；`
     + 'extensions/ 下的扩展请在包目录构建，再重启进程。',
   badBundleUrl: (pageId: string) => `「${pageId}」的面板产物地址不合法，已拒绝加载`,
   bundleLoadFailed: (pageId: string, err: string) => `「${pageId}」的面板产物加载失败: ${err}`,
@@ -54,7 +54,7 @@ const en: typeof zh = {
   configTitle: 'Parameters',
   configDesc: 'Changes are saved to config.json automatically. Parameters marked as requiring a restart apply after restarting; the rest apply immediately.',
   assembly: 'Assembly',
-  notInstalled: 'not installed',
+  notInstalled: "Unavailable",
   notActivated: 'not activated',
   hidden: 'hidden',
   reloadPrefix: 'Prefix drifted · click to reload',
@@ -62,10 +62,10 @@ const en: typeof zh = {
   configTab: 'Parameters',
   promptsTab: 'Prompt templates',
   reloadTitle: 'Reload the system prefix?',
-  reloadBody: 'Re-reads every prefix source and replaces the current session\'s system message. One cached prefix is lost (the next turn is billed anew); the conversation is unaffected.',
+  reloadBody: 'Re-reads all prefix sources and replaces the current session\'s system prefix. Existing conversation messages are kept.',
   prefixReloaded: 'Prefix reloaded',
   noBundle: (pageId: string) =>
-    `Panel bundle missing for "${pageId}". For repository pages, run pnpm build:web;`
+    `Panel bundle missing for "${pageId}". For repository pages, stop the bot first, then run pnpm build:web;`
     + ' for packages under extensions/, build in the package directory and restart the process.',
   badBundleUrl: (pageId: string) => `Panel bundle URL of "${pageId}" is invalid; refused to load`,
   bundleLoadFailed: (pageId: string, err: string) => `Panel bundle of "${pageId}" failed to load: ${err}`,

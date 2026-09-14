@@ -1,21 +1,4 @@
-/**
- * 浏览器端 typed API client 的行为钉子。
- *
- * **为什么这里用「specifier 存在变量里的动态 import」这么绕的写法？**
- *
- * `src/web/client/**` 与 `src/web/shared/**` 用 DOM 类型（fetch/Blob/AbortSignal），
- * 根 tsconfig 把它们 exclude 掉，交给 `tsconfig.web.json` 用 DOM lib 单独 check。
- * 但 exclude 只影响**初始文件表**——测试文件在 `tests/**` 里，是根 tsc 的检查范围，
- * 一旦它写出静态的 `import ... from '../../src/web/client/core/api.ts'`，被 import
- * 的模块就跟着被拉进根程序，于是拿 Node 的 lib 去 check DOM 代码，`RequestInit`
- * `Blob` 全部报"找不到名称"。
- *
- * 把 specifier 放进变量，tsc 就静态解析不到这条边（`import(变量)` 的类型是 any），
- * 而 vitest 在运行期照常解析。类型安全由 `tsconfig.web.json` 那一遍负责，
- * 这里负责行为。
- *
- * 全程假 fetch（`vi.stubGlobal`），不起真服务器。
- */
+/** API 客户端行为测试使用脚本化 fetch。变量动态 import 隔离根 tsconfig 的 Node 类型检查，浏览器类型由 tsconfig.web.json 检查。 */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 const API_SPEC = '../../src/web/client/core/api.ts';

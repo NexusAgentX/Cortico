@@ -29,11 +29,7 @@ function isAbort(err: unknown): boolean {
   return (err as { name?: unknown } | null)?.name === 'AbortError';
 }
 
-/**
- * 分节顺序：先框架自己的（落盘 / 内存），再各 World 的（同样落盘 / 内存）。
- * World 的先后按它们在清单里首次出现的顺序——服务端给的顺序就是装配顺序，
- * 这一页不替它重排。
- */
+/** 框架存储在前，World 按清单中首次出现的顺序分组；各组内 disk 在 memory 前。 */
 export function storageSections(
   parts: readonly StoragePartView[],
 ): Array<{ group: string | null; kind: 'disk' | 'memory'; title: string }> {

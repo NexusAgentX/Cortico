@@ -104,11 +104,7 @@ describe('独立页面主题交接', () => {
   });
 });
 
-/**
- * 收方是独立页面,不经控制台的 bundle,所以 import 不到这个常量,只能各自写一份字面量。
- * 两边对不上的后果是**静默的**:收方读不到快照就退回自己的默认配色,没人报错。
- * 所以这条逐字比对源文件——它是这份契约唯一的守卫。
- */
+/** 独立页面与控制台需使用相同的主题 fragment 常量。 */
 describe('收方与发方用同一个 fragment 键', () => {
   it('B 站 Overlay 编辑器读的键 = handoff 写的键', async () => {
     const { readFileSync } = await import('node:fs');

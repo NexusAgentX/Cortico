@@ -51,10 +51,10 @@ import type {
 import type { BotConfig } from '../bots/corti-soulmate/assemble.ts';
 import type { SessionStats } from '../src/core/sessions.ts';
 
-/** CORTICO_DEV_MINIMAL=1 仅挂载框架层终端 World；未挂载的扩展面板必须完全省略。 */
+/** CORTICO_DEV_MINIMAL=1 仅挂载终端 World。 */
 const MINIMAL = process.env.CORTICO_DEV_MINIMAL === '1';
 
-// 假部署:纯默认配置,persona/ 与 data/ 都落在临时目录,不碰任何真部署。
+
 const tmpDeploy = mkdtempSync(join(tmpdir(), 'devdeploy-'));
 writeFileSync(join(tmpDeploy, 'config.json'), '{}\n', 'utf8');
 const loaded = loadConfig(tmpDeploy);
@@ -77,9 +77,9 @@ writeFileSync(join(tmpPersona, 'note', '第一篇笔记.md'), '一段示例笔�
 pg.commitAll('控制台编辑 note/第一篇笔记.md', AUTHOR_OPERATOR);
 pg.tag('里程碑-A', '第一个稳定存档点');
 
-// 配置项:三方各自声明的 ConfigGroup,dev 只动 cfg 的内存副本,不碰真 config.json
+// 使用各模块声明的 ConfigGroup,仅修改临时部署的配置。
 const devCfg = JSON.parse(JSON.stringify(cfg)) as BotConfig;
-// corti 的配置里没有这两段;假 World 的配置组用各自的 World 默认值垫底
+
 (devCfg.worlds as Record<string, unknown>).minecraft = JSON.parse(JSON.stringify(MINECRAFT_DEFAULTS));
 (devCfg.worlds as Record<string, unknown>).bilibili = JSON.parse(JSON.stringify(BILIBILI_DEFAULTS));
 const devConfigGroups: ConfigGroup[] = MINIMAL
@@ -98,7 +98,7 @@ function genUsage(): UsageRecord[] {
   let seed = 7;
   const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
   const p2 = (n: number) => String(n).padStart(2, '0');
-  // 角色分布(main 最多,dream 走 pro 模型),让分组/堆叠视图有内容
+
   const pickRole = () => roles[rnd() < 0.85 ? 0 : 1];
   const push = (day: string, hh: number, mm: number) => {
     const [role, label, model] = pickRole();
@@ -112,8 +112,8 @@ function genUsage(): UsageRecord[] {
       reasoningTokens: Math.floor(comp * 0.4),
     });
   };
-  // 覆盖到"今天"往前 ~40 天,让 近30/90天、按周、按月 都有数据;锚定系统当天
-  // (按夹具时间戳的 +08:00 日历日),夹具不随日期过期。
+// 日期按今天的 +08:00 日历日生成,覆盖分钟、周、月等聚合粒度。
+
   const today = new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10);
   const END = new Date(`${today}T00:00:00Z`).getTime();
   for (let back = 40; back >= 0; back--) {
@@ -123,7 +123,7 @@ function genUsage(): UsageRecord[] {
       for (let k = 0; k < n; k++) push(day, hr, Math.floor(rnd() * 60));
     }
   }
-  // 今天再补一段密集的分钟级活动(14 点前后),让"按分"粒度有多根柱可看
+
   for (let mm = 2; mm < 52; mm += 3) { const c = 1 + Math.floor(rnd() * 2); for (let k = 0; k < c; k++) push(today, 14, mm); }
   return recs;
 }
@@ -132,11 +132,7 @@ const usageRecords = genUsage();
 const qq = new QQWorld({ wsUrl: 'ws://127.0.0.1:0', groups: [424242, 998877], privates: [10086], token: '', timezone: TZ });
 const terminal = new TerminalWorld({ timezone: TZ });
 const websearch = new WebSearchWorld({ apiKey: loaded.secret('BRAVE_API_KEY') });
-/**
- * 控制台边界的验收件。它走与真 World 完全相同的 `World` 契约与目录约定,
- * 所以"它能自己出现在控制台里"这件事本身就是对边界的验证——
- * `src/web/**` 里没有一个字提到它。
- */
+/** 使用独立 World 声明验证控制台自动发现。 */
 const consoleFixture = new ConsoleFixtureWorld();
 const worlds = MINIMAL ? [terminal] : [qq, terminal, websearch, consoleFixture];
 const persona = new CortiSoulmate({ memoryDir: loaded.memoryDir, cfg, worlds });
@@ -149,8 +145,8 @@ const prefix = await assembleSystem({
 });
 
 const store = new JsonlEventStore({ dataDir: tmpData, run: 'r-dev', log: nullLogger() });
-// 终端 World 接一个开发宿主:对话面板的回显、附图落库与取图在假数据台上才走得通。
-// 事件进同一个事件库,hello 时的历史回放因此也能看到本场发过的图。
+// 终端消息与附件写入临时事件库,供回放和取图接口读取。
+
 const devBlobs = new LogBlobStore(tmpData);
 await terminal.start({
   pushEvent: async (e) => {
@@ -210,10 +206,10 @@ const worldLabels: Record<string, string> = {
   qq: 'QQ', terminal: '终端对话', websearch: 'WebSearch',
   minecraft: 'Minecraft', bilibili: 'B 站直播间',
 };
-/** 假 World 的环境提示词模板落在这儿:与真 World 同一条"模板文件"路径,不走捷径。 */
+
 const devTemplateDir = mkdtempSync(join(tmpdir(), 'cortico-dev-tpl-'));
 
-/** 真 World 那份 role='envPrompt' 模板的路径(截图器要拿它的原文当假数据)。 */
+/** 读取 World 的环境模板作为预览数据。 */
 function promptDocPathOf(mod: World): string {
   const doc = mod.console?.()?.promptDocs?.find((d) => d.role === 'envPrompt');
   if (!doc) throw new Error(`${mod.id} 没有环境提示词模板`);
@@ -240,15 +236,15 @@ const sessionsList: SessionStats[] = [
 ];
 
 const storage: StoragePart[] = [
-  { key: 'events', label: '事件库(bot 的经历)', kind: 'disk', location: 'data/events.jsonl', danger: true, note: '全部经历不可恢复地抹除,游标从1重新开始', stat: () => `${store.latestCursor()}条 / 12.4KB`, clear: () => '(dev)不清除' },
-  { key: 'session', label: '主session(当前对话上下文)', kind: 'disk', location: 'data/session-main.jsonl', danger: true, order: 10, note: '当场失忆重开', stat: () => `${session.length}条 / ~90k tok`, clear: () => '(dev)不清除' },
-  { key: 'runlog', label: '运行日志', kind: 'disk', location: 'data/runlog.jsonl', note: '纯观察日志,agent不可见', stat: () => '8.1KB', clear: () => '(dev)不清除' },
-  { key: 'state', label: 'core状态(浮现/截断标记)', kind: 'disk', location: 'data/core-state.json', note: '最近浮现清空、截断状态归零', stat: () => '浮现1条 / 上次截断刚刚', clear: () => '(dev)不清除' },
-  { key: 'wakes', label: '定时唤醒', kind: 'disk', location: 'data/wakes.json', note: '全部自设闹钟取消', stat: () => '1个待触发', clear: () => '(dev)不清除' },
-  { key: 'tracker', label: 'session统计(usage/缓存)', kind: 'memory', note: '仪表数据清零', stat: () => `${sessionsList.length}个session`, clear: () => '(dev)不清除' },
-  { key: 'pending', label: '待投递事件(还没送到她面前的那批)', kind: 'memory', order: 9, note: '暂停期间积压的事件与心跳一律丢弃,继续之后不会再涌出来。事件本身已经落库,历史工具照样查得到,丢的只是"叫醒她"这一次', stat: () => '7条待投递', clear: () => '(dev)不清除' },
-  // World 存储按声明的 group 单独分节。
-  { key: 'minecraft-log', label: 'World 日志(试玩现场)', kind: 'disk', group: 'Minecraft World', location: 'data/minecraft-diag/minecraft-log.jsonl', note: '纯观察日志,agent 不可见,清除无副作用;清了上一场就查不了了', stat: () => '1594条 / 612.0KB', clear: () => '(dev)不清除' },
+  { key: 'events', label: '事件库(本次运行)', kind: 'disk', location: 'data/runs/r-dev/events.jsonl', danger: true, note: '清除本次运行的事件记录,保留此前记录;游标不回退', stat: () => `${store.latestCursor()}条 / 12.4KB`, clear: () => '(dev)不清除' },
+  { key: 'session', label: '主session(当前对话上下文)', kind: 'disk', location: 'data/session-main.jsonl', danger: true, order: 10, note: '清除对话上下文并重新开场,保留 Memory 和事件库', stat: () => `${session.length}条 / ~90k tok`, clear: () => '(dev)不清除' },
+  { key: 'runlog', label: '运行日志', kind: 'disk', location: 'data/runs/r-dev/log.jsonl', note: '运行日志不进入模型上下文', stat: () => '8.1KB', clear: () => '(dev)不清除' },
+  { key: 'state', label: 'Core 状态', kind: 'disk', location: 'data/core-state.json', note: '清除 Persona 状态、交接时间和模型连续失败记录,保留投递游标与 World 可见性', stat: () => 'Persona 状态1项 / 上次交接刚刚', clear: () => '(dev)不清除' },
+  { key: 'wakes', label: '定时唤醒', kind: 'disk', location: 'data/timers.json', note: '取消全部定时器,不产生通知', stat: () => '1个待触发', clear: () => '(dev)不清除' },
+  { key: 'tracker', label: 'session统计(usage/缓存)', kind: 'memory', note: '清零统计,保留正在运行的 session 条目', stat: () => `${sessionsList.length}个session`, clear: () => '(dev)不清除' },
+  { key: 'pending', label: '待投递事件', kind: 'memory', order: 9, note: '丢弃待投递的事件,保留事件库记录。延迟生成正文的队列项保留;已丢弃项不会在重启后补投', stat: () => '7条待投递', clear: () => '(dev)不清除' },
+
+  { key: 'minecraft-log', label: 'World 日志(本次运行)', kind: 'disk', group: 'Minecraft World', location: 'data/runs/r-dev/log.jsonl', note: '清除本次运行的 World 日志,保留此前运行的日志', stat: () => '1594条 / 612.0KB', clear: () => '(dev)不清除' },
 ];
 
 let watched = {
@@ -257,10 +253,10 @@ let watched = {
 };
 let paused = false;
 let devDreaming = false;
-/** dev:假日志的时间原点 */
+
 const devLogT0 = Date.now() - 10_000;
 
-/** 已铺好 filter 字节的扫描线 → 一份 PNG。colorType 2=RGB / 6=RGBA。 */
+/** 扫描线须包含 PNG filter 字节;colorType 为 2(RGB)或 6(RGBA)。 */
 function encodePng(width: number, height: number, colorType: number, raw: Buffer): Buffer {
   const crcTable: number[] = [];
   for (let n = 0; n < 256; n++) {
@@ -292,10 +288,7 @@ function encodePng(width: number, height: number, colorType: number, raw: Buffer
   ]);
 }
 
-/**
- * dev:一张 64x64 的假皮肤材质。面板的预览裁的是脸那 8x8 块,所以这里真按皮肤
- * 的排布画:头的正面在 (8,8)-(15,15),其余填衣服色。
- */
+/** 64×64 皮肤夹具;头部正面位于 (8,8) 至 (15,15)。 */
 function devSkinPng(shirt: [number, number, number], hair: [number, number, number]): Buffer {
   const N = 64;
   const stride = N * 4 + 1;
@@ -309,7 +302,7 @@ function devSkinPng(shirt: [number, number, number], hair: [number, number, numb
     raw[y * stride] = 0; // filter: none
     for (let x = 0; x < N; x++) put(x, y, shirt);
   }
-  // 头的第二层(帽子)在 x 32-63 / y 0-15,真皮肤这块基本是透明的,不透明就把脸整个盖住
+  // 帽子层保持透明,以显示底层头部。
   for (let y = 0; y < 16; y++) for (let x = 32; x < 64; x++) put(x, y, shirt, 0);
   for (let y = 8; y < 16; y++) for (let x = 8; x < 16; x++) put(x, y, skin);
   for (let x = 8; x < 16; x++) { put(x, 8, hair); put(x, 9, hair); }
@@ -318,13 +311,13 @@ function devSkinPng(shirt: [number, number, number], hair: [number, number, numb
   return encodePng(N, N, 6, raw);
 }
 
-/** dev:World 对 agent 的可见性,以及"前缀还没跟上"那个状态 */
+
 const devWorldVisible: Record<string, boolean> = {};
 const devWorldDrift = new Set<string>();
 const devPromptDocs = [
   { key: 'orientation', title: 'ORIENTATION', scope: 'persona' as const, description: 'Persona的存在方式与元认知说明。', content: persona.orientationText(), revision: 'dev-orientation-1' },
   { key: 'constitution', title: '宪法', scope: 'persona' as const, description: 'Persona的长期原则。', content: persona.constitutionText(), revision: 'dev-constitution-1' },
-  // 首轮对话(风格锚)三份:设置页「首轮对话」节按 key 前缀取
+// 首轮对话字段按 firstTurn. 前缀识别。
   {
     key: 'firstTurn.user', title: '首轮·用户输入', scope: 'persona' as const,
     description: '合成首轮对话的 user 消息。与回复任一为空则整轮不注入。',
@@ -332,7 +325,7 @@ const devPromptDocs = [
   },
   {
     key: 'firstTurn.thinking', title: '首轮·思维链', scope: 'persona' as const,
-    description: '合成首轮 assistant 的思维链(reasoning_content);为空则该轮不带。',
+    description: '合成首轮 assistant 的推理内容;为空时省略。',
     content: '普通的问候。放松地回,别端着。', revision: 'dev-ft-thinking-1',
   },
   {
@@ -351,11 +344,11 @@ const devPromptDocs = [
   },
   {
     key: 'persona.memory', title: '记忆', scope: 'persona' as const, revision: 'dev-memory-1',
-    description: 'MEMORY 0~4 的骨架:五层的引导语、小标题与空态措辞。',
-    content: '【MEMORY 0·地图】\npersona/ 的最外层目录。地图不是答案。\n{{memory.tree}}\n\n【MEMORY 4·当下】\n现在是 {{memory.now}}(时区 {{memory.timezone}})。\n',
+    description: 'Memory 各层的标题、内容与空态文本。',
+    content: '【MEMORY 0·地图】\nMemory 目录清单。\n{{memory.tree}}\n\n【MEMORY 4·当下】\n现在是 {{memory.now}}(时区 {{memory.timezone}})。\n',
     vars: [
       { name: 'memory.tree', description: 'persona/ 最外层目录清单。', multiline: true, value: 'persona/\n- note/\n- memo/' },
-      { name: 'memory.now', description: '前缀组装那一刻的时间。**两次前缀重建之间是冻结的**。', value: '2026-08-16 17:45' },
+      { name: 'memory.now', description: '前缀构建时的时间,下次重建时更新。', value: '2026-08-16 17:45' },
       { name: 'memory.timezone', description: '时区名。', value: 'Asia/Shanghai' },
     ],
   },
@@ -368,7 +361,7 @@ const devPromptDocs = [
       { name: 'persona.orientation', description: 'ORIENTATION.md 全文。', multiline: true },
       { name: 'persona.constitution', description: 'CONSTITUTION.md 全文。', multiline: true },
       { name: 'worlds.envPrompts', description: '各 World 的环境提示词,按 World id 序。', multiline: true },
-      { name: 'persona.toolUsage', description: '工具用法段。**来自代码**,改不了。', multiline: true },
+      { name: 'persona.toolUsage', description: '代码生成的工具说明。', multiline: true },
       { name: 'memory.all', description: 'MEMORY 0~4 整块。', multiline: true },
     ],
   },
@@ -377,10 +370,7 @@ const devPromptDocs = [
 ];
 
 const port = Number(process.env.CORTICO_PORT || 8848);
-/**
- * 托管进程一键启停的假实现:start 后先 starting,几秒后自己变 running,
- * 让"启动中→就绪"的轮询路径在截图器里也走一遍。
- */
+/** 模拟 starting 到 running 的异步状态变化。 */
 function devMount(
   fixed: () => Record<string, unknown>,
   derived: (phase: string) => Record<string, unknown>,
@@ -398,7 +388,7 @@ function devMount(
   };
 }
 
-/** 会话名字快照:roster 与 events 两个面板各要一份(真 World 也是各开一个 names)。 */
+
 const devQqNames = (): unknown => ({
   groups: [
     { id: 424242, name: '深夜茶话会', card: 'bot' },
@@ -563,13 +553,7 @@ const devBilibiliOverlayPanel = {
   },
 };
 
-/**
- * 假数据面。键是**World id → 面板局部 id → 方法名**,与各 World `console().panels[].id`
- * 及它们自己的 `invokePanel` 白名单逐字对齐(qq 与 minecraft 都在各自的 world.ts)。
- *
- * 每个方法直接返回**最终 wire 形状**(该套壳的自己套好),因为控制台页扩展的
- * `ctx.invoke` 拿到的就是这一层——中间再有一道"形状修正"只会与真 World 漂开。
- */
+/** 按 World id、面板局部 id、方法名组织假数据,返回最终接口响应形状。 */
 const devPanels: Record<string, Record<string, Record<string, (...args: never[]) => unknown>>> = {
   qq: {
     roster: {
@@ -609,7 +593,7 @@ const devPanels: Record<string, Record<string, Record<string, (...args: never[])
     },
   } as never,
   bilibili: {
-    // 直播间夹具:一屏里同时有身份可认的弹幕、礼物、SC、上舰,以及没进白名单的 cmd。
+
     log: {
       state: () => ({
         status: {
@@ -636,7 +620,7 @@ const devPanels: Record<string, Record<string, Record<string, (...args: never[])
   },
   minecraft: {
     log: {
-      // 日志夹具覆盖泳道过滤与任务号关联。
+      // 日志夹具覆盖类别过滤与任务号关联。
       entries: (after = 0) => {
         const rows: Array<[string, string, string, number | undefined]> = [
           ['tool', 'mc_do', 'mc_do → 已开始任务#1「采集 3 个橡木原木;合成 1 个木镐」', undefined],
@@ -646,7 +630,7 @@ const devPanels: Record<string, Record<string, Record<string, (...args: never[])
           ['skill', 'done', '采集 3 个橡木原木: 挖了 3 块橡木原木,实际入包 3 个', 1],
           ['craft', 'plan', '合成 1 个木镐:3 步(附近没有工作台,要自己带一个)', 1],
           ['skill', 'place-vanished', '工作台放置没报错,回读 (5, 72, 24) 还是空气', 1],
-          ['craft', 'table-fail', '工作台放下去了,回头看那一格还是空的——服务端没认这次放置', 1],
+          ['craft', 'table-fail', '工作台放置调用完成后,回读目标位置仍为空气', 1],
           ['landmark', 'resolve', '「工作台」→ 工作台 (-32, 64, 70),另有 2 条同名的没选', undefined],
           ['event', 'minecraft.task', '[执行器] 任务#1「去「工作台」」受阻于 走不过去: 路线算不出来', 1],
           ['reflex', 'drown-noland', '附近找不到能上去的岸,只能继续上浮换气', undefined],
@@ -663,8 +647,8 @@ const devPanels: Record<string, Record<string, Record<string, (...args: never[])
         return { entries };
       },
     },
-    // 「挂载」一屏管三条链路,方法名把是哪一条缀在前面(server.state / client.start / …),
-    // 由 devPanelSurface 按真 World 同样的规则拆回下面三支。
+      // 面板方法的链路前缀与 MinecraftWorld.invokePanel 一致。
+
     server: devMount(
       () => ({ address: '127.0.0.1:25565', serverDir: 'C:\\mc\\server', configured: true }),
       (phase) => ({ reachable: phase === 'running' }),
@@ -692,12 +676,12 @@ const devPanels: Record<string, Record<string, Record<string, (...args: never[])
         }),
       };
     })(),
-    // 皮肤:两个角色各自选中的那张,以及取材质的二进制端点(面板拿它画预览)
+
     skin: (() => {
       const picked = new Map<string, { bytes: Buffer; at: string }>([
         ['bot', { bytes: devSkinPng([86, 116, 196], [64, 48, 72]), at: new Date(devLogT0).toISOString() }],
       ]);
-      // 判据与真 World 同一条:PNG 且 64x64(或 1.8 之前的 64x32),否则连同尺寸一起驳回
+
       const sizeOf = (b: Buffer): { width: number; height: number } | null =>
         b.length >= 24 && b[0] === 0x89 && b[1] === 0x50
           ? { width: b.readUInt32BE(16), height: b.readUInt32BE(20) }
@@ -733,11 +717,11 @@ const devPanels: Record<string, Record<string, Record<string, (...args: never[])
             throw new Error(`皮肤材质得是 64x64(或 1.8 之前的 64x32),这张是 ${size.width}x${size.height}`);
           }
           picked.set(asRole(role), { bytes, at: new Date().toISOString() });
-          return state('已铺好;摄像机正跑着,要它重进一次服务器才换得过来 (dev)');
+          return state('皮肤已保存,摄像机重新连接后生效 (dev)');
         },
         clear: async (role: string) => {
           const had = picked.delete(asRole(role));
-          return state(had ? '已撤回,那个账号回到原版随机皮肤 (dev)' : '本来就没选');
+          return state(had ? '已移除自定义皮肤 (dev)' : '本来就没选');
         },
         file: async (role: string) => {
           const cur = picked.get(asRole(role));
@@ -755,7 +739,7 @@ const devPanels: Record<string, Record<string, Record<string, (...args: never[])
         simulationDistance: 10, maxWorldSize: 29_999_984,
       };
       const day = 86_400_000;
-      // 分组与两种版式都要有东西可分:几份存档散在不同的活跃档里
+
       const known = new Map<string, { ago: number; size: number; gen: string; seed: string; ver: string }>([
         ['world', { ago: 0.2, size: 412_000_000, gen: 'normal', seed: '-8601234567890123', ver: '1.20.6' }],
         ['flat-test', { ago: 0.6, size: 7_300_000, gen: 'flat', seed: '0', ver: '1.20.6' }],
@@ -810,7 +794,7 @@ const devPanels: Record<string, Record<string, Record<string, (...args: never[])
         opPermissionLevel: 4, enableCommandBlock: true, allowFlight: false,
         onlineMode: false, whiteList: false,
       };
-      // 摄像机早被附身流程 op 过,她自己和玩家还没有:这正是名单最常见的样子
+
       const ops = new Map<string, number>([['CortiCam', 4], ['朋友甲', 4]]);
       const roles: Array<[string, string]> = [
         ['CortiV', 'bot'], ['CortiCam', 'camera'], ['Player', 'player'],
@@ -870,12 +854,7 @@ function devPanelSurface(id: string): { invoke(panel: string, method: string, ar
   };
 }
 
-/**
- * 开发态的"假 World"。minecraft 一类的真实现要拉子进程(开服务器、起客户端),
- * 截图器不跑它们;但**声明面必须是真的**——`console()` 里的面板清单
- * 直接用真 World 导出的 `*_PANEL_DECLS`,只有数据面换成 devPanels。这样面板声明
- * 永远不会与真实现漂开:真 World 加一个面板,截图器立刻也多一个(空的)面板。
- */
+/** 复用 World 的面板声明,以 devPanels 提供方法结果。 */
 function devFakeWorld(
   id: string,
   panels: WorldConsoleDecl['panels'],
@@ -883,14 +862,11 @@ function devFakeWorld(
   badges: WorldConsoleDecl['badges'],
   links: WorldConsoleDecl['links'],
   envPrompt: string,
-  /**
-   * 这个 World 认领的配置组。真 World 从自己的 `console().config` 报,假 World 也得报——
-   * 归属决定旋钮画在哪一页,不报的话它们会落回设置页,截图器就与真跑长得不一样了。
-   */
+
   config: WorldConsoleDecl['config'] = [],
 ): World {
   const surface = devPanelSurface(id);
-  // 与真 World 同形:文本住在模板文件里,World 只报值。截图器把假文本落到临时模板上。
+
   const templatePath = join(devTemplateDir, `${id}.md`);
   writeFileSync(templatePath, envPrompt, 'utf8');
   return {
@@ -961,7 +937,7 @@ const devFakeWorlds: World[] = MINIMAL ? [] : [
     [BILIBILI_CONFIG_GROUP],
   ),
 ];
-/** 假 World 各自在 `/api/worlds` 那份清单里要补的字段(真 World 从实例上读) */
+
 const devFakeWorldTools: Record<string, string[]> = {
   minecraft: ['mc_do', 'mc_queue', 'mc_check', 'mc_stop', 'mc_escape'],
   bilibili: ['bilibili_set_announcement'],
@@ -1042,7 +1018,7 @@ const app = new WebApp({
   sessions: { list: () => sessionsList, messages: (id) => (id === 'main' ? session : sessionsList.some((s) => s.id === id) ? session.slice(0, 4) : null), onChange: () => {} },
   storage: () => storage,
   usage: { aggregate: (opts) => aggregateUsage(usageRecords, opts) },
-  // 框架级表面:MINIMAL 下也在
+
   config: {
     groups: () => [...devConfigGroups,...devProviders.groups()].map((group) => ({ group, values: group.owner.startsWith('provider:') ? devProviders.values(group.id) : readGroupValues(devCfg, group) })),
     set: (groupId, values) => {
@@ -1052,12 +1028,7 @@ const app = new WebApp({
       return `${devConfigGroups.find((g) => g.id === groupId)?.schema.title ?? groupId}已更新 (dev,仅本次)`;
     },
   },
-  /**
-   * 走与 createBot 同一个适配器(`ioPageContribution`),免得开发态与真跑漂开。
-   * 真 World 与假 World 一视同仁:声明(徽标/面板/链接/配置)一律出自各自的 `console()`,
-   * 只把**数据面**换成 devPanels——开发态没有装配层依赖、也没连协议端,真 invoke
-   * 只会回一串"不可用"。换掉之后,控制台页扩展与旧路由看到的是同一份假数据。
-   */
+  // 通过 World 声明适配页面,invoke 使用假数据。
   consolePageSources: () => [...devConsolePageSources(), ...[...worlds, ...devFakeWorlds].map((m) => ({
     id: pageIdFor('world', m.id),
     contribute: (language: Language) => {
@@ -1092,7 +1063,7 @@ const app = new WebApp({
         ...(decl?.badges ? { badges: decl.badges } : {}),
       };
     }))),
-    // 假的「有实现但未激活」的选配 World:让未激活卡片与激活键在截图器里可交互
+// 模拟已安装但未激活的 World。
     {
       id: 'sandbox',
       status: 'inactive' as const,
@@ -1116,14 +1087,14 @@ const app = new WebApp({
     state: () => ({ visibility: { ...devWorldVisible }, driftedWorlds: [...devWorldDrift] }),
     set: (id, visible) => {
       devWorldVisible[id] = visible;
-      // dev:前缀"还没跟上"的状态照真实现模拟——重载前缀才清掉
+
       if (visible) devWorldDrift.add(id); else devWorldDrift.add(id);
       return `${id} 已${visible ? '对 agent 可见' : '对 agent 隐藏'} (dev)`;
     },
   },
   prompts: {
     list: () => devPromptDocs.map((doc) => ({ ...doc })),
-    // 截图器不起真 core,所以这里给一份形状与真实现一致的分段
+
     prefix: async () => [
       { title: 'ORIENTATION', text: '\n━━━ ORIENTATION ━━━\n' + persona.orientationText().trim(), sourceKey: 'orientation' },
       { title: '宪法', text: '\n\n━━━ 宪法 ━━━\n' + persona.constitutionText().trim(), sourceKey: 'constitution' },
@@ -1144,7 +1115,7 @@ const app = new WebApp({
   },
   sessionControl: {
     reloadPrefix: async () => {
-      devWorldDrift.clear(); // 重载即是把可见性烘进前缀,漂移随之消失
+      devWorldDrift.clear();
       return '系统前缀与工具表已重载，保留当前session的既有消息 (dev)';
     },
   },
@@ -1171,37 +1142,37 @@ const app = new WebApp({
       const p = devExtensions.find((item) => item.name === name);
       if (!p) throw new Error(`没有安装这个包: ${name}`);
       if (p.loaded) p.state = 'removed'; else devExtensions.splice(devExtensions.indexOf(p), 1);
-      return `已卸载 ${name}。它在本进程里仍在运行,重启后消失。(dev)`;
+      return `已卸载 ${name}。重启进程后生效。(dev)`;
     },
   },
   run: {
     pause: () => { paused = true; },
     resume: () => { paused = false; },
     isPaused: () => paused,
-    // 假重启:同一份回执形状,不退进程;supervised 让页面走"启动器会拉起"那条文案。
+
     restart: async () => {
       await new Promise((r) => setTimeout(r, 400));
       return {
         complete: true,
         steps: [
-          { label: '按住事件投递', ok: true, elapsedMs: 3 },
-          { label: 'World 收尾(托管的外部进程与存档都在这一步)', ok: true, elapsedMs: 1200 },
-          { label: 'core 状态落盘', ok: true, elapsedMs: 5 },
+          { label: '暂停事件投递', ok: true, elapsedMs: 3 },
+          { label: '停止 World', ok: true, elapsedMs: 1200 },
+          { label: '保存 Core 状态', ok: true, elapsedMs: 5 },
         ],
       };
     },
     supervised: true,
-    // 假关机:走完同一份回执形状,唯独不真的退进程(dev-console 里没有可关的东西)。
-    // 故意留一步「失败」,好让"有步骤被跳过"那条路在开发态也看得见。
+// 返回关机报告,保留开发控制台进程。
+// 模拟一个停止超时的步骤。
     shutdown: async () => {
       await new Promise((r) => setTimeout(r, 600));
       return {
         complete: false,
         steps: [
-          { label: '按住事件投递', ok: true, elapsedMs: 3 },
-          { label: 'World 收尾(托管的外部进程与存档都在这一步)', ok: true, elapsedMs: 4210 },
+          { label: '暂停事件投递', ok: true, elapsedMs: 3 },
+          { label: '停止 World', ok: true, elapsedMs: 4210 },
           { label: '托管 LLM server 停机', ok: false, elapsedMs: 3000, detail: '托管 LLM server 停机超时(3秒)' },
-          { label: 'core 状态落盘', ok: true, elapsedMs: 6 },
+          { label: '保存 Core 状态', ok: true, elapsedMs: 6 },
         ],
       };
     },

@@ -1,23 +1,4 @@
-/**
- * 主题工作室 —— 主题的**可变状态**：选中哪个方案、明暗挡位、本机自定义方案，
- * 以及"正在预览但还没保存"的那一份草稿。
- *
- * 三条设计要点：
- *
- * 1. **首屏那一步不需要工作室的编辑能力，但需要它的读取与应用。** 所以
- *    `applyStoredTheme(doc)` 是一个可以在内核入口第一行直接调的导出：它只做
- *    "读存档 → 刷 CSS 变量"，不依赖路由、不依赖任何已挂载的页面。晚一步应用主题
- *    的代价是首屏闪一下白底，那是用户唯一会注意到的性能问题。
- *
- * 2. **换主题要能推给已经画好的图。** 画布类组件把颜色烤进了像素里，CSS 变量一变
- *    它们不会自己重画。所以给一个订阅口 `onThemeChange(cb)`，消费方登记一次即可，
- *    不必轮询"当前主色是不是变了"。
- *
- * 3. **单例是有意的，而且只有这一个。** 主题本来就是整份文档的属性（CSS 变量挂在
- *    `documentElement` 上），做成"每个页面各持一份"就会出现两份互相覆盖的真相。
- *    所以这里有且只有一个进程级实例，状态就那三个字段；页面从 `getThemeStudio()`
- *    取用，不自己 new，也不把主题状态复制进自己的 state。
- */
+/** 管理当前颜色方案、明暗模式、自定义方案与未保存预览。首屏由 applyStoredTheme 同步应用；订阅者接收变化，图表据此重绘。 */
 
 import { toDisposable, type Disposable } from '../../shared/client-panel.ts';
 import {
@@ -72,11 +53,7 @@ export interface ThemeSnapshot {
 
 export interface ThemeChange {
   readonly snapshot: ThemeSnapshot;
-  /**
-   * 这次变化是不是"预览"。编辑器逐次拖动取色器会推出一长串 `preview: true`——
-   * 重画代价高的订阅方（画布图表）可以只认 `false` 那些，编辑器自己的实时预览
-   * 不该逼着后台每张图跟着重画三十次。
-   */
+  /** 是否为未保存的预览变化；订阅者可据此决定是否重绘。 */
   readonly preview: boolean;
 }
 
@@ -169,10 +146,7 @@ export class ThemeStudio {
 
   // ── 写 ──────────────────────────────────────────────────────────────
 
-  /**
-   * 把存档里的选择刷到文档上。**首屏那一次传 `notify: false`**——那时候还没有任何
-   * 订阅者，广播一条"主题变了"只会让第一个订阅方以为自己错过了什么。
-   */
+  /** 应用保存的选择；首屏传 notify=false，不发变化通知。 */
   apply(notify = true): void {
     this.previewPalette = null;
     const scheme = this.currentScheme();
@@ -293,7 +267,7 @@ export class ThemeStudio {
     writeStoredTheme(this.storage, this.state);
   }
 
-  /** 逐个派发，**一个订阅方抛错不挡住其余的**——那是"清理代码里再坏一次"的形状。 */
+  /** 逐个通知订阅者；单个回调失败不阻止其他回调。 */
   private emit(preview: boolean): void {
     if (this.listeners.size === 0) return;
     const change: ThemeChange = { snapshot: this.snapshot(), preview };

@@ -30,14 +30,7 @@ async function catchErr(p: Promise<unknown>): Promise<Any> {
 // Lifecycle
 // ===========================================================================
 
-/**
- * 可手动驱动的假 RAF。
- *
- * 真浏览器由合成器按刷新率调度，这里把"帧"变成一个显式动作：`tick(now)` 把当前
- * 排队的回调按给定时间戳跑掉。`requested` 是累计请求次数（含续帧），
- * `cancelled` 记下每次 `cancelAnimationFrame` 收到的 id——"dispose 有没有真的取消"
- * 只能靠它断言。
- */
+/** 手动 RAF；tick 推进当前回调，续帧留到下次。requested/cancelled 记录请求和取消。 */
 interface FakeRaf {
   pending: Map<number, (now: number) => void>;
   requested: number;
@@ -144,7 +137,6 @@ describe('Lifecycle —— 资源账本', () => {
     expect(back).toBe(d);
     expect(d.dispose).toHaveBeenCalledTimes(1);
 
-    // 已经死掉的账本不该再攒东西：再 dispose 一次也不会重复释放它
     lc.dispose();
     expect(d.dispose).toHaveBeenCalledTimes(1);
   });
@@ -385,22 +377,7 @@ describe('Lifecycle —— 资源账本', () => {
 // Router
 // ===========================================================================
 
-/**
- * 最小假 window。
- *
- * 两处刻意与真浏览器对齐：
- * - 赋的值与当前 hash **相同时不派发** hashchange（真浏览器就是这样，`reverting`
- *   那段逻辑的成败正压在这条上）。
- * - 赋值会按 `location.hash` 的规矩归一：`'/a'` → `'#/a'`，`'#'` / `''` → `''`。
- *
- * 一处刻意不同：**这里是同步派发**，真浏览器里改 `location.hash` 之后 hashchange
- * 是在当前任务结束后异步派发的。同步派发让测试不必等一轮宏任务，代价是"改 hash
- * 的那行之后紧跟的代码"在这里跑在事件之后而不是之前——被测的 Router 在改完 hash
- * 之后没有任何后续语句（`navigate` / `replace` 与 revert 都以写地址栏收尾），所以
- * 这个差异对它无害。
- *
- * 历史条目照真浏览器记：赋 `hash` 新增一条，`location.replace` 换掉当前那条。
- */
+/** 假窗口同步派发 hashchange；浏览器异步派发。相同 hash 不发事件，赋值归一化 hash；设置 hash 新增历史，replace 替换当前条目。 */
 interface FakeWin {
   location: { hash: string; replace(url: string): void };
   addEventListener(type: string, fn: () => void): void;
@@ -483,9 +460,8 @@ describe('Router —— parseHash', () => {
     expect(parseHash('#/a?k%zz=v%zz').query).toEqual({ 'k%zz': 'v%zz' });
   });
 
-  it('query 只有值坏编码时，键也跟着退回未 decode 的形态（行为记录）', () => {
-    // `query[decode(k)] = decode(v)` 里 v 抛错时整条赋值都没发生，catch 分支
-    // 用的是原始 k/v ——于是本来能 decode 的键也留在了编码态。见回报。
+  it('query 值解码失败时，键和值均保留编码形式', () => {
+    // 值解码失败时整项赋值未完成，键和值均保留编码形式。
     expect(parseHash('#/a?k%20e=v%zz').query).toEqual({ 'k%20e': 'v%zz' });
   });
 
@@ -896,9 +872,7 @@ describe('Router —— 与地址栏保持同步', () => {
     resolve2(false);
     await flush();
 
-    // 关键：回拨目标与地址栏现值相同时不会产生 hashchange。若用一面布尔旗子记
-    // "正在回拨"，它就没人消费、永远留在 true，把下一次干净的导航整个吃掉。
-    // 记具体 hash 才能正确清账。
+    // 写回相同 hash 不触发 hashchange，回拨状态需记录目标 hash。
     off.dispose();
     win.location.hash = '#/usage';
     await flush();
@@ -1004,8 +978,7 @@ describe('ConsolePageLoader —— 加载与去重', () => {
   });
 
   it('失败不缓存：第一次 import 抛错，第二次会重新 import', async () => {
-    // "还没 build"与临时 404 是常见情形。把失败缓存住，用户就必须刷整页才能重试
-    // ——那正是这个加载器要避免的事，所以只对**进行中**的请求去重。
+    // 加载失败不缓存，后续调用重新尝试。
     const bundle = makeBundle('gate');
     const importModule = vi.fn()
       .mockRejectedValueOnce(new Error('boom'))
@@ -1136,7 +1109,6 @@ describe('ConsolePageLoader —— 样式注入', () => {
       href: CSS_URL,
       dataset: { provider: 'world:chat' },
     });
-    // querySelector 在 LoaderDeps 里要求提供，但加载器从没调过（见回报）
     expect(h.querySelector).not.toHaveBeenCalled();
   });
 

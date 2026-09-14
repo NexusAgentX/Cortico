@@ -39,11 +39,7 @@ export async function mountPrompts(ctx: FeatureContext, opts: { embedded?: boole
   const toolbar = ui.h('div', 'prompt-toolbar');
   toolbar.append(status, ui.h('span', 'grow'));
 
-  /**
-   * 左侧标签层 · 编辑器 · 右栏,三列并排,两道把手可拖宽窄。
-   * 标签、分割线、右栏都**绝对定位**,坐标取同一份 `blockGeometry()`,
-   * 所以三者跟内容、也跟彼此严丝合缝。
-   */
+  // 标签、分割线与右栏均按 blockGeometry 定位。
   const stage = ui.h('div', 'prefix-stage');
   const flags = ui.h('div', 'prefix-flags');
   const host = ui.h('div', 'prefix-host');
@@ -116,7 +112,7 @@ export async function mountPrompts(ctx: FeatureContext, opts: { embedded?: boole
       } catch (err) {
         if ((err as { name?: string } | null)?.name === 'AbortError') return;
         ctx.onError(err);
-        // 这一份没落盘,改动退回待存队列,否则它就凭空消失了
+        // 保存失败的改动留在待保存队列。
         dirty.set(key, text);
         editor.setSaveState('dirty');
         setStatus(S.saveFailedFor(doc.title, String((err as Error)?.message ?? err)), true);
@@ -142,7 +138,7 @@ export async function mountPrompts(ctx: FeatureContext, opts: { embedded?: boole
 
   // ── 右栏:每块一格,列它那份模板的占位符;点开是浮层 ─────────────────
   let openPop: HTMLElement | null = null;
-  /** 刚被捕获阶段收起来的那个浮层是谁的——用来把"再点同一个"认成收起而不是重开。 */
+  /** 捕获阶段关闭的块键，用于将同键点击处理为关闭。 */
   let justClosed: string | null = null;
   function closePop(): void { openPop?.remove(); openPop = null; }
   ctx.lifecycle.own({ dispose: closePop });
@@ -181,15 +177,7 @@ export async function mountPrompts(ctx: FeatureContext, opts: { embedded?: boole
     return pop;
   }
 
-  /**
-   * 按当前块几何重排三层(内容不变，只挪位置)。
-   *
-   * `blockGeometry()` 的 0 点是**正文顶边**,而三层都挂在 stage 上,两者差着编辑器
-   * 那圈边框。差值每次现量:少了它,分割线就会跟块底色的交界错开一两个像素——
-   * 一条 2px 的线错 1px 是看得出来的。
-   *
-   * 标签**纵向中心压在分割线上**,尖头因此正指着它;分割线从旗尖起,一路铺到右栏末端。
-   */
+  /** 按块几何重排；测量编辑器内容与 stage 的坐标差以换算位置。 */
   function positionSides(): void {
     const geo = editor.blockGeometry();
     const off = editor.contentTop() - stage.getBoundingClientRect().top;
@@ -218,10 +206,7 @@ export async function mountPrompts(ctx: FeatureContext, opts: { embedded?: boole
     positionSides();
   }
 
-  /**
-   * 拖把手改栏宽。**移动与松手都听在 document 上**:指针一旦滑出那道 6px 的把手,
-   * 挂在把手身上的监听就再也收不到了,拖动会莫名其妙地断在半路。
-   */
+  /** document 接收拖动与松手事件，监听随生命周期释放。 */
   function bindGrip(grip: HTMLElement, side: 'flags' | 'rail'): void {
     grip.addEventListener('pointerdown', (ev: Event) => {
       const startX = (ev as MouseEvent).clientX;

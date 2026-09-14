@@ -1,12 +1,4 @@
-/**
- * 输入器图片通道的归一化:把用户丢进来的文件变成 `ConsoleImageAttachment`。
- *
- * 规则只有三条:不是图不收;长边超过上限按比例缩小;编码后仍超字节上限的改 JPEG
- * 重编码,再超就拒收。原文件在上限之内时字节原样透传(PNG 不转、GIF 动图不动),
- * 只有真的要缩才走 canvas——重编码是有损的,不该为一张本来就合规的图付这个代价。
- *
- * `fitWithin` 单独导出:它是这里唯一的算术,也是在没有 canvas 的测试环境里唯一能钉的部分。
- */
+/** 归一化输入图片：只缩不放，合规原文件保持原字节。缩放后超限时改用 JPEG，仍超限或解码失败则拒收。 */
 
 import type { ConsoleImageAttachment, ConsolePromptImagesOptions } from '../../shared/client-panel.ts';
 import { S } from './strings.ts';

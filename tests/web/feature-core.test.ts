@@ -364,7 +364,6 @@ function mkCtx(capabilities: Record<string, boolean>, hash = '#/core'): Ctx {
   return { ctx, doc, root, lifecycle, errors, win, guards };
 }
 
-/** 全挂:六个子页签都在。 */
 const ALL_CAPS = {
   debug: true,
   sessions: true,

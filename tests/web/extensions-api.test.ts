@@ -1,7 +1,4 @@
-/**
- * /api/extensions*:接口只转交,形状与错误码是它自己的。装卸的语义(pnpm、磁盘对账)
- * 在 tests/extensions.test.ts。
- */
+/** 扩展管理接口覆盖 World、provider 与 bot 包。 */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

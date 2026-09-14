@@ -226,7 +226,7 @@ const PromptComposer = React.forwardRef<ComposerHandle, { opts: ConsolePromptInp
             onPaste={imagesOpts ? (event) => {
               const files = [...event.clipboardData.files].filter(isImageFile);
               if (files.length === 0) return;
-              // 剪贴板里同时有图和文字时只收图:粘出来的多半是文件名,不是用户想说的话
+              // 粘贴内容包含图片时只处理图片。
               event.preventDefault();
               addFiles(files);
             } : undefined}

@@ -1,26 +1,4 @@
-/**
- * 浮层四件：toast / confirm / drawer / busy。
- *
- * 前三件用户都能自己关掉（到点自摘 / 答一个 / Esc）；`busy` 是唯一关不掉的一层，
- * 见它自己那段注释。
- *
- * 两条结构性约定，其余细节都是从它们推出来的：
- *
- * 1. **挂载点由调用方给**（`env.host`）。面板自己的 `root` 会被 host 在 unmount 时
- *    清空，浮层挂那里会被连带抹掉；而模块顶层引用 `document` 又让测试与多实例难受。
- *
- * 2. **每层浮层自带一个 `AbortController`，并把面板的 `signal` 接进来。**
- *    浮层是全套原语里唯一"活得比调用它的那次渲染更久"的东西，也就唯一有生命周期
- *    问题：面板卸了，开着的抽屉会赖在屏幕上，更糟的是挂起的 `confirm()` 永远不
- *    resolve——扩展里 `await ui.confirm(...)` 之后的代码（包括它自己的清理）直接吊死。
- *    所以面板 abort 时一律强制关闭；`confirm` 按**用户没答应**收场，resolve `false`
- *    而不是 reject（reject 会把"面板正常卸载"这种日常事件变成扩展里的未捕获异常）。
- *    abort 之后再调：`confirm` 立即给 `false`，`toast` / `drawer` 静默不显示——
- *    面板都没了，弹一个没人认领的窗只会误导。
- *
- * 视觉复用既有 class：`modal` / `modalcard` / `modalhead` / `modaltitle` /
- * `modalbody` / `pre.mono` / `btn` / `toast`。
- */
+/** 浮层挂载到调用方提供的 host，并随面板 signal 关闭。confirm 取消或 abort 时返回 false；abort 后不显示新浮层。 */
 
 import type { Disposable } from '../../shared/client-panel.ts';
 import { h } from './dom.ts';
@@ -88,8 +66,7 @@ function openModal(env: OverlayEnv, onClose: () => void): Overlay {
     },
     { signal: layer.signal },
   );
-  // 用 mousedown 而不是 click:在卡片里按下、拖到遮罩上才松手,click 的 target
-  // 会是遮罩,那样一次划选就把对话框关了。
+  // 按下位置决定是否关闭，卡片内开始的拖选不关闭弹窗。
   el.addEventListener(
     'mousedown',
     (ev: MouseEvent) => {
@@ -153,7 +130,6 @@ export function confirm(
     bar.appendChild(
       button(doc, modal.signal, S.cancel, { size: 'sm', onClick: () => settle(false) }),
     );
-    // danger 的文案换成"仍要继续":确认键上写着后果,比一个通用的"确认"更难误按
     const ok = button(doc, modal.signal, opts.danger ? S.proceedAnyway : S.confirm, {
       size: 'sm',
       variant: opts.danger ? 'danger' : 'primary',
@@ -168,23 +144,13 @@ export function confirm(
   });
 }
 
-/**
- * 忙碌浮层：铺一层**关不掉**的遮罩，只能靠返回的 `Disposable` 撤下。
- *
- * 与 `drawer` 只差一件事，而那件事正是全部的意义：这里**不接 Esc、不接点遮罩**，
- * 也不放关闭键。等重启这类场景要的是"这段时间别动"，用 `drawer` 冒充的话，用户
- * 一按 Esc 就把遮罩关了，还以为操作取消了——其实进程照样在重启。
- *
- * 仍然走 `openLayer`，所以面板 abort 时照样自动撤：不可关闭指的是"用户关不掉"，
- * 不是"永远撤不下来"——面板都卸了还盖着一层，那是把整个控制台锁死。
- */
+/** busy 不响应 Esc、遮罩或关闭按钮；由返回的 Disposable 或面板 abort 关闭。 */
 export function busy(env: OverlayEnv, title: string, text?: string): Disposable {
   if (env.signal.aborted) return noopDisposable;
   const doc = env.doc;
   const el = h(doc, 'div', 'modal busy');
   el.setAttribute('role', 'dialog');
   el.setAttribute('aria-modal', 'true');
-  // 读屏软件据此播报"正忙",而不是把一张没有任何可操作控件的卡念成普通对话框
   el.setAttribute('aria-busy', 'true');
   const layer = openLayer(env, el);
   const card = h(doc, 'div', 'modalcard');
@@ -198,16 +164,7 @@ export function busy(env: OverlayEnv, title: string, text?: string): Disposable 
   return layer;
 }
 
-/**
- * 抽屉：一层能关掉的 `.modalcard`，里面放"看一眼大的"那份东西。
- *
- * 第二参给**字符串**就铺进 `pre.mono`（看原始 JSON / 一段日志的老样子）；给**节点**
- * 就原样放进 `.modalbody`——放大的图、一份 `log`、一张 `table` 都行。
- *
- * 放宽入参而不是另开 `imageViewer` / `logViewer` 之类：那些需求彼此只差一个内容
- * 节点，各自发明一个原语等于把同一层浮层的生命周期与关闭语义复制三遍，而生命
- * 周期正是浮层唯一难的地方（见文件顶部第 2 条）。
- */
+/** 可关闭的抽屉；字符串正文显示为 pre.mono，节点正文直接挂入 modalbody。 */
 export function drawer(env: OverlayEnv, title: string, body: string | HTMLElement): Disposable {
   if (env.signal.aborted) return noopDisposable;
   const doc = env.doc;

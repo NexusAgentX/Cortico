@@ -8,20 +8,10 @@
 <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
-<!--
-  这一页不再预写任何视图。
-
-  左栏、每一页、每一个 World 面板都由内核在运行时建出来:框架页来自
-  `src/web/client/features/`，provider 面板来自 manifest + 各自的扩展 bundle。
-  内核入口带内容 hash，由服务端查构建产物、注入到 body 结束标签之前——所以这里
-  也写不死那个 script 标签。
-
-  没构建过(`pnpm build:web` 没跑)时不会注入任何脚本，页面停在下面这行提示上。
--->
+<!-- 服务端按构建清单在 body 末尾注入带内容 hash 的内核脚本。 -->
 <noscript>控制台需要 JavaScript。 The console needs JavaScript.</noscript>
 <div id="boot-note">
   控制台正在载入…… Loading the console…
-  <div class="boot-hint">若长时间停在这里，多半是浏览器端还没构建：跑一次 <code>pnpm build:web</code>。<br>If this stays on screen, the browser bundle is probably not built yet: run <code>pnpm build:web</code> once.</div>
 </div>
 </body>
 </html>
