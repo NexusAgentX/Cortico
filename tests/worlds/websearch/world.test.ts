@@ -72,6 +72,8 @@ describe('WebSearchWorld', () => {
     expect(out).toContain('   https://a.example');
     expect(out).toContain('   摘要一');
     expect(out).toContain('2. 标题二');
+    expect(out).toContain('QQ');
+    expect(out).toContain('banned');
   });
 
   it('无结果 → 友好提示', async () => {
@@ -80,6 +82,26 @@ describe('WebSearchWorld', () => {
     const mod = new WebSearchWorld({ apiKey: 'k' });
     const out = await mod.tools()[0].handler({ q: '查无此事的东西' }, ctx);
     expect(out).toBe('(no results for "查无此事的东西")');
+  });
+
+  it('有结果时附带外部平台风险提醒', async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      okResponse({ web: { results: [{ title: 'T', url: 'https://a.example', description: 'd' }] } }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const mod = new WebSearchWorld({ apiKey: 'k' });
+    const out = (await mod.tools()[0].handler({ q: '测试查询' }, ctx)) as string;
+    expect(out).toContain('QQ');
+    expect(out).toContain('banned');
+    expect(out.trim().endsWith('Paraphrase and use judgment.')).toBe(true);
+  });
+
+  it('无结果时不附带风险提醒', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => okResponse({ web: { results: [] } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const mod = new WebSearchWorld({ apiKey: 'k' });
+    const out = await mod.tools()[0].handler({ q: '查无此事的东西' }, ctx);
+    expect(out).not.toContain('banned');
   });
 
   it('mode非法值回退auto,n超界被夹到[1,6]', async () => {

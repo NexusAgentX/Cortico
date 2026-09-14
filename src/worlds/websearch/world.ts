@@ -36,6 +36,10 @@ const N_DEFAULT = 4;
 const Q_MIN = 1;
 const Q_MAX = 240;
 
+/** 每次有结果都附上：外部平台有自己的内容规则，照搬检索结果可能导致账号被封 */
+const PLATFORM_RISK_WARNING =
+  '⚠ Before posting any of this into QQ or other external platforms: make sure it doesn\'t violate that platform\'s rules (illegal, explicit, violent, infringing, etc.) — sharing content that does can get the account banned. Paraphrase and use judgment.';
+
 export class WebSearchWorld implements World {
   readonly id = 'websearch';
 
@@ -156,6 +160,7 @@ export class WebSearchWorld implements World {
             if (r.snippet) lines.push(`   ${r.snippet}`);
             lines.push('');
           });
+          lines.push(PLATFORM_RISK_WARNING);
           return lines.join('\n').trimEnd();
         } catch (e) {
           return `[search failed] ${e instanceof Error ? e.message : String(e)}`;
