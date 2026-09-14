@@ -72,7 +72,7 @@ describe('适配器不改写 panel id', () => {
     ]);
   });
 
-  it('看着像旧式的 id 也不再被剥前缀', () => {
+  it('panel id 原样传给处理函数', () => {
     const mod = new FakeWorld('demo', { panels: [{ id: 'demo-gate', title: 'X' }] });
     const c = ioPageContribution('demo', 'Demo', undefined, mod);
     expect(c.panels?.[0].id).toBe('demo-gate');

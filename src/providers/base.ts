@@ -21,10 +21,8 @@ export abstract class BaseProvider implements ResponseClient {
 
 export interface ProviderHost {
   /**
-   * 这个端点自己的部署数据目录(`<部署根>/providers/<端点名>/`)。
-   * **内部结构解释权全归 provider 包**:token、缓存、模块自己的状态想怎么放就怎么放,
-   * 框架只保证这一个目录是它的。目录按端点名分家,所以同一个 kind 的两个端点互不串味;
-   * 反过来,同一个端点被几份部署共用时它们共享这里——OAuth 端点因此只要授权一次。
+   * 端点数据目录 <部署根>/providers/<端点名>/，内部结构由 provider 管理。
+   * 不同端点使用不同目录；同一部署根下共享该端点的部署共用目录。
    */
   stateDir: string;
   repoRoot?: string;
@@ -38,12 +36,9 @@ export interface ProviderHost {
   log: Logger;
 }
 
-/**
- * 框架交给 `ProviderRegistry` 的那一份 host。按端点名分岔的两样(`stateDir` 与只读那个目录的
- * `secret`)由 registry 自己填——它才知道这次解析的是哪个端点。
- */
+/** 传给 ProviderRegistry 的宿主；registry 按端点补充 stateDir 和对应目录的 secret 读取器。 */
 export type ProviderHostBase = Omit<ProviderHost, 'stateDir' | 'secret' | 'currentEntry' | 'resource'> & {
-  /** 全局端点表的根;每个端点在它下面有自己一格。 */
+  /** 同一部署根下共享的端点目录。 */
   stateRoot: string;
 };
 
@@ -94,9 +89,8 @@ export interface ProviderModule {
   console?(host: ProviderConsoleHost): Partial<ConsolePageContribution>;
   prices?(entry: LLMProviderEntry, request: Request, at: QuoteTime): readonly PriceDefinition[];
   /**
-   * Local token estimate for records the upstream has not counted yet. Absent = the
-   * core's character-ratio estimate. Only estimates: the exact count of everything
-   * already sent comes from the upstream usage report.
+   * Estimate tokens for records not yet covered by upstream usage.
+   * Absent: Core uses its character-ratio estimate.
    */
   estimateTokens?(records: readonly ContextRecord[], spec: ModelSpec): number;
   /** The upstream rejected a request because its input exceeded the model's context. */

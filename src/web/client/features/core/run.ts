@@ -20,7 +20,6 @@ export function createRunView(deps: RunViewDeps): RunView {
   const sheet = ui.sheet({
     title: S.runTitle,
     en: 'context · cache · batches',
-    desc: S.runDesc,
   });
   const grid = ui.statgrid();
   sheet.body.appendChild(grid);

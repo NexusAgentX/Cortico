@@ -1,12 +1,7 @@
 /**
- * 运行日志 —— core 内部日志的尾部(只给人看,agent 不可见)。
- *
- * 与事件流的分工:事件库是 bot 的**经历**(她查得到),运行日志是**机器的自述**
- * (她查不到)。两块长得像,但数据源与可见性完全是两回事,所以不合并。
- *
- * 过滤在服务端做:`/api/log?run&level&area&grep&round&limit` 从该 run 的 log.jsonl
- * 尾部向前扫,收满 limit 条即停;run 缺省是当前 run。run 清单来自 `/api/runs`。
- * 文本框的变化去抖 300 ms 再查,回车立即查。
+ * 运行日志不进入 agent 上下文。/api/log?run&level&area&grep&round&limit 按条件从
+ * log.jsonl 尾部查满 limit 条；run 默认当前运行，清单取自 /api/runs。
+ * 文本输入去抖 300 ms，Enter 立即查询。
  */
 
 import type { ConsoleUi } from '../../../shared/client-panel.ts';

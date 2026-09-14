@@ -20,7 +20,7 @@ export function makeTmpDir(): { dir: string; cleanup: () => void } {
       try {
         rmSync(dir, { recursive: true, force: true });
       } catch {
-        // Windows偶发句柄滞留,忽略
+        // 清理失败不影响本测试结果。
       }
     },
   };
@@ -31,20 +31,14 @@ export function makeCfg(patch?: Partial<BotConfig>): BotConfig {
   return Object.assign(cfg, patch);
 }
 
-/**
- * 当前活跃端点的模型档(可就地改)。模型整组归 Provider,测试要改窗口/生成上限
- * 就得改这一份——Persona那边已经没有模型可改了。
- */
+/** 当前活跃端点的模型配置，可原位修改窗口与生成上限。 */
 export function activeSpec(cfg: CoreConfig): ModelSpec {
   const entry = cfg.providers[cfg.activeProvider];
   if (!entry?.spec) throw new Error(`夹具的 provider ${cfg.activeProvider} 没有模型档`);
   return entry.spec;
 }
 
-/**
- * 一次假部署(LoadedConfig)。密钥按名字取——测试里给什么名字都返回同一个假值,
- * 除非显式给 secrets 映射。
- */
+/** 测试部署默认返回同一假密钥，可用 secrets 映射覆盖。 */
 export function makeLoaded(opts: {
   config: BotConfig;
   rootDir: string;
@@ -72,7 +66,7 @@ export class FakeLLM implements FixtureClient {
   fallback: () => ChatMessage = () => textReply('');
   /** 下一次chat抛出该值(断流路径用);抛完自动清除 */
   throwNext: unknown = null;
-  /** 接下来连续若干次 chat 各抛一个(续拍路径用);先于 throwNext 消费,用完自动清空 */
+  /** 按顺序用于后续 chat 调用；优先于 throwNext，耗尽后清空。 */
   throwSequence: unknown[] = [];
   /** 断流前先转发这些增量(模拟"闭合过的调用已提前派发"的真实时序);用完自动清除 */
   emitBeforeThrow: LLMDelta[] | null = null;
@@ -116,7 +110,7 @@ export class FakeLLM implements FixtureClient {
   }
 }
 
-/** 从完整消息合成流式增量(与真实流同序:reasoning → content → 逐个工具调用) */
+/** 将完整消息按 reasoning、content、工具调用的固定顺序转换为测试增量。 */
 export function messageDeltas(message: ChatMessage): LLMDelta[] {
   const out: LLMDelta[] = [];
   if (message.reasoning_content) out.push({ type: 'reasoning', text: message.reasoning_content });
@@ -158,10 +152,7 @@ export function textReply(content: string): ChatMessage {
   return { role: 'assistant', content, reasoning_content: '' };
 }
 
-/**
- * 最小人格实现:一个主 session + 一个 fork 声明,足够驱动 MainLoop。
- * 核心动作的 handler 直接接到传进来的 CoreApi 上(与真实现同形状)。
- */
+/** 测试 Persona 声明主 session 与一个 fork，工具 handler 使用传入的 CoreApi。 */
 export function makeFakePersona(extraTools: ToolDef[] = [], opts?: FakePersonaOptions): FakePersona {
   let core: CoreApi | null = null;
   const api = (): CoreApi => {
@@ -217,7 +208,7 @@ export function makeFakePersona(extraTools: ToolDef[] = [], opts?: FakePersonaOp
         'notice',
       );
     },
-    // 与真实现同形的批末压力裁量:软阈值先预警一次,已预警仍超则请求交接。
+    // 软阈值首次超限时预警，已预警且仍超限时请求交接。
     onBatchEnd: () => {
       if (opts?.onBatchEnd) {
         opts.onBatchEnd(api());
@@ -292,15 +283,14 @@ export function makeFakePersona(extraTools: ToolDef[] = [], opts?: FakePersonaOp
       return { tail: null };
     },
     ...(opts?.firstTurn ? { firstTurn: opts.firstTurn } : {}),
-    // 指向一个保证不存在的路径:若解析到真实的 persona/ 目录,
-    // readdirSync(memoryDir) 会读到当下的 proposals/ 文件,测试结果就随真实运行状态漂移。
+    // 使用不存在的隔离路径，避免读取实际 Memory 内容。
     memoryDir: '__fake_persona_dir_does_not_exist__',
     blobs: { put: (name: string) => `mem:${name}`, get: () => null, list: () => [] },
   };
   return persona;
 }
 
-/** 核心动作的 schema(与真实现同名同形,handler 由上面接到 CoreApi) */
+/** 测试 Persona 工具 schema，handler 绑定到 CoreApi。 */
 function corePrimitiveSpecs(): Array<{
   name: string;
   description: string;
@@ -330,7 +320,7 @@ function corePrimitiveSpecs(): Array<{
   ];
 }
 
-/** 潜意识那一面(SubconsciousPersona)与 core 那一面(Persona)都齐 */
+/** Persona 测试实现及其观测接口。 */
 export interface FakePersona extends Persona {
   emergences(): string[];
   tools(sessionId: string): ToolDef[];
@@ -338,7 +328,7 @@ export interface FakePersona extends Persona {
 }
 
 export interface FakePersonaOptions {
-  /** 模型档位与轮数上限的来源(缺省用 DEFAULT_CONFIG) */
+  /** 测试 Persona 的配置；缺省使用 DEFAULT_CONFIG。 */
   cfg?: BotConfig;
   /** 额外的 session 声明(测 fork 原语用);会接在主声明之后 */
   extraSessions?: SessionDecl[];
@@ -346,28 +336,25 @@ export interface FakePersonaOptions {
   mainPatch?: Omit<Partial<SessionDecl>, 'outputTap'> & { outputTap?: FixtureTap | SessionDecl['outputTap'] };
   /** 主 session 工具表里要并进来的 World */
   worlds?: World[];
-  /** fork 工具的执行体(真实现里是潜意识) */
+  /** fork 工具的执行函数。 */
   onFork?: (args: Record<string, unknown>) => Promise<string>;
-  /** 上下文交接策略(真实现里是"梦 + 按 keepRatio 留尾");覆盖时醒来消息也归你注入 */
+  /** 覆盖交接策略时，开场后的通知也由该策略提供。 */
   onHandoff?: (snapshot: ChatMessage[], ctx: { hardTokens: number | null }) => Promise<ContextHandoffResult>;
-  /** 投递刻时机钩子的旁观者(断言收编行为用;在默认抬头注入之前调) */
+  /** 默认内部文本注入前调用，供测试观察 onDelivery。 */
   onDelivery?: (ctx: { events: EventEnvelope[] }) => void;
   /** 完全接管批末时机钩子(压力裁量测试用) */
   onBatchEnd?: (api: CoreApi) => void;
   /** 软压力预警文本;null=不预警,超软阈值直接请求交接 */
   pressureNotice?: string | null;
-  /** 软轮数上限那一轮拼在回执末尾的提醒;null=不拼。缺省一句英文(老断言照旧)。 */
+  /** 软轮数提醒文本；null 表示不添加，缺省使用英文提醒。 */
   softHint?: string | null;
-  /** 合成首轮对话(风格锚)的内容;不给=人格不提供该机制 */
+  /** 合成首轮对话内容；未提供时禁用该机制。 */
   firstTurn?: () => FirstTurnRound[];
-  /**
-   * 沉默人格:所有时机钩子不注入任何话语(压力裁量退化为直接请求交接)。
-   * 用来验收 core 不会自己往上下文写任何一句话。
-   */
+  /** 时机钩子不注入文本；超出软预算时直接请求交接。 */
   silent?: boolean;
 }
 
-/** 与真实现同形状的 schedule_wake 参数解析(闹钟语义归Persona,经 timers 原语落地) */
+/** 测试 Persona 的 schedule_wake 参数解析；定时器通过 CoreApi 创建。 */
 async function fakeScheduleWake(
   core: CoreApi,
   args: Record<string, unknown>,
@@ -385,9 +372,7 @@ async function fakeScheduleWake(
   return r.ok ? `[system/scheduled] Wake set for ${at} (id: ${r.id}).` : `[bad input] ${r.error}`;
 }
 
-/**
- * Persona看到的 core 表面。默认提供无副作用实现,单测按需覆盖。
- */
+/** CoreApi 测试实现，方法默认无副作用，可按测试覆盖。 */
 export function makeFakeHarnessApi(patch: Partial<FixtureHarnessApi> = {}): CoreApi {
   const state: Record<string, unknown> = {};
   return {
@@ -422,10 +407,7 @@ export function makeFakeHarnessApi(patch: Partial<FixtureHarnessApi> = {}): Core
   };
 }
 
-/**
- * 假 World 的环境提示词模板也走真文件——框架只从 `role: 'envPrompt'` 的模板取文本,
- * 测试不该有一条绕开模板的捷径,否则钉不住"前缀只来自模板"这条不变量。
- */
+/** 假 World 通过 role=envPrompt 的文件声明提供环境模板，与正式模板使用相同解析入口。 */
 const FAKE_TEMPLATE_DIR = mkdtempSync(join(tmpdir(), 'bot-fake-worlds-'));
 let fakeTemplateSeq = 0;
 
@@ -446,7 +428,7 @@ export function makeFakeIO(id: string, tools: ToolDef[] = [], staticText = ''): 
   };
 }
 
-/** 改假 World 的环境提示词 = 改它的模板文件(与真 World 同一条路径)。 */
+/** 修改假 World 的环境模板文件。 */
 export function rewriteFakeIOTemplate(mod: World, text: string): void {
   const doc = mod.console?.()?.promptDocs?.find((d) => d.role === 'envPrompt');
   if (!doc) throw new Error(`${mod.id} 没有环境提示词模板`);

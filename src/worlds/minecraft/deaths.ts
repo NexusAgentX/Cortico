@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { nowIso } from '../../core/util.ts';
 
-/** 一次死亡的事实条目:什么时候、官方死因原文(没捞到为 null)、死在哪一格 */
+/** 死亡时刻、服务端死因原文与坐标；未获取死因时为 null。 */
 interface DeathFact {
   at: string;
   cause: string | null;
@@ -21,10 +21,7 @@ interface DeathToll {
   day: string;
   today: number;
   total: number;
-  /**
-   * 最近 N 次死亡的死因与死亡格。归档(minecraft-deaths.json)天然带死因,
-   * 同格死亡计数(「你今天第 N 次死在这一格」)也从这里数 —— 纯计数,不做判断。
-   */
+  /** 近期死亡记录，用于计算同日同格死亡次数。 */
   lastCauses: DeathFact[];
 }
 
@@ -33,7 +30,6 @@ const LAST_CAUSES_CAP = 20;
 
 const EMPTY: DeathToll = { world: '', day: '', today: 0, total: 0, lastCauses: [] };
 
-/** 换日点距午夜的小时数。一场直播(19:00→次日 00:12)要整个落在同一个键里。 */
 const DAY_START_HOUR = 6;
 
 /**
@@ -44,7 +40,7 @@ export function dayKey(timezone: string, at: Date = new Date()): string {
   return nowIso(timezone, new Date(at.getTime() - DAY_START_HOUR * 3_600_000)).slice(0, 10);
 }
 
-/** 落盘文件 → 账本;文件不存在/空/坏一律当没死过 */
+/** 文件不存在、为空或格式错误时使用空记录。 */
 export function loadDeaths(file: string | null): DeathToll {
   if (!file || !existsSync(file)) return { ...EMPTY };
   let data: Partial<DeathToll>;
@@ -84,9 +80,8 @@ export class DeathBook {
   }
 
   /**
-   * 记一次死亡,返回记完之后的读数。世界变了整本重开,跨日 today 归零。
-   * `fact` 是这一次的死因原文与死亡格(都可缺);`hereToday` 是含这一次在内、
-   * 今天死在同一格的次数(没有格读数时为 0)—— 纯计数,判断留给她。
+   * 记录死亡后返回计数；世界改变时重置，跨日时 today 归零。
+   * hereToday 包含本次死亡；缺少死亡坐标时为 0。
    */
   record(
     world: string,
@@ -107,10 +102,7 @@ export class DeathBook {
     return { today: this.toll.today, total: this.toll.total, hereToday };
   }
 
-  /**
-   * 官方死因晚到(死亡广播与 death 事件的先后不保证):补进最近那一条。
-   * 只认 15 秒内、还没有死因的那条 —— 再晚的补写宁可丢,也不错挂到上一次死亡上。
-   */
+  /** 迟到的服务端死因仅补入 15 秒内尚无死因的最近一次死亡。 */
   noteCause(cause: string, at: Date = new Date()): void {
     const last = this.toll.lastCauses[this.toll.lastCauses.length - 1];
     if (!last || last.cause !== null) return;

@@ -6,20 +6,18 @@ export interface CoreStateData {
   /** 上次截断时刻ISO */
   lastTruncateAt: string | null;
   /**
-   * 投递水位：该游标及之前的唤醒项均已进入 session。
-   * 总线队列不持久化；重启时仅补投水位之后的外部事件，内部事件不跨进程重放。
+   * 投递水位：该游标及之前的事件均已投递或已了结。
+   * 总线不持久化；重启仅补投水位之后需要投递的外部事件。
    */
   lastDeliveredCursor: number;
   /**
-   * 持久化的 LLM 连败账，时间单位为毫秒。since 为当前连败起点，0 表示不在连败中；at 保存窗口内每次失败时刻，重启后仍可在恢复时报告。
+   * LLM 连续失败状态，时间单位为毫秒。since 为起点，0 表示没有连续失败；
+   * at 保存窗口内的失败时刻，重启后首次成功仍可报告。
    */
   llmStall: { since: number; at: number[] };
   /** Persona所有的不透明状态；core 仅负责原子持久化。 */
   persona: Record<string, unknown>;
-  /**
-   * 运维设置的 World 可见性，默认可见并跨重启保留。隐藏仅撤下 agent 表面，
-   * 不改变部署层的挂载状态。
-   */
+  /** World 可见性默认开启并跨重启保留；隐藏不改变挂载或运行状态。 */
   worldVisibility: Record<string, boolean>;
 }
 
@@ -48,7 +46,7 @@ function readStall(raw: unknown): { since: number; at: number[] } {
 
 export class CoreState {
   private file: string;
-  // persona 每个实例各自新建:DEFAULTS 是共享字面量,浅拷贝会让两个实例改到同一个袋子。
+  // 各实例需独立的 Persona 状态对象，不能共享 DEFAULTS 中的引用。
   data: CoreStateData = freshDefaults();
 
   constructor(dataDir: string) {

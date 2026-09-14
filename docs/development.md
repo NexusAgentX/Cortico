@@ -1,15 +1,15 @@
+<!-- Owner: package.json, vitest.config.ts, tsconfig.json, tsconfig.web.json -->
+
 # 开发
 
-Owner: `package.json`, `vitest.config.ts`, `tsconfig.json`, `tsconfig.web.json`
-
-Node 22+,pnpm 11(经 corepack 钉版本)。规则在 [AGENTS.md](../AGENTS.md),贡献流程在
+Node 22+,pnpm 11(版本由 `package.json` 的 `packageManager` 指定)。规则在 [AGENTS.md](../AGENTS.md),贡献流程在
 [CONTRIBUTING.md](../CONTRIBUTING.md)。
 
 ## 命令
 
 | 命令 | 作用 |
 |---|---|
-| `pnpm start <部署名>` | 起一份部署;`pnpm bots` 列出可起的 |
+| `pnpm start <部署名>` | 启动部署;`pnpm bots` 列出可用部署 |
 | `pnpm test` / `pnpm test:watch` | vitest;`pnpm exec vitest run <路径>` 跑一部分 |
 | `pnpm run typecheck` | Node 侧 `tsc --noEmit` |
 | `pnpm typecheck:web` | 浏览器侧,`tsconfig.web.json` |
@@ -19,15 +19,16 @@ Node 22+,pnpm 11(经 corepack 钉版本)。规则在 [AGENTS.md](../AGENTS.md),�
 | `pnpm check:extension <目录>` | 校验一个扩展包 |
 | `pnpm audit:release` | 发布审计:部署资源、明文凭证、异常大文件 |
 
-提交前 `pnpm test` 与 `pnpm run typecheck` 都绿;改了浏览器代码再加 `pnpm typecheck:web` 与
-`pnpm build:web`。bot 进程活着时别 `build:web`。验证改动不起真 bot:用测试、`dev:console` 或
-`scratch/` 下的脚本。
+提交前必须通过 `pnpm test` 与 `pnpm run typecheck`;修改浏览器代码还需通过
+`pnpm typecheck:web` 与 `pnpm build:web`。bot 运行期间禁止构建其正在使用的控制台文件。
+使用测试、`dev:console` 或 `scratch/` 下的脚本验证改动,禁止为验证而启动真实 bot。
 
 ## 两份 tsconfig
 
-Node 侧与浏览器侧的 lib 互斥:`tsconfig.json` 排掉 `src/web/client/**`、`src/web/shared/**`、
-各 `console/**` 与 jsdom 测试;`tsconfig.web.json` 换上 DOM、去掉 `@types/node`,`include` 必须
-逐条对上根配置的 `exclude`,`exclude` 必须显式清空,否则会静默变成检查零个文件且退出 0。
+Node 侧与浏览器侧分别配置类型库:`tsconfig.json` 排掉 `src/web/client/**`、`src/web/shared/**`、
+各 `console/**` 与 jsdom 测试;`tsconfig.web.json` 使用 DOM 类型并移除 `@types/node`。
+浏览器配置的 `include` 必须覆盖根配置排除的文件,并显式清空继承的 `exclude`。
+该配置设有 `files: []`,遗漏上述设置可能导致没有文件被检查而仍以状态 0 退出。
 被 Node 侧 import 到的共享文件两边都查。
 
 ## 测试
@@ -45,22 +46,23 @@ Node 侧与浏览器侧的 lib 互斥:`tsconfig.json` 排掉 `src/web/client/**`
 | `tests/integration/` | 整机:启动即暂停、QQ 起草确认、彩排 |
 | `tests/helpers/` | `fake-host.ts`(World 的假宿主)、`mock-napcat.ts`(假 OneBot 协议端) |
 
-只有模型是脚本化的;git 仓库、端口、事件库都是真的。测试不出网。
+测试使用脚本化模型、本地 git 仓库、端口与事件库;World 宿主和平台服务使用 `FakeHost`、
+`MockNapCat` 等替身,部分 HTTP 响应由测试提供。测试不访问外部网络。
 
 ## 目录
 
 | 路径 | 内容 |
 |---|---|
-| `bin/cortico.mjs` | 操作员那一层的启动器。纯 JS 零依赖:它要在 `node_modules` 存在之前就跑得起来 |
+| `bin/cortico.mjs` | 启动器,仅依赖 Node 内建模块;可在安装项目依赖前运行 |
 | `src/core/` | Core(见 [src/core/README.md](../src/core/README.md)) |
 | `src/bot.ts`、`src/world.ts`、`src/deploy.ts`、`src/paths.ts`、`src/launcher.ts` | 装配、部署与启动 |
-| `src/providers/`、`src/protocol/open-responses/` | 模型端点与线协议 |
+| `src/providers/`、`src/protocol/open-responses/` | 模型端点与通信协议 |
 | `src/web/` | 控制台 |
 | `src/extensions/`、`src/extensions.ts` | 扩展装载 |
 | `src/worlds/<id>/` | 内建 World |
 | `bots/<名>/` | bot 包 |
 | `scripts/` | `build-web`、`dev-console`、`logq`、`extension-check`、`release-audit`、`migrate-rename`、`generate-open-responses` |
-| `templates/extension/<kind>/` | 扩展包模板:三种 kind 各一个能装的最小包 |
+| `templates/extension/<kind>/` | World、Provider、bot 三类扩展的可安装模板 |
 | `scratch/`、`deprecated/`、`deployments/`、`extensions/` | 都不进版本控制 |
 
 ## 文档

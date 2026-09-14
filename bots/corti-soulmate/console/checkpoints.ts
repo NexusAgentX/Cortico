@@ -35,8 +35,7 @@ function listCard(
   const card = ui.sheet({
     title: '存档点',
     en: 'git tag',
-    desc: '一个存档点 = persona/ 上的一个 annotated tag。回滚会连同全部 core 存储一起清,'
-      + '所以它不是"切分支",是一次彻底重开。',
+    desc: '存档点是工作区 Git 仓库中的 annotated tag。回滚时还会按存储清单清除数据。',
   });
 
   const bar = ui.rowbar();
@@ -127,20 +126,19 @@ async function rollback(
   const { ui } = ctx;
   const first = await ui.confirm({
     title: `回滚到存档点「${name}」?`,
-    body: '① persona/(记忆)恢复到该存档点;'
-      + '② 清空全部 core 数据(session / 事件库 / 状态 / 定时器 / 统计 / 用量 / World 缓存)。'
-      + '= 一次彻底重置。persona 还能从 git 找回来,core 数据不可恢复。',
+    body: '工作区恢复到该存档点，再按清单清除 session、事件库、状态、定时器、统计、用量和 World 缓存。'
+      + '已提交的工作区版本可查询；清除的数据不可恢复。',
     danger: true,
   });
   if (!first) return;
   const second = await ui.confirm({
     title: '再确认',
-    body: `将从「${name}」的干净态重开,当前经历全部清空。继续?`,
+    body: `确认回滚到「${name}」并清除清单中的全部存储？`,
     danger: true,
   });
   if (!second) return;
 
-  const busy = ui.busy('正在重置', '回滚 persona 并按序清空存储,这期间别动别的。');
+  const busy = ui.busy('正在重置', '正在回滚工作区并清除存储。');
   btn.disabled = true;
   try {
     const out = await ctx.invoke<ResetResult>('rollback', [name]);
@@ -165,8 +163,7 @@ function createCard(ctx: ConsolePanelContext, reload: () => void): HTMLElement {
   const card = ui.sheet({
     title: '新建存档点',
     en: 'tag',
-    desc: '会先把 persona/ 当前的改动提交进去,再打标记——所以存档点永远是一个干净的、'
-      + '可回滚的状态,不会带着半截未提交的编辑。',
+    desc: '先提交工作区当前的改动，再创建存档点。',
   });
   const name = ui.input({ placeholder: '名字(字母数字、下划线、点、连字符或中文)', cls: 'mono' });
   const note = ui.input({ placeholder: '说明(可空)' });

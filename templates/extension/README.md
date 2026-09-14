@@ -7,8 +7,8 @@ Owner: `src/extensions/manifest.ts`, `tests/extensions/templates.test.ts`
 
 | 目录 | 包名 | 里面有什么 |
 |---|---|---|
-| `world/` | `cortico-world-example` | 一条挂载事件、一个工具、一段环境提示词、一个旋钮 |
-| `provider/` | `cortico-provider-example` | 讲 Chat Completions 方言的端点,请求体与请求头之外全靠框架的 transport |
+| `world/` | `cortico-world-example` | 一条挂载事件、一个工具、一段环境提示词、一个配置项 |
+| `provider/` | `cortico-provider-example` | Chat Completions 协议端点；构造请求体与请求头，使用框架 transport |
 | `bot/` | `cortico-bot-example` | 一个 Persona、一个 session、只有终端;Memory 是一份 MEMORY.md 加 blobs/ |
 
 ## 用法

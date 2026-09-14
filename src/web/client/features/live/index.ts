@@ -1,24 +1,7 @@
 import type { ContextRecord } from '../../../../protocol/open-responses/context.ts';
 /**
- * 终端页(`#/live`)—— 调试通道的实时时间线。
- *
- * 一页四块,每块自己一个文件:
- *
- * ```
- * status.ts    顶上那排读数(chips)
- * sessions.ts  session 卡条(点谁看谁)
- * fork.ts      现在在看哪一个 session;非主 session 要轮询
- * timeline.ts  消息流本身
- * context.ts   上下文占用(纯计算 + 分类分布面板)
- * ```
- *
- * 页面状态由调试通道的帧驱动，保存在挂载闭包中，随 `Lifecycle` 释放。
- *
- * 两条通道的分工(`core/websocket.ts` 统一了它们):
- *
- * - `/ws/debug`:时间线、状态、session 列表——挂了它就什么都有。
- * - `/ws/sessions`:只推 session 列表。**只在调试通道没挂时才开**,让这一页至少还能
- *   看见各 fork 的用量;时间线那块如实说"调试通道不可用",而不是空着。
+ * 页面状态由 /ws/debug 推送，保存在挂载闭包中，随 Lifecycle 释放。
+ * 调试通道不可用时改用 /ws/sessions，只接收 session 列表。
  */
 
 import type {
@@ -90,7 +73,7 @@ function mountLive(ctx: FeatureContext, env: SocketEnv): Disposable | void {
   // ── 这一页的全部活数据 ────────────────────────────────────────────
   const state = {
     messages: [] as ContextRecord[],
-    /** 合成首轮对话(出线态注入,不落盘;时间线画成标注块) */
+    /** 合成请求内容，不写入 session 记录。 */
     firstTurn: [] as ContextRecord[],
     toolSchemas: [] as ToolSchemaDoc[],
     status: null as StatusSnapshot | null,

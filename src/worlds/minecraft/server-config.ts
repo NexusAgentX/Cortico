@@ -1,16 +1,4 @@
-/**
- * Minecraft 仅在启动时读取 server.properties。停机时的设置写入文件并于下次启动
- * 生效；运行时仅通过控制台命令修改难度和默认游戏模式，不写入该文件。
- *
- * 文件读写保留用户维护的键顺序与注释。
- *
- * 世界生成那几项(level-type / generator-settings / level-seed / generate-structures)
- * 只在存档**第一次生成**时被读;对着已生成的存档改它们不会重塑世界。存档已有的
- * 生成事实由 level.dat 自述,见 `listWorlds` 带回的 `info`。
- *
- * 服务器目录里另一份同样只在启动时读的文件是 `ops.json`(谁有作弊权限),读写在
- * 本文件末尾那一节;它按 UUID 认人,所以还要 `usercache.json` 与离线 UUID 兜底。
- */
+/** 读取和写入 server.properties，列出存档及其 level.dat 元数据。生成参数仅用于生成区块，不重新生成已有区块。 */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, type Dirent } from 'node:fs';
 import { join } from 'node:path';
 import { readLevelDat, type LevelDatInfo } from './level-dat.ts';
@@ -18,7 +6,6 @@ import { offlineUuid } from './client-launch.ts';
 
 export const GAMEMODES = ['survival', 'creative', 'adventure', 'spectator'] as const;
 export const DIFFICULTIES = ['peaceful', 'easy', 'normal', 'hard'] as const;
-/** 原版世界类型;单生物群系还要 generator-settings 指定是哪个群系 */
 const LEVEL_TYPES = [
   'minecraft:normal',
   'minecraft:flat',
@@ -31,7 +18,6 @@ type Gamemode = (typeof GAMEMODES)[number];
 export type Difficulty = (typeof DIFFICULTIES)[number];
 export type LevelType = (typeof LEVEL_TYPES)[number];
 
-/** 世界类型的中文词表:面板铺选项、服务端写回执都取这一份 */
 export const LEVEL_TYPE_LABELS: ReadonlyArray<{ value: LevelType; label: string; note: string }> = [
   { value: 'minecraft:normal', label: '默认', note: '原版地形' },
   { value: 'minecraft:flat', label: '超平坦', note: '按生成器细则逐层铺;不填就是原版那三层' },
@@ -48,13 +34,7 @@ export function levelTypeLabel(type: LevelType): string {
   return LEVEL_TYPE_LABELS.find((t) => t.value === type)?.label ?? type;
 }
 
-/**
- * 超平坦预设:generator-settings 的整份 JSON。
- *
- * `layers` 自下而上,`height` 是层厚。前三个是原版同名预设的层配方,末一个是
- * 本项目自己配的——超平坦默认那三层底下没有石头,挖不到任何矿,拿来试玩挖掘
- * 类技能会一无所获。
- */
+/** 超平坦预设的方块层和结构参数。 */
 export const FLAT_PRESETS: ReadonlyArray<{ id: string; label: string; note: string; json: string }> = [
   {
     id: 'classic',
@@ -86,18 +66,15 @@ export const FLAT_PRESETS: ReadonlyArray<{ id: string; label: string; note: stri
   },
 ];
 
-/** 控制台露出来的那几项;别的键原样留在文件里 */
 export interface GameSettings {
   gamemode: Gamemode;
   difficulty: Difficulty;
   hardcore: boolean;
   pvp: boolean;
   spawnMonsters: boolean;
-  /** 空 = 随机 */
   levelSeed: string;
   /** 当前存档目录名 */
   levelName: string;
-  /** 世界类型;只在世界第一次生成时起作用 */
   levelType: LevelType;
   /** 生成器细则(超平坦层配方 / 单群系名);空 = 该类型的默认 */
   generatorSettings: string;
@@ -112,18 +89,13 @@ export interface GameSettings {
   maxWorldSize: number;
 }
 
-/** 存档目录一份,含 level.dat 自述与占盘 */
 export interface WorldInfo {
   name: string;
-  /** 目录里有 level.dat = 已经生成过;false 表示配着但还没开出来 */
   generated: boolean;
-  /** 最后活跃(ISO):优先 level.dat 的 LastPlayed,退回文件 mtime;没生成为 null */
   modified: string | null;
-  /** 存档占盘(字节,含 _nether / _the_end);没生成为 0 */
   sizeBytes: number;
   /** 已生成的附属维度:nether / the_end */
   dimensions: string[];
-  /** level.dat 自述;读不出来为 null */
   info: LevelDatInfo | null;
 }
 
@@ -242,7 +214,6 @@ export function validWorldName(name: string): string | null {
   return null;
 }
 
-/** generator-settings 只在非空时校验:必须是一个 JSON 对象,服务器读不了就直接崩 */
 export function validGeneratorSettings(text: string): string | null {
   const t = text.trim();
   if (!t) return null;
@@ -261,10 +232,6 @@ export function validGeneratorSettings(text: string): string | null {
 /** Paper/Bukkit 把下界与末地拆成独立目录,它们不是可选的存档 */
 const DIMENSION_SUFFIX = /_(nether|the_end)$/;
 
-/**
- * 目录占盘。存档动辄上万个区块文件,每次开面板全量 stat 一遍要几百毫秒,
- * 所以按 level.dat 的 mtime 缓存——世界没存过盘,占盘也不会变。
- */
 const sizeCache = new Map<string, { stamp: number; size: number }>();
 
 function dirSize(dir: string, budget: { left: number }): number {
@@ -280,7 +247,7 @@ function dirSize(dir: string, budget: { left: number }): number {
     const abs = join(dir, entry.name);
     if (entry.isDirectory()) total += dirSize(abs, budget);
     else {
-      try { total += statSync(abs).size; } catch { /* 扫的过程中被删了 */ }
+      try { total += statSync(abs).size; } catch {  }
     }
   }
   return total;
@@ -317,8 +284,7 @@ export function listWorlds(serverDir: string, current: string): WorldInfo[] {
       found.set(name, {
         name,
         generated: true,
-        // LastPlayed 是服务器自己记的"上次玩到什么时候";文件 mtime 会被备份、
-        // 复制这类与游玩无关的动作改写,所以只当退路
+        /** 优先使用 LastPlayed；缺失时使用 level.dat 的修改时间。 */
         modified: new Date(info?.lastPlayed || mtime).toISOString(),
         sizeBytes: worldSize(serverDir, name, mtime),
         dimensions: ['nether', 'the_end'].filter((d) => names.has(`${name}_${d}`)),
@@ -326,7 +292,6 @@ export function listWorlds(serverDir: string, current: string): WorldInfo[] {
       });
     }
   }
-  // 配着但还没开出来的存档同样要在列表里(generated=false)
   if (current && !found.has(current)) {
     found.set(current, {
       name: current, generated: false, modified: null, sizeBytes: 0, dimensions: [], info: null,
@@ -352,17 +317,12 @@ export function saveProperties(serverDir: string, lines: Line[]): void {
   writeFileSync(propertiesPath(serverDir), stringifyProperties(lines), 'utf8');
 }
 
-/** 世界身份:本地托管报存档名,外部服务器报地址。她的位置类记忆全靠它划界。 */
+/** 存档身份决定目标、路标和施工绑定所属的 realm。 */
 export interface WorldIdentity {
   key: string;
   local: boolean;
 }
 
-/**
- * 从服务器目录认世界身份;读不出存档名(没配目录、配置缺损、连的是外部服务器)
- * 就退到 `address`。两个进程各自读盘得同一个答案:主进程侧的前缀渲染与引擎
- * 子进程侧的记账都走这里。
- */
 export function worldIdentityOf(serverDir: string, address: string): WorldIdentity {
   if (serverDir && existsSync(serverDir)) {
     try {
@@ -382,27 +342,16 @@ export function worldEnvLine(world: WorldIdentity): string {
 // 权限与作弊:ops.json 与那几项决定"谁能下命令"的 properties
 // ---------------------------------------------------------------------------
 
-/**
- * 专用服没有单人存档里那个「开作弊」开关。同一件事在这里是两半:**谁在
- * ops.json 里**(能不能下 /tp、/gamemode、/spectate 这类指令),以及
- * `op-permission-level`(op 拿到第几级权限,4 才够全部指令)。
- *
- * 托管服务器的控制台 stdin 天生是 4 级,所以 World 经 stdin 下的令不吃这一套;
- * bot 与人在**游戏里**打的命令吃——外部起的服务器没有 stdin,那条退路就是全部。
- *
- * ops.json 与 server.properties 一样只在**启动时**读:停机时改文件,跑着的时候
- * 只能走控制台 op/deop(服务端自己把新名单写回文件)。
- */
+/** 写入 ops.json 中的操作员权限；运行中另发送 op/deop 指令。 */
 export interface AccessSettings {
-  /** op 拿到的权限等级(1-4);4 = 全部指令 */
   opPermissionLevel: number;
   /** 命令方块能不能用 */
   enableCommandBlock: boolean;
   /** 创造/旁观之外的飞行不被踢 */
   allowFlight: boolean;
-  /** 正版验证;她、摄像机、玩家都是离线账号,开着谁都进不来 */
+  /** online-mode=true 时服务器会验证账户，离线账户无法通过验证。 */
   onlineMode: boolean;
-  /** 白名单;开着而名单里没有这几个名字同样进不来 */
+  /** 开启白名单时，账户还需列入白名单。 */
   whiteList: boolean;
 }
 
@@ -429,7 +378,6 @@ export function applyAccess(lines: Line[], patch: Partial<AccessSettings>): Line
   return out;
 }
 
-/** ops.json 的一条。服务端认的是 uuid,name 只是给人看的。 */
 interface OpEntry {
   uuid: string;
   name: string;
@@ -449,7 +397,6 @@ export function readOps(serverDir: string): OpEntry[] {
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((e): e is OpEntry => typeof e === 'object' && e !== null && 'name' in e);
   } catch {
-    // 人手改坏了就当没有名单;这里再抛一次只会把面板整个变成错误卡
     return [];
   }
 }
@@ -458,11 +405,7 @@ export function writeOps(serverDir: string, ops: OpEntry[]): void {
   writeFileSync(opsPath(serverDir), `${JSON.stringify(ops, null, 2)}\n`, 'utf8');
 }
 
-/**
- * 名字 → UUID。写错 UUID 的条目服务端根本认不出人,所以先问服务器自己见过谁
- * (usercache.json),没见过的按离线账号算——`online-mode=false` 下所有 UUID 都是
- * md5("OfflinePlayer:<名字>") 那一套,大小写敏感。
- */
+/** 优先采用 usercache.json 中的 UUID；缺失时按区分大小写的账户名计算离线 UUID。 */
 export function resolveUuid(serverDir: string, name: string): string {
   const file = join(serverDir, 'usercache.json');
   if (serverDir && existsSync(file)) {
@@ -490,7 +433,6 @@ export function isOp(ops: OpEntry[], serverDir: string, name: string): OpEntry |
   return findOp(ops, name, resolveUuid(serverDir, name));
 }
 
-/** 加进名单(已在里面就只把等级抬到 level);返回改过的名单与是否真改了 */
 export function grantOp(
   ops: OpEntry[], serverDir: string, name: string, level = 4,
 ): { ops: OpEntry[]; changed: boolean } {
@@ -509,11 +451,7 @@ export function revokeOp(ops: OpEntry[], serverDir: string, name: string): { ops
   return { ops: rest, changed: rest.length !== ops.length };
 }
 
-/**
- * 停机时把这几个名字补进 ops.json(已在名单里的不动)。返回补进去的名字。
- * 服务器跑着的时候别调它:那会儿服务端手里有自己的一份名单,退出时整份写回,
- * 这里写的东西会被原样盖掉。
- */
+/** 仅在服务器停止时直接修改这些文件。 */
 export function ensureOps(serverDir: string, names: readonly string[], level = 4): string[] {
   if (!serverDir || !existsSync(serverDir)) return [];
   let ops = readOps(serverDir);

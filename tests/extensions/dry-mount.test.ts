@@ -1,6 +1,6 @@
 /**
- * 干装载:装载器在 import 之后、start() 之前会做的事在假环境里做一遍。断言的是装配层会拒绝什么,
- * 用真定义(仓内 World 目录、内建 provider、cormini)与就地写的小定义;没有一处 mock。
+ * 在临时部署中检查扩展构造和声明接口，不调用 start()。
+ * 使用内建 World、provider、bot 定义及测试专用定义。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -39,7 +39,7 @@ function worldDef(id: string, tools: ToolDef[], patch: Partial<World> = {}, defa
   };
 }
 
-describe('World 干装载', () => {
+describe("World 构造检查", () => {
   it('合格的定义:没有失败,工具列出来', async () => {
     const report = await dryMountWorld(worldDef('alpha', [tool('alpha_ping')]), { scratchDir });
     expect(report.failures).toEqual([]);
@@ -115,13 +115,13 @@ describe('World 干装载', () => {
   });
 });
 
-describe('provider 干装载', () => {
+describe("Provider 构造检查", () => {
   const module = (patch: Partial<ProviderModule> = {}): ProviderModule => ({
     id: 'fixture',
     title: '夹具端点',
     reasoningTiers: [],
     serviceTiers: [],
-    create: () => ({ client: { respond: async () => { throw new Error('干装载不调模型'); } } }),
+    create: () => ({ client: { respond: async () => { throw new Error("构造检查不调用模型"); } } }),
     ...patch,
   });
 
@@ -152,7 +152,7 @@ describe('provider 干装载', () => {
   });
 });
 
-describe('bot 干装载', () => {
+describe("Bot 构造检查", () => {
   const packageDir = resolve(import.meta.dirname, '../../bots/cormini');
 
   it('cormini 在假部署下 build() 得出来,契约必填项都在', () => {

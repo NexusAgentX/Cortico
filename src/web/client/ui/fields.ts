@@ -1,16 +1,4 @@
-/**
- * 表单控件：`input` / `select` / `textarea` / `checkbox` / `segmented`，外加把标签与
- * 控件绑成一行的 `field`。
- *
- * 前三者在 `styles.css` 里共用同一个 class `.field`（`input.field, select.field` 一条、
- * `textarea.field` 一条），焦点态也已经写好（`:focus { border-color: var(--accent) }`）；
- * `checkbox` 复用既有的 `label.check`；`segmented` 复用既有的 `.segwrap` / `.seg`。
- * 只有 `field` 的两个 class 是新追加的（`styles.css` 里本来没有表单标签这一档）。
- *
- * 为什么值变化的回调也要走原语：扩展自己 `el.addEventListener('input', …)` 是合法的，
- * 但那条监听不带 `signal`，面板卸了它还在（闭包顺带钉住整棵旧 DOM）。原语把 `signal`
- * 一并挂上，扩展就没有理由自己去装监听。
- */
+/** 表单控件与标签；事件监听绑定 UI 实例的 signal。 */
 
 import type {
   ConsoleCheckbox,
@@ -29,14 +17,7 @@ function fieldClass(extra?: string): string {
   return extra ? 'field ' + extra : 'field';
 }
 
-/**
- * 三者共通的收尾：初值、禁用、三个时刻的回调。
- * （`placeholder` 不在这儿——`<select>` 压根没有这个属性，由两个有的自己设。）
- *
- * `event` 是 `onInput` 该听哪个事件：能逐次击键的听 `input`，`<select>` 只有 `change`。
- * `onChange` 一律听 `change`，`onCommit` 一律听 `keydown`——三条各挂各的，谁都不替谁
- * 兜底（原语替调用方猜"这次算不算提交"，猜错时扩展连改都没处改）。
- */
+/** 初始化值、禁用状态与回调。onInput 监听输入（select 使用 change），onChange 监听 change，onCommit 监听提交键。 */
 function wire(
   el: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement,
   signal: AbortSignal,
@@ -87,12 +68,7 @@ export function input(
   return el;
 }
 
-/**
- * 下拉选择。选项给字符串等价于 `{ value: s, label: s }`。
- *
- * 注意顺序：**先填 option 再设 value**。反过来的话浏览器会把不存在的值丢掉，
- * 结果是"明明传了 value，选中的却是第一项"——这是选择框最常见的那个假 bug。
- */
+/** 下拉选项先创建，再设置选中值；字符串选项同时作为 value 与 label。 */
 export function select(
   doc: Document,
   signal: AbortSignal,
@@ -149,8 +125,7 @@ export function checkbox(
     get checked(): boolean {
       return box.checked;
     },
-    // 只改值不发事件:`change` 本来就只在用户动作时派发,这里手动补一发的话,
-    // "保存失败回滚成旧值"会立刻把回滚本身当成一次新的用户改动再存一遍。
+    // 程序设置值不触发用户 change 回调。
     setChecked(v: boolean): void {
       box.checked = v;
     },
@@ -167,15 +142,7 @@ export function field(doc: Document, label: string, control: HTMLElement): HTMLL
   return el;
 }
 
-/**
- * 分段选择器。
- *
- * 选中态记在闭包里、由 `paint()` 统一刷 class——不去读 DOM 反推当前值（那样一来
- * "当前选中的是谁"就有了两份真相，`setValue` 与用户点击各改一份）。
- *
- * 按 value 存一个数组而不是 Map：items 里出现重复 value 时，Map 会把先来的那颗
- * 丢掉，之后 `paint()` 就再也刷不到它——一颗永远亮着的死键。
- */
+/** 分段选择器保留全部重复 value 选项，并统一更新它们的选中态。 */
 export function segmented(
   doc: Document,
   signal: AbortSignal,

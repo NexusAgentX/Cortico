@@ -1,13 +1,5 @@
 import { messages as legacyMessages } from '../core/fixture-protocol.ts';
-/**
- * 全系统集成测试(FakeLLM,不打真实API):
- * 走真实装配路径 assembleBot() —— 真Persona(临时persona/)、真webWorld、
- * 真WebApp(随机端口)、真事件库/合批/主循环,只有LLM是脚本化的。
- *
- * 验证链路:WS客户端发消息 → terminal.message落库+urgent投递为user事件
- * → FakeLLM调用send → WS客户端收到bot广播 → 事件库有terminal.self →
- * session配对完整 → 面板API能看到一切。
- */
+/** 通过临时部署与脚本化模型验证终端 WebSocket、事件存储、工具调用和控制台 API。 */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -33,31 +25,28 @@ describe('全系统集成(终端对话链路)', () => {
   let ws: WebSocket;
   const received: Array<Record<string, unknown>> = [];
 
-  /**
-   * 一个端点条目落盘后长什么样。端点表归全局(`<部署根>/providers/<name>/config.json`),
-   * 这份部署的 config.json 只留 `activeProvider` 与形状版本。
-   */
+  /** 端点表由同一部署根下的部署共享,activeProvider 保存在各部署配置中。 */
   const entryOnDisk = (name: string): Record<string, any> =>
     JSON.parse(readFileSync(join(tmp.dir, 'providers', name, 'config.json'), 'utf8'));
 
   beforeAll(async () => {
-    // 造一个最小工作区种子
+
     const memoryDir = join(tmp.dir, 'persona');
     mkdirSync(join(memoryDir, 'note'), { recursive: true });
     writeFileSync(join(memoryDir, 'CONSTITUTION.md'), '# 我是谁\n测试用人格。', 'utf8');
 
     const cfg = makeCfg();
-    // 第二个端点条目:面板保存只动被保存的那条,得有另一条在旁边才看得出来
+
     cfg.providers.local = {
       kind: 'openai-responses-compat',
       baseUrl: 'http://127.0.0.1:8090/v1',
       spec: { model: 'local', thinking: false },
     };
-    cfg.batching.quietGapMs = 40; // 加速合批
+    cfg.batching.quietGapMs = 40;
     cfg.batching.maxBatchAgeMs = 500;
     cfg.worlds.qq.enabled = false;
     cfg.worlds.terminal.enabled = true;
-    cfg.web.port = 0; // 随机端口
+    cfg.web.port = 0;
 
     const loaded = makeLoaded({
       config: cfg,
@@ -88,8 +77,8 @@ describe('全系统集成(终端对话链路)', () => {
     expect(msgs[1].content).toContain('session 已开始');
     expect(msgs[2].role).toBe('assistant');
     expect(msgs[2].tool_calls).toBeUndefined();
-    // 等boot轮的LLM调用完成,再进下一个测试注入脚本,
-    // 等待 bootstrap 轮结束,避免测试脚本被该轮消费。
+
+    // 等待开场调用完成,再为下一次唤醒提供模型脚本。
     await waitFor(() => llm.calls.length >= 1);
   });
 
@@ -102,7 +91,7 @@ describe('全系统集成(终端对话链路)', () => {
     });
     ws.send(JSON.stringify({ type: 'hello', name: 'phantivia' }));
 
-    // 进出终端已不投递事件,hello 不会触发任何唤醒,直接排脚本即可。
+
     llm.script(
       toolReply([{ name: 'terminal_send', args: { text: '你好phantivia!我能看到这条消息。' } }]),
     );
@@ -133,13 +122,13 @@ describe('全系统集成(终端对话链路)', () => {
       (m) => m.role === 'assistant' && m.tool_calls?.some((tc) => tc.function.name === 'terminal_send'),
     );
     expect(sendCall).toBeTruthy();
-    // 控制台是操作员通道(origin:'internal'):原话并进 user 消息,不落工具回执区。
-    // 外部正文走回执区那条路由由 core/loop.test.ts 钉。
+    // Terminal 的内部事件进入 user 消息。
+
     expect(msgs.some((m) => m.role === 'user' && m.content.includes('在吗,bot?'))).toBe(true);
     expect(msgs.some((m) => m.role === 'tool' && m.content.includes('在吗,bot?'))).toBe(false);
   });
 
-  it('面板API:status/events/file都活着', async () => {
+  it('控制台 API 返回状态、事件与文件内容', async () => {
     const status = (await (await fetch(`http://127.0.0.1:${port}/api/status`)).json()) as Record<string, unknown>;
     expect(status).toHaveProperty('loop');
     expect(status).toHaveProperty('chips');
@@ -167,7 +156,7 @@ describe('全系统集成(终端对话链路)', () => {
     await waitFor(() => existsSync(join(tmp.dir, 'persona', 'note', '第一次对话.md')));
   });
 
-  it('模型热改:Provider 面板保存实例档位,一份 spec 管所有 session', async () => {
+  it('Provider 面板保存端点模型配置', async () => {
     const originalLocal = structuredClone(bot.core.config.providers.local);
     const setModel = (spec: Record<string, unknown>) => fetch(
       `http://127.0.0.1:${port}/api/console/providers/llm%3Aopenai-responses-compat/panels/settings/save`,
@@ -180,7 +169,7 @@ describe('全系统集成(终端对话链路)', () => {
 
     let r = await setModel({ model: 'deepseek-v4-pro', thinking: false });
     expect(r.status).toBe(200);
-    // 主 session 与梦读的是同一份:模型归 provider,不按角色分岔
+
     expect(bot.core.activeSpec()).toEqual({ model: 'deepseek-v4-pro', thinking: false });
     expect(bot.core.mainSessionSpec()).toEqual(bot.core.activeSpec());
     expect(entryOnDisk('deepseek').spec).toEqual({ model: 'deepseek-v4-pro', thinking: false });
@@ -189,9 +178,9 @@ describe('全系统集成(终端对话链路)', () => {
     expect(r.status).toBe(200);
     const onDisk = entryOnDisk('deepseek');
     expect(onDisk.spec).toEqual({ model: 'deepseek-v4-pro', thinking: true, reasoningEffort: 'high' });
-    // 角色矩阵是上一版的形状,折叠之后不该再出现
+
     expect(onDisk.profiles).toBeUndefined();
-    // 只动被保存的那条:local 那条既没被改也没被搬
+
     expect(bot.core.config.providers.local).toEqual(originalLocal);
     expect(JSON.parse(readFileSync(join(tmp.dir, 'config.json'), 'utf8')).models).toBeUndefined();
   });
@@ -205,8 +194,8 @@ describe('全系统集成(终端对话链路)', () => {
     const pcOf = async () => (await cget()).groups.find((x) => x.group.id === 'corti')!;
 
     const g = await cget();
-    // 未激活槽位的旋钮也在(QQ 没开,仓内其余 World 是部署侧选配):参数要在激活前就能改。
-    // 顺序是 src/worlds/index.ts 的目录顺序。
+    // 未激活 World 的配置仍可编辑。
+
     expect(g.groups.map((x) => x.group.id)).toEqual([
       'core', 'corti',
       'world:terminal', 'world:qq', 'world:bilibili',
@@ -242,7 +231,7 @@ describe('全系统集成(终端对话链路)', () => {
     expect(bot.core.config.memo.residentCap).toBe(9);
     expect((await pcOf()).values['tick.nightIntervalMinutes']).toBeNull();
     let onDisk = JSON.parse(readFileSync(join(tmp.dir, 'config.json'), 'utf8'));
-    // 改了就落盘:被改的路径进文件,没碰的段不受牵连
+
     expect(onDisk.context.maxTokens).toBe(100000);
     expect(entryOnDisk('deepseek').spec).toBeTruthy();
 

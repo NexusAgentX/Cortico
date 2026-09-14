@@ -6,9 +6,8 @@ import type {
   ConsolePanelContext,
   ConsolePanel,
 } from 'cortico/web/shared/client-panel.ts';
-import { autoload, dimLine, errText, setMsg, type DreamState, type DreamTriggered } from './client.ts';
+import { autoload, errText, setMsg, type DreamState, type DreamTriggered } from './client.ts';
 
-/** 入梦/截断跨好几轮,盯着看时几秒一问够了。走 `ctx.interval`,离开面板即停。 */
 const POLL_MS = 4000;
 
 export const dreamPanel: ConsolePanel = {
@@ -27,9 +26,7 @@ function card(ctx: ConsolePanelContext, initial: DreamState): HTMLElement {
   const sheet = ui.sheet({
     title: '强制入梦',
     en: 'handoff → dream',
-    desc: '正常情况下交接由上下文压力自己决定。这颗按钮是人工插队:'
-      + '强制一次交接(她带着交接笔记在新上下文里继续),交接前的快照交给后台的梦 fork 整理 persona/。'
-      + '已经在入梦或交接中就不会重复触发。',
+    desc: '强制交接上下文，并将交接前的快照交给梦 fork 整理工作区。正在入梦或交接时不重复触发。',
   });
 
   const pills = ui.rowbar();
@@ -44,10 +41,7 @@ function card(ctx: ConsolePanelContext, initial: DreamState): HTMLElement {
   const bar = ui.actions();
   bar.append(msg, ui.h('span', 'grow'), trigger);
 
-  sheet.body.append(pills, dimLine(
-    ctx,
-    '交接本身是 core 原语;"交接后入梦"这个安排归Persona。',
-  ), bar);
+  sheet.body.append(pills, bar);
 
   const paint = (st: DreamState): void => {
     dreamPill.textContent = st.dreaming ? '进行中' : '空闲';
@@ -69,11 +63,10 @@ function card(ctx: ConsolePanelContext, initial: DreamState): HTMLElement {
     }
   };
 
-  // 盯着状态走:轮询登记在 `ctx.interval` 上,离开面板自动停(不是裸 setInterval)。
   ctx.interval(() => {
     void ctx.invoke<DreamState>('state').then(
       (st) => { if (!ctx.signal.aborted) paint(st); },
-      () => { /* 一拍问不到不改画面,下一拍再说 */ },
+      () => { /* 请求失败时保留上次状态。 */ },
     );
   }, POLL_MS);
 

@@ -1,14 +1,4 @@
-/**
- * 状态灯的画法与取数 —— 一条链路一颗灯，provider 自报四态，控制台只上色。
- *
- * 三处在用（导航行、 World 总览卡、provider 详情页头），所以口径写在这一处：三处的
- * 同一颗灯必须同色同措辞，否则"左栏红的那个，进去看是黄的"这种事迟早发生。同理
- * 取数也只有一条（`subscribeLamps`）：两个各自计时的轮询会让同一颗灯在两处差半拍，
- * 而那种差恰好长得像 bug——顺带还把请求翻了一倍。
- *
- * 颜色复用既有的 `.navdot`（`--ok` / `--warn` / `--danger`，灰是它本体色），
- * 不为灯新造一套 class。
- */
+/** 渲染贡献方自报的四态灯；导航、World 总览与页头共用非重叠轮询，隐藏页面跳过取数。 */
 
 import { get } from '../core/api.ts';
 import { toDisposable, type Disposable } from '../../shared/client-panel.ts';
@@ -95,7 +85,7 @@ type LampListener = (lamps: Record<string, ConsoleLamp[]>) => void;
 const listeners = new Set<LampListener>();
 let timer: ReturnType<typeof setInterval> | null = null;
 let doc: Document | null = null;
-/** 上一拍还没回来。后端一慢就攒下一串在途请求，是自制 DDoS 的标准做法。 */
+/** 是否有尚未完成的轮询请求。 */
 let pending = false;
 
 function tick(): void {

@@ -1,12 +1,6 @@
 /**
- * 端点表面板 —— 内核内置,名字是 `llm-settings`。
- *
- * 它住在控制台核心里而不是某个 provider 的产物里,因为 provider 可以是装在
- * `extensions/` 下的外部 npm 包:那种包拿不到框架的浏览器代码,却同样要有这块面板。
- * 数据面仍归声明这一页的那个 provider(`ctx.invoke`),这里只有界面。
- *
- * 推理强度有两种模式:`reasoningTiers` 非空是封闭档位表(下拉必须命中一档);为空是开放
- * 字串(文本框 + 候选 datalist),空 = 端点默认、`none` = 关闭、其余原串落 `reasoningEffort`。
+ * 内置 llm-settings 面板，通过 ctx.invoke 使用声明方的数据面。
+ * reasoningTiers 非空时限制为所列档位；为空时接受开放字符串。空值使用端点默认，none 关闭推理，其余写入 reasoningEffort。
  */
 import type {
   ConsoleDisablable,
@@ -18,7 +12,7 @@ import type {
 import { pricingEditor, type ModelQuote } from './pricing-panel.ts';
 import { panel } from './strings.ts';
 
-/** 这个端点用哪个模型、怎么想。一个实例一份,不按 session 角色分。 */
+/** 每个端点实例的模型与推理配置。 */
 interface Spec {
   model: string;
   thinking: boolean;

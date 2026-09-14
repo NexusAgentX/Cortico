@@ -4,11 +4,7 @@ import { GitWorkspaceMemory } from '../../bots/cormini/persona/memory.ts';
 import { MemoTiers } from '../../bots/corti-soulmate/persona/memoTiers.ts';
 import { tmpPersona, cleanup, touch, WORKSPACE_DIRS } from './helpers.ts';
 
-/**
- * MemoTiers 现在只是三层的只读视图:层间搬运交给通用文件工具 + tools.ts 的
- * 容量守门。这里验证"某层有哪些文件"按 mtime 升序、archived 只计数、
- * 扩展名不参与判定。mtime 用 utimesSync 手动控制,保证时间序确定。
- */
+/** 验证 memo 三层文件视图、mtime 升序、archived 计数与不限扩展名。通过 utimesSync 控制时间顺序。 */
 describe('MemoTiers 只读视图', () => {
   let dir: string;
   let ws: GitWorkspaceMemory;

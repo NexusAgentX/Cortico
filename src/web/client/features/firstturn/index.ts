@@ -1,14 +1,6 @@
 /**
- * 「首轮对话」设置节 —— 合成风格锚的开关与三段内容。
- *
- * 数据面完全复用既有链路,这一页没有自己的端点:
- *  - 三段内容 = Persona自报的三份 promptDocs(key 前缀 `firstTurn.`),
- *    读写走 `/api/prompts`(revision 乐观锁、原子写都是那条链路的现成货);
- *  - 开关 = `context.firstTurn`(core 配置组,`x-hot`),读写走 `/api/config`;
- *  - 保存后提示重载——注入内容随 system 前缀重建刷新,与「系统提示词」页同一心智。
- *
- * 与提示词页不同,这里**不是**前缀的一部分:内容在出线态插进消息数组
- * (system 之后、真实历史之前),只进请求、不落盘。
+ * 合成首轮内容通过 /api/prompts 读写，开关 context.firstTurn 通过 /api/config 更新。
+ * 内容随系统前缀重建刷新；请求中位于 system 后、真实历史前，不写入 session 记录。
  */
 import { get, post } from '../../core/api.ts';
 import type { FeatureContext } from '../feature.ts';

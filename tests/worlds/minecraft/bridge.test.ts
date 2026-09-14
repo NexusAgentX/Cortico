@@ -381,7 +381,7 @@ describe('bridge 断连告警', () => {
     expect(alarms).toEqual([]);
   });
 
-  it('远端服务器不说「去面板启动」:那台机子不归这边管', () => {
+  it('远端服务器连接被拒绝时不提示使用本地面板', () => {
     const alarms: string[] = [];
     const bridge = alarmBridge('mc.example.com', alarms);
     for (let i = 0; i < 5; i++) note(bridge, refused());
@@ -390,7 +390,7 @@ describe('bridge 断连告警', () => {
     expect(alarms[0]).toContain('没在跑');
   });
 
-  it('确认服务器没在跑之后重连间隔拉长到两分钟', () => {
+  it('连续连接被拒绝后，重连间隔延长到两分钟', () => {
     const alarms: string[] = [];
     const bridge = alarmBridge('127.0.0.1', alarms);
     const delays: number[] = [];

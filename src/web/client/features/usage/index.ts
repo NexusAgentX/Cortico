@@ -66,7 +66,7 @@ export function mountUsage(ctx: FeatureContext): void {
   const state = createUsageState();
   const color = themeColorResolver(doc);
   const tip = lifecycle.own(createUsageTip(doc, root));
-  const intro = pageIntro(ui, S.pageTitle, S.pageDesc);
+  const intro = pageIntro(ui, S.pageTitle);
 
   // ---- 工具条 ---------------------------------------------------------------
   const bar1 = usagebar(ui);
@@ -124,7 +124,7 @@ export function mountUsage(ctx: FeatureContext): void {
   cards.classList.add('usagecards');
 
   // ---- 成本构成 -------------------------------------------------------------
-  const compSheet = ui.sheet({ title: S.compTitle, en: S.compEn });
+  const compSheet = ui.sheet({ title: S.compTitle });
   const compBox = ui.h('div');
   compBox.id = 'u-comp';
   compSheet.body.appendChild(compBox);

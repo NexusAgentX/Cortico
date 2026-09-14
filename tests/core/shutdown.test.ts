@@ -1,7 +1,6 @@
 /**
- * 关机顺序：先暂停投递，再停止 World，最后落盘。世界存档属于停止 World 阶段。
- * 每一步有期限；超时或抛错后仍执行后续步骤，并记录未完成的步骤。
- * 收尾只执行一次，避免重复调用非幂等的 stop()。
+ * 关机先暂停投递，再停止 World 和其他服务并保存状态。
+ * 步骤失败或超时后继续后续步骤；整个关机过程只执行一次。
  */
 import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -113,11 +112,11 @@ describe('withDeadline', () => {
   });
 });
 
-describe('core.stop():一个 World 卡死不再拖垮其余 World', () => {
+describe("core.stop():单个 World 未完成时仍停止其他 World", () => {
   it('挂住的那个到点被放弃,其余照常停完', async () => {
     const fast = new ProbeWorld('fast');
     const hang = new ProbeWorld('hang', 'hang');
-    // 挂住的排在前面:串行实现下 fast 永远轮不到,这正是要钉住的回归。
+    // 未完成的 stop 排在前面，验证其他 World 的 stop 仍可执行。
     const env = makeEnv([hang, fast]);
     vi.useFakeTimers();
     try {
@@ -126,10 +125,10 @@ describe('core.stop():一个 World 卡死不再拖垮其余 World', () => {
         worlds: [hang, fast],
         llm: new FakeLLM(),
       });
-      // 不 start():这条测的是收尾编排,不需要主循环跑起来。
+      // 此测试仅检查停止流程，不启动主循环。
       const done = core.stop();
       await vi.advanceTimersByTimeAsync(21_000);
-      const failures = await done; // 卡住的那个不该让 stop() 永挂
+      const failures = await done; // 单个 stop 未完成不能阻止整体超时返回。
       expect(fast.stopped).toBe(true);
       expect(hang.stopped).toBe(false);
       expect(failures).toEqual([expect.objectContaining({
@@ -204,7 +203,7 @@ describe('core.stop():一个 World 卡死不再拖垮其余 World', () => {
   });
 });
 
-/** 无头 bot(不起控制台):关机仪式的编排本身与网页无关。 */
+/** 不启动控制台的 bot，用于测试关机顺序。 */
 function makeHeadlessBot(worlds: World[], onStop?: () => void | Promise<void>) {
   const env = makeEnv(worlds);
   const definition: BotDefinition<TestConfig> = {
@@ -221,7 +220,7 @@ function makeHeadlessBot(worlds: World[], onStop?: () => void | Promise<void>) {
   return { bot: createBot(env.loaded, definition), cleanup: env.cleanup };
 }
 
-describe('bot.shutdown():固定次序 + 逐步留账', () => {
+describe("bot.shutdown():执行顺序与步骤结果", () => {
   it('顺利时各步全过,Persona有独立且受控的收尾阶段', async () => {
     const probe = new ProbeWorld('probe');
     const { bot, cleanup } = makeHeadlessBot([probe]);
@@ -235,7 +234,7 @@ describe('bot.shutdown():固定次序 + 逐步留账', () => {
       // 控制台没起,所以没有 web 那一步。
       expect(report.steps.map((s) => s.key)).toEqual(['pause', 'worlds', 'core', 'llm', 'flush']);
       expect(report.steps.every((s) => s.ok)).toBe(true);
-      // 按住投递是**第一**步:收尾途中不该再有唤醒把她叫起来下一条指令。
+      // 关机前先暂停事件投递，避免启动新的模型轮。
       expect(bot.core.bus.isPaused()).toBe(true);
       expect(probe.stopped).toBe(true);
     } finally {
@@ -243,7 +242,7 @@ describe('bot.shutdown():固定次序 + 逐步留账', () => {
     }
   });
 
-  it('某一步炸了不阻断后面的步骤,账上写明是哪一步', async () => {
+  it("步骤失败后继续执行，并记录失败步骤", async () => {
     const probe = new ProbeWorld('probe');
     const { bot, cleanup } = makeHeadlessBot([probe], () => {
       throw new Error('Persona收尾炸了');
@@ -256,7 +255,7 @@ describe('bot.shutdown():固定次序 + 逐步留账', () => {
       const core = report.steps.find((s) => s.key === 'core');
       expect(core?.ok).toBe(false);
       expect(core?.detail).toContain('Persona收尾炸了');
-      // 后面两步照走:落盘不该因为前一步炸了就跳过。
+      // 前一步失败后，保存步骤仍须执行。
       expect(report.steps.find((s) => s.key === 'flush')?.ok).toBe(true);
       expect(report.steps.map((s) => s.key)).toContain('llm');
     } finally {
@@ -373,7 +372,7 @@ describe('bot.shutdown():固定次序 + 逐步留账', () => {
     }
   });
 
-  it('只跑一次:第二次要到的是同一份账,World 不会被停第二遍', async () => {
+  it("重复关机返回同一结果，不再次停止 World", async () => {
     let stops = 0;
     const probe = new ProbeWorld('probe');
     const counting: World = {

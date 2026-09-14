@@ -1,9 +1,4 @@
-/**
- * 扩展运行时怎么 import 框架:`cortico/<src 下路径>` → `<仓库>/src/<路径>`,而且解析出来的
- * 必须是框架自己那一份实例(钩子把结果交给链上下一个,不短路)。
- *
- * 两处都要成立:主进程(装载器 import 扩展那一下)与扩展 fork 出来的子进程。
- */
+/** 扩展导入 cortico/ 路径时必须解析到框架源码；子进程内验证它与直接导入的模块实例一致。 */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -31,9 +26,8 @@ describe('cortico/* 解析', () => {
   });
 
   it('子进程里也解析得到,且与直接 import 是同一个实例', () => {
-    // "同一份实例"只在一条普通的 Node ESM 链上谈得上:vitest 里框架源码走的是 vite 的
-    // 模块图,扩展走的是 Node 原生 import,两边本来就是两张表。夹具自己比对身份,不等
-    // 就以退出码 2 收场。
+    // Vite 与 Node 的模块图不同，在独立 Node 子进程中比较模块身份。
+    // 不一致时测试进程返回退出码 2。
     const fixture = join(repoRoot, 'tests/fixtures/extensions/child-import.mjs');
     const child = spawnSync(process.execPath, ['--import', 'tsx', '--import', RESOLVER_URL, fixture], {
       cwd: repoRoot,

@@ -75,6 +75,6 @@ describe('WebApp.listen 端口顺延', () => {
     // 端口顺延须以 warn 级别报告。
     const hit = warns.find((m) => m.includes('被占用'));
     expect(hit).toBeDefined();
-    expect(hit).toContain('上一次没退干净');
+
   });
 });

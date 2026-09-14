@@ -172,13 +172,6 @@ describe('manifest 组装', () => {
     });
   });
 
-  /**
-   * 参数的**归属**要上线，参数本身不上线。
-   *
-   * 控制台据此把一组旋钮画在声明方自己那一页上，而不是堆进一张把三方混在一起的
-   * 总表。判据只能是声明方自己报的这份 id 清单——拿 `owner` 字符串去猜 provider id
-   * 的话， World 作者写歪一个字就静默错位，而落不到任何一页的旋钮等于不存在。
-   */
   it('World 声明的配置组:manifest 只带组 id,schema 与属性名一个字都不上线', async () => {
     const sources = deriveConsolePageSources(facts(), {
       assembly: WorldAssembly.ofInstances([new FakeWorld('demo', () => ({
@@ -202,11 +195,6 @@ describe('manifest 组装', () => {
     });
   });
 
-  /**
-   * 人格那半的旋钮写在**装配层**（`ConsoleContribution.configGroups`），不在
-   * `persona.console()` 里。两处是同一个 provider 的两半，所以归属也必须合到
-   * 一处——否则Persona的参数会既不在人格页、也不该在设置页，成为一组孤儿。
-   */
   it('bot 级声明的配置组跟着人格 provider 走(Persona自己没实现 console() 也算)', async () => {
     const group = {
       id: 'persona',
@@ -225,11 +213,6 @@ describe('manifest 组装', () => {
     });
   });
 
-  /**
-   * `settingsPage` 的组是声明方明确放弃认领的:manifest 里不出现,于是控制台的
-   * "未认领落回设置页"规则把它画到 设置 → 运行参数 的最下面(上下文交接阈值就是
-   * 这样的组——操作员的心智模型里它是系统设置)。owner 与写入权照旧,只挪画在哪。
-   */
   it('标了 settingsPage 的 bot 级配置组不被人格 provider 认领', async () => {
     const claimed = {
       id: 'persona',

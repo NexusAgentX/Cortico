@@ -101,7 +101,7 @@ describe('rebuildTail user回合截断', () => {
   });
 
   // 事件折叠须先于历史预算边界计算。
-  it('巨大的工具结果先折叠再扫预算,不再腰斩整条历史', () => {
+  it("先折叠工具结果，再按预算保留历史", () => {
     const tail: ChatMessage[] = [];
     for (let i = 0; i < 10; i++) {
       tail.push({ role: 'user', content: `早先第${i}轮` }, assistant([], `答${i}`));
@@ -137,7 +137,7 @@ describe('rebuildTail user回合截断', () => {
     const write = big.tool_calls!.find((c) => c.id === 'w1')!;
     expect(write.function.name).toBe('write_file');
     expect(write.function.arguments).toBe(FOLD_ARGS_PLACEHOLDER);
-    // 同一条消息里没超阈值的调用一个字都不动
+    // 未超过阈值的调用保持原文。
     expect(big.tool_calls!.find((c) => c.id === 'e1')!.function.arguments).toBe('{}');
     expect(JSON.stringify(out)).not.toContain('文文文');
     expect(JSON.stringify(out)).toContain('早先第0轮');
@@ -155,7 +155,7 @@ describe('rebuildTail user回合截断', () => {
     expect(out).toStrictEqual(src);
   });
 
-  it('折叠也压不下去的单条不再 break,而是省略它继续往前留历史', () => {
+  it("折叠后仍超限的单条被省略，继续保留更早历史", () => {
     const tail: ChatMessage[] = [];
     for (let i = 0; i < 6; i++) {
       tail.push({ role: 'user', content: `早先第${i}轮` }, assistant([], `答${i}`));

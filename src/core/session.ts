@@ -40,7 +40,7 @@ export class SessionLog {
 
   load(): void { this.context.load(); }
 
-  /** 整体替换(截断时用):先写.tmp再rename,原子重写 */
+  /** 整体替换：先写临时文件，再 rename 覆盖目标文件。 */
   reset(messages: readonly ContextRecord[]): void {
     this.context.reset(messages);
     for (const cb of this.resetListeners) {

@@ -1,7 +1,4 @@
-/**
- * templates/extension/ 下的三个模板包是能装的真包:manifest、入口形状、干装载都按
- * check:extension 那条线走一遍,id 不与内建的撞。模板落后于契约时这里先红。
- */
+/** 检查扩展模板的 manifest、导出结构、构造结果及 id 冲突。 */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -46,7 +43,7 @@ describe('templates/extension', () => {
     for (const kind of ['world', 'provider', 'bot']) expect(existsSync(join(TEMPLATES, kind, 'README.md'))).toBe(true);
   });
 
-  it('world:形状对、干装载无失败、工具名不与内建撞', async () => {
+  it("World 模板通过结构与构造检查，工具名不与内建冲突", async () => {
     const { pkgDir, exported } = await loadTemplate('world');
     expect(isWorldDefinition(exported)).toBe(true);
     const def = exported as WorldDefinition<WorldSection>;
@@ -57,7 +54,7 @@ describe('templates/extension', () => {
     expect(report.warnings).toEqual([]);
   });
 
-  it('provider:形状对、干装载无失败、id 不与内建撞', async () => {
+  it("Provider 模板通过结构与构造检查，id 不与内建冲突", async () => {
     const { exported } = await loadTemplate('provider');
     expect(isProviderModule(exported)).toBe(true);
     const mod = exported as ProviderModule;
@@ -67,7 +64,7 @@ describe('templates/extension', () => {
     expect(report.warnings).toEqual([]);
   });
 
-  it('bot:形状对、干装载无失败、id 不与仓内 bots/ 目录撞', async () => {
+  it("Bot 模板通过结构与构造检查，id 不与仓内 bot 冲突", async () => {
     const { pkgDir, exported } = await loadTemplate('bot');
     expect(isBotDefinition(exported)).toBe(true);
     const def = exported as BotDefinition<CoreConfig>;

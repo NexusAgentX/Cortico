@@ -1,9 +1,6 @@
 /**
- * Core 与Persona之间的两个方向:
- *  - 方向一:启动时收下 session 声明,并要求恰好一个接收事件投递的常驻 session。
- *  - Persona → core:spawnFork 按声明取模型档位/工具集/轮数上限,做并发记账与用量归账。
- *
- * core 全程不认识 'association' 这个名字的含义——它只是查表键。
+ * 验证恰好一个接收事件的常驻 session，以及 fork 的声明解析、并发统计和计量。
+ * fork 模型来自活跃端点，工具和轮数来自声明；session id 仅作为查表键。
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -45,7 +42,7 @@ function loadedFor(dir: string): LoadedConfig<BotConfig> {
   });
 }
 
-/** 一个最小的临时 session 声明(core 只用它查表) */
+/** 临时 session 声明。 */
 function forkDecl(patch: Partial<SessionDecl> = {}): SessionDecl {
   return {
     id: 'sidethought',
@@ -117,7 +114,7 @@ describe('Core · session 声明与 fork 原语', () => {
     }
   });
 
-  it('spawnFork 按声明取档位与工具集,跑完工具循环并交回最后正文', async () => {
+  it("spawnFork 使用活跃端点和声明工具，返回工具循环的最后正文", async () => {
     const { core, llm } = build({ extraSessions: [forkDecl()] });
     llm.script(toolReply([{ name: 'probe', id: 'p1' }]), textReply('看完了。'));
 
@@ -166,7 +163,7 @@ describe('Core · session 声明与 fork 原语', () => {
     await expect(running).resolves.toBe('画完了。');
   });
 
-  it('未声明的 id 直接拒绝,不静默造一个 session', async () => {
+  it("spawnFork 拒绝未声明的 session id", async () => {
     const { core } = build();
     await expect(core.spawnFork({ id: '没声明过', messages: [] })).rejects.toThrow(/未声明/);
   });
@@ -258,7 +255,7 @@ describe('Core · session 声明与 fork 原语', () => {
     expect(api!.toolsTagged('read').has('看一眼')).toBe(true);
   });
 
-  it('人格状态袋经 CoreApi 读写并落在 core-state.json 里', () => {
+  it("Persona 状态经 CoreApi 读写并保存到 core-state.json", () => {
     let api: CoreApi | null = null;
     tmp = makeTmpDir();
     const loaded = loadedFor(tmp.dir);
@@ -281,10 +278,7 @@ describe('Core · session 声明与 fork 原语', () => {
     expect(core.state.data.persona).toEqual({ 无论装什么: ['core 不解释内容'] });
   });
 
-  /**
-   * attach 调用前须从磁盘加载状态袋。
-   * load() 会整体替换 data.persona，attach 时恢复状态不能读取将被丢弃的空对象。
-   */
+  /** attach 前加载持久状态；load() 会替换 data.persona，Persona 必须取得加载后的引用。 */
   it('第二个 core 实例在 attach 时就看得见盘上的人格状态', () => {
     tmp = makeTmpDir();
     const loaded = loadedFor(tmp.dir);
@@ -310,7 +304,7 @@ describe('Core · session 声明与 fork 原语', () => {
     expect(seenAtAttach).toEqual({ 'bilibili/314544096': 'sha' });
   });
 
-  // World 从总线抽走事件后须销账，水位才能越过该事件。
+  // 已消费的事件须标记已处理，使投递水位继续推进。
   it('World 抽走待投递事件后水位越过它们', async () => {
     tmp = makeTmpDir();
     const loaded = loadedFor(tmp.dir);

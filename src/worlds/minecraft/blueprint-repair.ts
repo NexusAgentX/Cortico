@@ -1,12 +1,6 @@
 /**
- * 宽容修复层:严格解析没过时,做**确定性**的格式化补救再试一次。
- *
- * 这一层是承重墙不是装饰——benchmark 50 发提交里 29 发靠它救回,补完之后
- * 零残留失败;单看动作,补默认属性 1141 次是最大的一项。
- *
- * 纪律:只做能确定性还原意图的动作,一律不猜。不猜方块名、不猜属性值、不猜轴序、
- * 不猜越界索引、不动损坏的 palette,也不裁掉已经画出的内容。矩阵的实际长方体是
- * 尺寸权威；参差缺格用 `structure_void` 补齐,补完仍要重新过严格校验与 registry 校验。
+ * 严格解析失败时按固定规则规范化格式，再次运行解析及注册表校验。
+ * 实际矩阵决定尺寸，缺格用 structure_void 补齐；不裁剪已有内容，不改方块名、属性值或越界索引。
  */
 
 import {
@@ -32,11 +26,8 @@ interface RepairAction {
 
 export interface RepairReport {
   policyVersion: typeof REPAIR_POLICY_VERSION;
-  /** 严格解析本来就过了吗 */
   strictValid: boolean;
-  /** 严格解析的错(带精确路径);过了就是 null */
   strictError: string | null;
-  /** 有没有真动过东西 */
   applied: boolean;
   actions: RepairAction[];
 }
@@ -80,10 +71,7 @@ function unwrapSubmission(
   return null;
 }
 
-/**
- * 正文里打印出来、却没走成工具调用的那一份蓝图。
- * **只有唯一一份可辨认的完整提交时才认**——两份就是歧义,宁可不救。
- */
+/** 仅提取正文中唯一一份完整蓝图提交。 */
 export function recoverVisibleSubmission(
   visibleContent: string,
   expectedToolName: string,
@@ -104,23 +92,19 @@ export function recoverVisibleSubmission(
   return recovered.size === 1 ? [...recovered.values()][0] : null;
 }
 
-/** palette 里可规范化成 `minecraft:structure_void` 的索引;没有就不猜缺格语义。 */
+/** 查找可规范化为 minecraft:structure_void 的 Palette 索引。 */
 function preserveIndex(submission: Record<string, unknown>): number | undefined {
   if (!Array.isArray(submission.palette)) return undefined;
   for (let index = 0; index < submission.palette.length; index++) {
     try {
       if (paletteEntryToState(submission.palette[index]) === 'minecraft:structure_void') return index;
     } catch {
-      // palette 条目本身坏掉的情况留给 registry 校验点名,这里不越权
     }
   }
   return undefined;
 }
 
-/**
- * 矩阵形状的小毛病贴回规则长方体:轴序补齐/统一大小写；尺寸按实际矩阵登记；
- * 参差行只用 `structure_void` 向东、向南补齐。只补不裁,一格模型内容都不丢。
- */
+/** 补齐轴序并统一大小写；按矩阵计算尺寸，向东、向南用 structure_void 补齐参差行。 */
 export function repairSubmissionShape(
   value: Record<string, unknown>,
 ): { submission: Record<string, unknown>; actions: RepairAction[] } {
@@ -225,7 +209,6 @@ export function completeBlueprintStateDefaults(
     try {
       completion = completeBlockStateDefaults(state);
     } catch {
-      // 状态串本身坏掉的情况归 registry 校验点名,这里原样放行
       cache.set(state, state);
       return state;
     }

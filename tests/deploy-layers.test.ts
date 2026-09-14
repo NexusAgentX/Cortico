@@ -1,11 +1,5 @@
-/**
- * 部署加载的分层:框架默认 ← Persona建议 ← **包里的 worlds 覆盖** ← 这份部署的 config.json。
- *
- * 中间那层是 `<代码包>/worlds/<Worldid>/config.json`,与同目录的 `ENV_PROMPT.md` 并排——
- * 三样东西(提示词、worlds 配置、演出包)共用同一条规则:逐层深合并,后一层赢。
- *
- * 后半段是 LLM 端点表:它是**全局**的(`<部署根>/providers/<端点名>/config.json`),
- * 压过代码默认,且不接受部署 config.json 的覆盖。
+/** 配置逐层深合并:代码默认、bot 包的 World 配置、共享端点表、部署配置。
+ * 端点表不接受部署 config.json 的 providers 覆盖;提示词另按整份文件覆盖。
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,7 +12,7 @@ interface TestConfig extends CoreConfig {
   worlds: Record<string, { enabled: boolean; username?: string; port?: number; nested?: { a?: number; b?: number } }>;
 }
 
-/** 层 1+2:框架默认与Persona的建议值。 */
+
 function defaults(): TestConfig {
   return {
     paths: { memory: 'memory', data: 'data' },
@@ -49,7 +43,7 @@ describe('worlds 配置的三层', () => {
 
     const cfg = loadDeployment<TestConfig>({ defaults }, deployDir, deployDir, pkgDir).config;
     expect(cfg.worlds.minecraft.username).toBe('CortiV');
-    // 没写到的键保持 World 默认,不被整段替换
+
     expect(cfg.worlds.minecraft.port).toBe(25565);
     expect(cfg.worlds.minecraft.nested).toEqual({ a: 1, b: 2 });
   });
@@ -60,8 +54,8 @@ describe('worlds 配置的三层', () => {
     writeFileSync(join(deployDir, 'config.json'), JSON.stringify({ worlds: { minecraft: { port: 30000 } } }), 'utf8');
 
     const cfg = loadDeployment<TestConfig>({ defaults }, deployDir, deployDir, pkgDir).config;
-    expect(cfg.worlds.minecraft.port).toBe(30000); // 本机事实归部署
-    expect(cfg.worlds.minecraft.username).toBe('CortiV'); // 人格身份归包
+    expect(cfg.worlds.minecraft.port).toBe(30000);
+    expect(cfg.worlds.minecraft.username).toBe('CortiV');
   });
 
   it('深合并到嵌套键;没有 worlds/ 目录时什么都不发生', () => {
@@ -92,7 +86,7 @@ describe('worlds 配置的三层', () => {
   });
 });
 
-/** 层 1/2 里就有的那条端点(deepseek 那种"开箱能跑的"),用来验层序。 */
+
 function providerDefaults(): TestConfig {
   return {
     paths: { memory: 'memory', data: 'data' },
@@ -107,8 +101,8 @@ function writeGlobalProvider(providersDir: string, name: string, json: unknown):
   writeFileSync(join(providersDir, name, 'config.json'), JSON.stringify(json), 'utf8');
 }
 
-describe('全局端点表', () => {
-  it('全局那份压过代码里的默认;部署 config.json 的 providers 段不算数', () => {
+describe('共享端点表', () => {
+  it('共享端点覆盖代码默认值,忽略部署 config.json 的 providers 段', () => {
     const { deployDir } = makeDirs();
     const providersDir = mkdtempSync(join(tmpdir(), 'deploy-prov-'));
     writeGlobalProvider(providersDir, 'cloud', { kind: 'deepseek', baseUrl: 'https://global.test' });
@@ -120,10 +114,10 @@ describe('全局端点表', () => {
     );
 
     const cfg = loadDeployment<TestConfig>({ defaults: providerDefaults }, deployDir, deployDir, deployDir, providersDir).config;
-    expect(cfg.providers.cloud.baseUrl).toBe('https://global.test'); // 全局赢过代码默认
-    expect(cfg.providers.cloud.secret).toBe('K'); // 没写到的键仍是深合并
-    expect(cfg.providers.cloud.serviceTier).toBeUndefined(); // 部署改不动端点
-    expect(cfg.providers.ghost).toBeUndefined(); // 部署也加不进端点
-    expect(cfg.providers.local.kind).toBe('openai-responses-compat'); // 全局能带来新端点
+    expect(cfg.providers.cloud.baseUrl).toBe('https://global.test');
+    expect(cfg.providers.cloud.secret).toBe('K');
+    expect(cfg.providers.cloud.serviceTier).toBeUndefined();
+    expect(cfg.providers.ghost).toBeUndefined();
+    expect(cfg.providers.local.kind).toBe('openai-responses-compat');
   });
 });

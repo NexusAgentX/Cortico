@@ -55,7 +55,7 @@ export interface GenerateOptions {
   onEvent?: (event: StreamEvent) => void;
   role?: string;
   sessionId?: string;
-  /** Output-only reasoning and local media references accompany the standard input projection. */
+  /** Local context retains output reasoning and media references alongside the request Items. */
   context?: readonly ContextRecord[];
   nativeSpec?: ModelSpec;
   origin?: ItemOrigin;

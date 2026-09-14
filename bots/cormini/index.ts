@@ -56,7 +56,6 @@ function build(loaded: LoadedConfig<CorminiConfig>, worlds: World[]): BotParts<C
       persona.stopRhythm();
     },
     console: {
-      // 上下文与交接:归Persona的那组容量旋钮
       configGroups: [contextStageConfigGroup('cormini')],
       // 阶段预算与软预警线(终端页上下文圈的分母与黄线);计数与物理上限由 core 报
       status: () => ({ context: { maxTokens: cfg.context.maxTokens, softRatio: cfg.context.softRatio } }),

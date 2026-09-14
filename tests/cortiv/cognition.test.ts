@@ -1,18 +1,6 @@
 import { FixtureForkOptions as ForkOptions, FixtureSessionInfo as SessionInfo } from '../core/fixture-protocol.ts';
 import { records, messages as legacyMessages } from '../core/fixture-protocol.ts';
-/**
- * 认知外包的**受理侧**(cortiv Persona这一半)。
- *
- * core 那一半(注入/白名单/并发记账)在 tests/core/cognition.test.ts;这里钉的是
- * Persona自己的裁量:
- *  - 声明:主档模型 + maxTokens 16384,rounds 8÷6,label 与控制台 session 列表同一口径;
- *  - 保留前缀:fork 继承主 session 出线态快照,悬空的 tool_call 尾巴先裁掉;
- *  - 框架消息:brief 的来源身份写明(World 写的数据,不是她自己的念头)+ 工具面 + 收尾契约;
- *  - 工具面:World 点名的那几把 + 她自己的工作区文件工具,别的一把没有;
- *  - 单实例 / 15 分钟超时 / 全局开关 / 异常兜底,四条路各自的返回。
- *
- * 全程不发真请求:spawnFork 是 mock。
- */
+/** Persona cognition 受理测试：继承前缀并裁剪不配平的工具尾、限定工具集合、第一人称产出、单实例、超时、开关与错误返回。spawnFork 使用测试替身；模型配置属于 Provider。 */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -96,12 +84,10 @@ describe('认知外包受理 · 声明', () => {
     const { persona } = rig();
     const decl = persona.declareSessions().find((d) => d.id === COGNITION);
     expect(decl).toBeTruthy();
-    // 模型整组归 provider:声明里连这个字段都没有(生成上限跟着端点那份 spec 走)
     expect(decl).not.toHaveProperty('spec');
     expect(decl!.rounds()).toEqual({ soft: 6, hard: 8 });
     expect(decl!.persistent).toBe(false);
     expect(decl!.receivesEvents).toBe(false);
-    // 控制台 session 列表按 label 认人:得是一句人话
     expect(decl!.label).toContain('代想');
   });
 
@@ -206,7 +192,6 @@ describe('认知外包受理 · 保留前缀与框架消息', () => {
           { id: 'y', type: 'function', function: { name: 't', arguments: '{}' } },
         ],
       },
-      // 两只手只回来一只:整条 assistant 都不能留
       { role: 'tool', content: 'ok', tool_call_id: 'x' },
     ];
     expect(legacyMessages(balancedSnapshot(records(half)))).toEqual([{ role: 'user', content: 'a' }]);
@@ -227,11 +212,9 @@ describe('认知外包受理 · 工具面', () => {
     await r.persona.cognition.request({ brief: '出图' }, ctx({ tools: modTools }));
     const names = (r.forks[0].tools ?? []).map((t) => t.name);
     expect(names.slice(0, 2)).toEqual(['mc_blueprint', 'mc_goal']);
-    // 她能顺手把产物存进自己的分区
     expect(names).toContain('read_file');
     expect(names).toContain('write_file');
     expect(names).toContain('list_files');
-    // 说话类/收工类工具不在这条线程上(观众听不到,end_turn 会让它交白卷)
     expect(names).not.toContain('end_turn');
     expect(names.some((n) => n.startsWith('vtuber_'))).toBe(false);
   });
@@ -271,7 +254,6 @@ describe('认知外包受理 · 四条路的返回', () => {
     const stopWhen = r.forks[0].stopWhen!;
     expect(stopWhen()).toBe(false);
     await vi.advanceTimersByTimeAsync(15 * 60_000);
-    // 循环自己也会收线(别让它继续烧钱),同时受理侧返回超时
     expect(stopWhen()).toBe(true);
     await expect(pending).resolves.toEqual({ error: '后台思考超时(15 分钟),已放弃' });
   });
@@ -295,10 +277,8 @@ describe('认知外包受理 · 四条路的返回', () => {
     const prop = CORTIV_COGNITION_CONFIG_GROUP.schema.properties['cognition.enabled'];
     expect(prop?.type).toBe('boolean');
     expect(prop.title).toContain('请托');
-    // 热改立即生效(persona 每次现读),别让页面标成"重启生效"
     expect(prop['x-hot']).toBe(true);
     expect(CORTIV_COGNITION_CONFIG_GROUP.owner).toBe('persona');
-    // 不是系统运行参数:这一组画在人格页上
     expect(CORTIV_COGNITION_CONFIG_GROUP.settingsPage).toBeUndefined();
 
     const defaults = definition.defaults();

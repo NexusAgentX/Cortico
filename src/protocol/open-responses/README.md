@@ -1,6 +1,6 @@
-# Open Responses
+<!-- Owner: src/protocol/open-responses/index.ts -->
 
-Owner: `src/protocol/open-responses/index.ts`
+# Open Responses
 
 `openapi.json` is the published 2026-04-24 schema from
 https://www.openresponses.org/openapi/2026-04-24/openapi.json.

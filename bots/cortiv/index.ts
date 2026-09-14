@@ -41,16 +41,7 @@ const DECLARES: readonly WorldDeclaration[] = ['terminal', 'vtuber', 'bilibili',
  */
 export const CORTIV_CONTEXT_CONFIG_GROUP: ConfigGroup = contextStageConfigGroup('cortiv');
 
-/**
- * 认知外包(「代想」)的全局开关,归Persona。
- *
- * 这一格管的是**别人能不能请托她**:World 遇上"要想一想"的活(蓝图设计是
- * 第一个用户)可以经 `host.cognition` 交给她在后台想;关掉之后 World 那一侧的
- * 句柄根本不存在,它如实回执这条路不可用。
- *
- * 与上一组分开画:那组是"她一个 session 装多长",这组是"她要不要替 World 想事情"
- * ——后者是人格页上的一句话,不是系统运行参数。
- */
+/** 关闭后台构思时，World 的 cognition 句柄不可用。 */
 export const CORTIV_COGNITION_CONFIG_GROUP: ConfigGroup = {
   id: 'cortiv-cognition',
   owner: 'persona',
@@ -58,9 +49,7 @@ export const CORTIV_COGNITION_CONFIG_GROUP: ConfigGroup = {
     type: 'object',
     title: '后台构思(代想)',
     description:
-      'World 能不能把"要想一想"的活交给她在后台想(她自己的模型、她自己的记忆,'
-      + '结果回给 World)。她一次只想一件,想的时候直播那一侧照常继续;费用与用量记在'
-      + '「代想」这个 session 名下。',
+      '允许 World 请求后台构思并接收结果。同一时刻处理一项，前台继续运行；费用与用量记入「代想」session。',
     properties: {
       'cognition.enabled': {
         type: 'boolean',
@@ -80,7 +69,6 @@ export interface CortiVConfig extends CoreConfig {
   /** 阶段长度三项归Persona,摘思维链与首轮对话两项归 core;同住 context 段。 */
   context: CoreConfig['context'] & ContextStagePolicy;
   rounds: { soft: number; hard: number };
-  /** 认知外包(代想):World 能不能请托她在后台想事情。见 CORTIV_COGNITION_CONFIG_GROUP。 */
   cognition: { enabled: boolean };
   tick: {
     /** null disables baseline wakeups. */
@@ -133,9 +121,6 @@ function build(loaded: LoadedConfig<CortiVConfig>, worlds: World[]): BotParts<Co
       persona.stopRhythm();
     },
     console: {
-      // Persona卡:ORIENTATION 与宪法;工作区/记忆/历史三块由 CortiV.console() 自报。
-      // 上下文与交接:归Persona的那组容量旋钮,跟着「可缇Corti」这一页走
-      // (框架自己的那组在「设置 → 运行参数」,两处不重复声明同一个路径)。
       configGroups: [CORTIV_CONTEXT_CONFIG_GROUP, CORTIV_COGNITION_CONFIG_GROUP],
       // 阶段预算与软预警线(终端页上下文圈的分母与黄线);计数与物理上限由 core 报
       status: () => ({ context: { maxTokens: cfg.context.maxTokens, softRatio: cfg.context.softRatio } }),

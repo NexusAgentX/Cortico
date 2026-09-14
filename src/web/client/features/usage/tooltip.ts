@@ -26,13 +26,7 @@ export interface UsageTip extends Disposable {
   clearHi(): void;
 }
 
-/**
- * `host` 通常就是 feature 的 `ctx.root`。
- *
- * 这里是本任务里**唯一**一处 `innerHTML`：tooltip 正文由纯函数 `uTipHtml` 生成，
- * 其中所有外来文本（桶名、模型名、角色名）都已经过 `esc`。改成逐节点拼装会把那个
- * 纯函数拆成一棵需要 DOM 才能测的树，而它恰恰是这一页最值得直测的东西。
- */
+/** host 通常为 feature 的 root。HTML 来自 uTipHtml，所有外部文本必须经过 escaping。 */
 export function createUsageTip(doc: Document, host: HTMLElement): UsageTip {
   const el = doc.createElement('div');
   el.className = 'u-tip viewport-overlay hidden';

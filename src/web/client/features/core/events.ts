@@ -70,8 +70,7 @@ export function createEventsView(deps: EventsViewDeps): EventsView {
       void view.init();
     },
   });
-  // 摄取刻的原始归档与发车刻的投影是同一件事的两条记录,默认只看投影;
-  // 要对账(某条原始有没有被投影引用)才把归档打开。
+  // 默认过滤 archiveOnly 记录；启用归档选项后同时显示未直接投递的记录。
   const archiveToggle = ui.checkbox(S.showArchive, {
     title: S.showArchiveTitle,
     onChange: (on) => {

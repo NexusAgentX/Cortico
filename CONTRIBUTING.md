@@ -1,6 +1,6 @@
 # Contributing to Cortico
 
-Cortico is pre-release. These rules keep a contribution cheap on both sides.
+Cortico is pre-release.
 
 ## Philosophy
 
@@ -12,9 +12,8 @@ the reference for what is and is not the framework's job.
 
 ## The one rule
 
-Understand what you submit. Writing it with a coding agent is expected; submitting what you
-cannot explain is not. If the answer to "why is this line here" is that the model wrote it, the
-pull request is closed.
+Contributors must understand and be able to explain all submitted code, including code written
+with a coding agent. Pull requests that fail this requirement are closed.
 
 ## What is accepted
 
@@ -38,7 +37,12 @@ pull request is closed.
 ## Before opening a pull request
 
 - Open an issue first for anything larger than a local fix.
-- Both green, and browser changes also need the third:
+- Every pull request must explain its changes in plain language, with at least one paragraph
+  in Chinese and one in English.
+- All submitted natural-language content, including descriptions, UI copy, prompts,
+  documentation, code comments and commit messages, must be written and reviewed against the
+  [AI slop checklist](AGENTS.md#ai-slop-checklist) before submission.
+- Run `pnpm test` and `pnpm run typecheck`. Browser changes also require `pnpm typecheck:web`:
 
 ```bash
 pnpm test

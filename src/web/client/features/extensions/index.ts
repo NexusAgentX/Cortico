@@ -1,27 +1,4 @@
-/**
- * 「扩展」页 —— `extensions/` 下的 npm 包:装了哪些、npm 上还有哪些、装卸与重启。
- *
- * 框架知道的只有这么多:
- *
- * ```
- * 有一批包;每个处于 loaded / failed / pending-restart / removed / idle 之一;
- * 装卸只改磁盘,加载要重启进程。
- * ```
- *
- * 包名、描述、 World id 全部来自服务端,这一页不认识任何一个。
- *
- * 三类扩展(World、LLM Provider、bot 包)共用这一页,靠 `kind` 分组;读不出 manifest 的包
- * 没有 kind,单独一组并把原因摆出来。bot 包一个进程只跑一个:被这份部署引用的那个是
- * loaded,其余是 idle。
- *
- * | 动作 | 端点                        | 语义                                              |
- * | ---- | --------------------------- | ------------------------------------------------- |
- * | 清单 | `GET /api/extensions`          | 启动时的加载结果对照此刻磁盘                        |
- * | 搜索 | `GET /api/extensions/search`   | npm registry 上带该类关键字的包(`?kind=`)          |
- * | 安装 | `POST /api/extensions/install` | `{ name, version? }` 或 `{ path }`;完成后待重启    |
- * | 卸载 | `POST /api/extensions/uninstall` | `{ name }`;本进程里仍在跑,重启后消失            |
- * | 重启 | `POST /api/run/restart`     | 落重启标志 + 规范关机;启动器循环把进程拉起来        |
- */
+/** 扩展管理页。扩展信息与运行状态由服务端提供；安装、卸载后需重启进程才能生效。 */
 
 import { get, post } from '../../core/api.ts';
 import { pageIntro } from '../../ui/page.ts';
@@ -143,7 +120,6 @@ export function mountExtensions(ctx: FeatureContext): void {
   const installedSheet = ui.sheet({
     title: S.installedTitle,
     en: 'extensions/',
-    desc: S.installedDesc,
   });
   const sumBar = ui.rowbar();
   const msg = ui.msgline();
@@ -263,8 +239,6 @@ export function mountExtensions(ctx: FeatureContext): void {
     card.body.appendChild(bar);
     if (p.description) card.body.appendChild(ui.msgline(p.description));
     if (p.reason) card.body.appendChild(ui.msgline(p.reason, true));
-    if (p.state === 'pending-restart') card.body.appendChild(ui.msgline(S.notePendingRestart));
-    if (p.state === 'removed') card.body.appendChild(ui.msgline(S.noteRemoved));
     if (p.state === 'idle') card.body.appendChild(ui.msgline(S.noteIdle));
     if (p.console === 'missing') card.body.appendChild(ui.msgline(S.noteConsoleMissing, true));
     if (p.state !== 'removed') {

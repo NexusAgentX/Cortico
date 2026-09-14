@@ -2,9 +2,7 @@ import { pick } from '../../core/language.ts';
 
 const zh = {
   pageTitle: '存储',
-  pageIntro: '查看落盘与内存数据的规模，并按生命周期安全清理。',
   sheetTitle: '数据',
-  sheetDesc: '落盘与内存各部分的规模与清除。persona/ 工作区不在此列——它由版本介质单独管理。',
   sectionDisk: '落盘 data/（重启后仍在）',
   sectionMemory: '内存暂存（重启即清零）',
   groupDisk: (group: string) => group + ' · 落盘',
@@ -17,7 +15,7 @@ const zh = {
   cleared: '已清除',
   clearFailed: (err: string) => '清除失败: ' + err,
   nukeTitle: '⚠⚠ 一键清空全部存储',
-  nukeBody: 'persona/ 工作区不动。事件库与 session 不可恢复。确定？',
+  nukeBody: '清除清单中的所有存储项。此操作无法撤销。',
   partialFailed: (keys: string) => '部分失败: ' + keys,
   nukedAll: (count: number) => `✓ 已全部清空（${count} 项）`,
   nukeFailed: (err: string) => '一键清空失败: ' + err,
@@ -29,9 +27,7 @@ const zh = {
 
 const en: typeof zh = {
   pageTitle: 'Storage',
-  pageIntro: 'Inspect the size of persisted and in-memory data and clear it safely by lifecycle.',
   sheetTitle: 'Data',
-  sheetDesc: 'Size and clearing of each persisted and in-memory part. The persona/ workspace is not listed here — it is managed by its version medium.',
   sectionDisk: 'Persisted data/ (survives restart)',
   sectionMemory: 'In-memory (cleared on restart)',
   groupDisk: (group: string) => group + ' · persisted',
@@ -44,7 +40,7 @@ const en: typeof zh = {
   cleared: 'Cleared',
   clearFailed: (err: string) => 'Clear failed: ' + err,
   nukeTitle: '⚠⚠ Clear all storage',
-  nukeBody: 'The persona/ workspace is left alone. The event store and sessions cannot be recovered. Continue?',
+  nukeBody: 'Clear every storage item in the list. This cannot be undone.',
   partialFailed: (keys: string) => 'Partially failed: ' + keys,
   nukedAll: (count: number) => `✓ Everything cleared (${count} items)`,
   nukeFailed: (err: string) => 'Clear all failed: ' + err,

@@ -22,30 +22,12 @@ import { createPanelContext, namespacedMemo } from './context.ts';
 import { ConsolePageLoader } from './loader.ts';
 import { S } from './strings.ts';
 
-/**
- * 路由第一段。framework 的页面用别的段，互不侵占。
- *
- * 名字与取值都仍是 `provider`:那是控制台的 URL 形状(线协议),与自带前端的构建
- * 产物同步,不随这次的类型改名一起动。
- */
+/** 控制台页路由的首段，与框架页路由分开。 */
 export const PROVIDER_ROUTE = 'provider';
-/**
- * 框架自带的两个通用页签。`~` 开头，所以与合法 panel id（`[a-z0-9-]`）
- * 永远撞不上——贡献方想抢也抢不到这两段。
- *
- * 它们**由框架渲染、按那一页的声明填内容**：前缀源来自 `promptDocs`，
- * 参数来自 `config`。两者都是声明式的东西，贡献方不必为它们写一行浏览器代码。
- */
+/** 框架页签由 promptDocs 与 config 声明生成；~ 前缀不在合法 panel id 字符集中。 */
 const PROVIDER_PROMPTS_ROUTE = '~prompts';
 const PROVIDER_CONFIG_ROUTE = '~config';
 
-/**
- * 迭代前确认真是数组。
- *
- * `badges: 'nope'` 这种**可迭代的垃圾**比不可迭代的更糟:`for...of` 一个字符串
- * 不会抛,只会逐字符跑一遍,画出四枚写着 `undefined undefined` 的药丸。
- * 服务端已经挡了这些形状,但那不是这里可以塌的理由。
- */
 function asArray<T>(v: readonly T[] | undefined): readonly T[] {
   return Array.isArray(v) ? v : [];
 }
@@ -78,13 +60,7 @@ interface MountedPanel {
   lifecycle: Lifecycle;
 }
 
-/**
- * 页头与面板槽是**两个容器**。
- *
- * 它们必须分开,否则 `ctx.refresh()` 会连面板一起铲掉——而那个方法存在的全部意义
- * 正是"刷新徽标但不重挂面板"。合成一个容器时这个 bug 只在真浏览器里看得见:
- * 单元测试断言的是"徽标更新了",而它确实更新了。
- */
+/** 页头与面板使用独立容器，刷新页头不重挂面板。 */
 interface Panes {
   chrome: HTMLElement;
   slot: HTMLElement;
@@ -107,7 +83,6 @@ export class ConsolePageHost {
   }
 
   get pages(): ConsolePageManifest[] {
-    // 线上字段仍叫 `providers`(线协议形状,与构建产物同步),本地一律叫 page。
     return this.snapshot?.providers ?? [];
   }
 
@@ -115,13 +90,7 @@ export class ConsolePageHost {
   async load(): Promise<void> {
     try {
       const next = await this.deps.fetchManifest();
-      /**
-       * 版本不认识就**拒绝渲染**，不猜。
-       *
-       * 协议注释里写着这一条，但先前没有任何执行点——服务端换了协议、前端还是
-       * 旧 bundle 时，会按旧形状去读新结构，错得既安静又难查。宁可空导航加一条
-       * 明确的错。
-       */
+      // 拒绝不支持的协议版本。
       if (next && next.protocolVersion !== CONSOLE_PROTOCOL_VERSION) {
         throw new Error(S.protocolMismatch(String(next.protocolVersion), String(CONSOLE_PROTOCOL_VERSION)));
       }
@@ -279,7 +248,7 @@ export class ConsolePageHost {
 
       const out = await impl.mount(ctx);
       if (gen !== this.generation) {
-        // mount 期间被卸载了:它自己返回的 Disposable 还没人管,补一刀。
+        // mount 返回时已卸载，立即释放其 Disposable。
         if (out && typeof out.dispose === 'function') out.dispose();
         return;
       }
@@ -310,25 +279,13 @@ export class ConsolePageHost {
     return impl;
   }
 
-  /**
-   * 这一页认领的、**并且这个部署真的答得出来**的配置组。
-   *
-   * 参数页整个架在 `/api/config` 上，那个表面没挂的部署（`capabilities.config`
-   * 为 false）里，这颗页签只会通向一张 503 的错误卡——那不是界面，是把服务端的
-   * 状态码当界面用。没挂就不出现，与外壳对框架页的处置同一条规矩。
-   */
+  /** 仅返回当前页认领且部署支持 config 能力的配置组。 */
   private configGroupsOf(page: ConsolePageManifest): readonly string[] {
     if (this.snapshot?.framework?.capabilities?.config === false) return [];
     return asArray(page.configGroups);
   }
 
-  /**
-   * 这一页认领的那几组旋钮，由框架通用渲染在它自己这一页上。
-   *
-   * manifest 只给 id（归属），schema 与当前值仍从 `/api/config` 取——那是唯一
-   * 的配置口子，这里没有第二条数据面。`showOwner: false`：整页都是同一个
-   * owner，再给每组印一枚"谁的"标签是废话。
-   */
+  /** manifest 提供组 id，schema 与当前值取自 /api/config；页内省略重复 owner 标签。 */
   private async showConfig(pageId: string, groupIds: readonly string[], gen: number): Promise<void> {
     const { slot } = this.ensurePanes();
     const lifecycle = new Lifecycle(this.deps.onError);
@@ -406,8 +363,7 @@ export class ConsolePageHost {
     const ui = this.ui();
     const head = ui.h('header', 'featureintro providerintro');
     const title = ui.h('h1', 'pagetitle', page.label);
-    // 未装配的页由框架点灰灯:那是框架自己知道的装配事实,不必等它自报
-    // (它根本没在跑,报不出来)。
+    // 未激活页的状态由框架提供。
     title.appendChild(lampRow(
       this.deps.doc,
       page.availability === 'active'
@@ -424,14 +380,6 @@ export class ConsolePageHost {
       bar.appendChild(ui.pill(page.availability === 'missing' ? S.notInstalled : S.notActivated, 'off'));
     }
     if (page.agentVisible === false) bar.appendChild(ui.pill(S.hidden, 'off'));
-    /**
-     * 前缀漂移是那一页**声明**的，落地重载却是**框架**的动作——所以这里必须是
-     * 一颗能点的按钮，不是一颗标签。
-     *
-     * 扩展那边**故意没有** `reloadPrefix()`：能用声明式表达的就不该出现在命令式
-     * 接口里。但只声明不给出口，操作者就卡住了（拨完开关，看着"前缀待重载"四个字
-     * 没处可点）。两头都要有：那一页报事实，框架给动作。
-     */
     if (page.prefixDrifted) {
       bar.appendChild(ui.button(S.reloadPrefix, {
         size: 'sm',
@@ -490,10 +438,7 @@ export class ConsolePageHost {
     }
   }
 
-  /**
-   * 重载当前 session 的 system 前缀。每次重载丢一次缓存前缀，所以由操作者点，
-   * 框架不偷偷替他做。完事后重取 manifest——漂移标记该消失了。
-   */
+  /** 重载前缀后重新读取 manifest 中的漂移状态。 */
   private async reloadPrefix(ui: ReturnType<typeof createConsoleUi>): Promise<void> {
     const ok = await ui.confirm({
       title: S.reloadTitle,

@@ -30,19 +30,9 @@ function templateText(type: string, name: string): string {
   return '';
 }
 
-/** 1024 → `1.0K`。`ui.fmt.bytes` 就是这件事,树里每行都要印。 */
 const sizeText = (n: number | undefined, ctx: ConsolePanelContext): string =>
   n == null ? '' : ctx.ui.fmt.bytes(n);
 
-// 纯前端 Markdown 预览。
-
-/**
- * 极简 markdown → HTML。**只认标题/列表/引用/行内 code/加粗/围栏代码**,
- * 其余原样。这里不引 markdown 库:预览是给写档案的人扫一眼版式用的,
- * 不是渲染器;引一个库进来 bundle 就翻倍。
- *
- * 每一行都先过 `esc`,所以档案正文里的 `<script>` 只会被显示成字。
- */
 function markdownPreview(ctx: ConsolePanelContext, source: string): string {
   const esc = (s: string): string => ctx.ui.esc(s);
   let inCode = false;
@@ -84,18 +74,12 @@ export const workspacePanel: ConsolePanel = {
       loading: '读取 persona/ 目录树…',
       failed: '工作区不可用',
       load: () => ctx.invoke<WorkspaceTree>('tree'),
-      // 只在**第一次**进面板时走 autoload 的重画。之后的刷新由 view 自己重取树、
-      // 只重画左栏——整卡重画会把正在编辑的档案连同未保存的改动一起清掉,
-      // 而"保存之后要刷新树(大小变了)"恰恰是最常发生的那次刷新。
+      // 刷新目录树时保留编辑器及未保存修改。
       render: (tree) => [new WorkspaceView(ctx, tree).el],
     });
   },
 };
 
-/**
- * 一次挂载的全部状态。写成类而不是一串闭包,是因为这一屏的状态(当前档案、脏位、
- * 查找位置、预览挡位)彼此纠缠,散成闭包之后每加一个动作都要多穿一层参数。
- */
 class WorkspaceView {
   readonly el: HTMLElement;
 
@@ -124,7 +108,7 @@ class WorkspaceView {
   private readonly replaceInput: HTMLInputElement;
   private readonly findCount: HTMLElement;
 
-  /** 快速 A→B 时忽略迟到的 A(否则 A 的正文会盖掉 B)。 */
+  /** 仅应用最近一次打开文件请求的结果。 */
   private openSeq = 0;
 
   constructor(ctx: ConsolePanelContext, tree: WorkspaceTree) {
@@ -135,11 +119,9 @@ class WorkspaceView {
     const card = ui.sheet({
       title: '工作区',
       en: 'persona/',
-      desc: '这里的每一次保存都会立即提交进 persona 的 git 仓(署名 operator),'
-        + '所以改错了能从「版本历史」找回来。保存带底本核对:别处改过的档案不会被你这一版悄悄盖掉。',
+      desc: '保存时以 operator 署名提交到工作区的 Git 仓库。',
     });
 
-    // ---- 顶栏:新建 / 刷新 / 过滤 / git 一行 ----
     const filterInput = ui.input({
       type: 'search',
       placeholder: '过滤档案名…',
@@ -229,11 +211,9 @@ class WorkspaceView {
 
     this.el = card.el;
 
-    // 光标读数要跟着点击与方向键走;监听带 signal,面板卸载自动摘。
     for (const type of ['click', 'keyup'] as const) {
       this.editor.addEventListener(type, () => this.syncMeta(), { signal: ctx.signal });
     }
-    // Tab 在编辑器里是缩进,不是"跳到下一个按钮"。
     this.editor.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Tab') return;
       ev.preventDefault();
@@ -271,8 +251,7 @@ class WorkspaceView {
   }
 
   /**
-   * 重取目录树,只重画左栏。保存/新建/删除/改名之后都调它——
-   * 编辑器里的正文、光标、脏位、滚动位置一概不动。
+   * 刷新目录树时保留编辑器正文、光标、未保存状态和滚动位置。
    */
   private async refreshTree(): Promise<void> {
     try {
@@ -282,7 +261,7 @@ class WorkspaceView {
       this.renderTree();
       if (this.cur) this.markSelected(this.cur.path);
     } catch {
-      // 树没刷新不影响正在编辑的档案,不打扰;下一次动作还会再试
+      // 刷新失败时保留当前目录树和编辑状态。
     }
   }
 
@@ -369,7 +348,6 @@ class WorkspaceView {
     return !!this.cur && this.editor.value !== this.cur.content;
   }
 
-  /** 切换档案前先问一次。`ui.confirm` 在面板卸载时 resolve false,所以不会挂住。 */
   private async canLeaveCurrent(): Promise<boolean> {
     if (!this.dirty()) return true;
     return this.ctx.ui.confirm({
@@ -420,7 +398,6 @@ class WorkspaceView {
         [this.cur.path, content, this.cur.revision],
       );
       if (!out.ok) {
-        // 冲突:**不覆盖**,原话回给用户,让他自己决定重新载入。
         setMsg(this.msg, out.error, true);
         return;
       }
@@ -450,7 +427,7 @@ class WorkspaceView {
     const path = this.cur.path;
     const ok = await this.ctx.ui.confirm({
       title: `删除 persona/${path}?`,
-      body: '未保存的修改会丢失;已保存的版本仍可从「版本历史」里找回来。',
+      body: '未保存的修改将丢失。已提交的版本可从「版本历史」恢复。',
       danger: true,
     });
     if (!ok || !this.cur) return;
@@ -598,7 +575,6 @@ class WorkspaceView {
     for (const c of commits) this.histWrap.append(...this.commitRow(c, path));
   }
 
-  /** 一条提交 + 它下面那块可展开的 diff。 */
   private commitRow(c: Commit, path: string): Node[] {
     const { ui } = this.ctx;
     const row = ui.h('div', 'histrow');
@@ -633,7 +609,7 @@ class WorkspaceView {
                 this.setPane('edit');
                 this.editor.value = f.content;
                 this.syncMeta();
-                setMsg(this.msg, '旧版本已放进编辑器,保存之后才会生效');
+                setMsg(this.msg, '已载入旧版本，保存后生效');
               },
             }),
             ui.copyButton(() => f.content, { label: '复制全文' }),
@@ -672,7 +648,6 @@ class WorkspaceView {
     }
   }
 
-  /** 光标读数、字数、脏位、预览。每次击键与每次点击都跑,所以要便宜。 */
   private syncMeta(): void {
     const text = this.editor.value;
     const before = text.slice(0, this.editor.selectionStart);

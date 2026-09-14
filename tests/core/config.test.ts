@@ -1,6 +1,4 @@
-/**
- * 部署层配置(src/deploy.ts):四层合并的归属、worlds.qq.roster 的形状、以及密钥按名字取。
- */
+/** 部署配置的默认值归属、覆盖顺序、World 配置与密钥读取。 */
 import { describe, it, expect } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,12 +17,11 @@ function withConfig(json: unknown): { dir: string; cleanup: () => void } {
   return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
-describe('四层合并:每个参数由它的所有者给默认值', () => {
-  it('core 只给自己的参数,Persona的参数不在它手里', () => {
-    // 合批与历史思维链取舍是 core 的机械设施
+describe("部署配置合并与默认值归属", () => {
+  it("Core 默认配置不包含 Persona 参数", () => {
     expect(CORE_DEFAULTS.batching).toHaveProperty('quietGapMs');
     expect(CORE_DEFAULTS.context.keepPastThinking).toBe(true);
-    // 模型档位/阶段长度/轮数上限/memo容量/作息都不在 core 默认值里
+    // Persona 的阶段预算、轮数和作息不属于 Core 默认值。
     for (const key of ['models', 'loop', 'memo', 'tick', 'dream']) {
       expect(CORE_DEFAULTS, `core 不该持有 ${key}`).not.toHaveProperty(key);
     }
@@ -33,19 +30,19 @@ describe('四层合并:每个参数由它的所有者给默认值', () => {
   it('composeDefaults 把三方的默认值合到一起,来源可追', () => {
     const cfg = composeDefaults();
     expect(cfg.batching).toEqual(CORE_DEFAULTS.batching);
-    // Persona同时提供自有参数与 core 策略选择。模型不在其列:它整组归 provider。
+    // Persona 可提供自有参数及 Core 参数的建议值。
     expect(PERSONA_DEFAULTS).not.toHaveProperty('models');
     expect(cfg.providers.deepseek.spec?.model).toBe('deepseek-flash');
     expect(cfg.memo).toEqual(PERSONA_DEFAULTS.memo);
     expect(cfg.context.maxTokens).toBe(PERSONA_DEFAULTS.context.maxTokens);
-    // Context 的容量归Persona，历史思维链策略归 core。
+    // Persona 设置阶段预算，模型容量由 provider 配置决定。
     expect(cfg.context.keepPastThinking).toBe(CORE_DEFAULTS.context.keepPastThinking);
     // Vision 默认值属于 QQ World，不是顶层配置段。
     expect(cfg.worlds.qq.vision).toEqual(VISION_DEFAULTS);
     expect(cfg.worlds.websearch.enabled).toBe(true);
   });
 
-  it('部署赢:config.json 的值压过Persona的建议(层3 > 层2)', () => {
+  it("部署 config.json 覆盖 Persona 建议值", () => {
     const { dir, cleanup } = withConfig({ context: { maxTokens: 32000 }, memo: { residentCap: 3 } });
     try {
       const { config } = loadConfig(dir);
@@ -71,7 +68,7 @@ describe('四层合并:每个参数由它的所有者给默认值', () => {
     } finally { cleanup(); }
   });
 
-  it('仓库根的 .env 不参与:密钥归部署单位,只认进程环境和 bot 自己的目录', () => {
+  it("密钥使用进程环境或部署 .env，不读取仓库根 .env", () => {
     const root = mkdtempSync(join(tmpdir(), 'bot-reporoot-'));
     const botDir = join(root, 'bots', 'x');
     mkdirSync(botDir, { recursive: true });

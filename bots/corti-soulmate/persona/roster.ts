@@ -1,14 +1,8 @@
-/**
- * 花名册:派生视图,拼装时机械抽取每个people/*.md的
- * 文件名+第一行,拼成"我认识的人"列表。没有第二处维护,不会漂移。
- *
- * 第一行惯例是花名册机制的功能性依赖:第一行=当前主要称呼+
- * 一句话概括,由工具说明点明,主agent追加观察不动第一行。
- */
+/** 从 people/*.md 的文件名和首行生成名册。首行约定为主要称呼与一句概括。 */
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** 一个人都没有时交空串:"还不认识任何人"该怎么说,归 MEMORY.md 的缺省文案。 */
+/** 没有档案时返回空串，缺省文案由 MEMORY.md 提供。 */
 export function buildRoster(memoryDir: string): string {
   const dir = join(memoryDir, 'people');
   if (!existsSync(dir)) return '';
@@ -28,7 +22,6 @@ export function buildRoster(memoryDir: string): string {
       } catch {
         first = '(档案读取失败)';
       }
-      // 用"—"连接:档案第一行惯例本身就常以"称呼:"开头,冒号连接会双冒号
       return `- ${f.replace(/\.md$/i, '')} — ${first || '(档案第一行为空)'}`;
     })
     .join('\n');

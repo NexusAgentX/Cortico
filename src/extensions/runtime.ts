@@ -1,23 +1,8 @@
 /**
- * 扩展在运行时怎么 import 框架。
- *
- * 扩展装在 `extensions/node_modules/<包>/` 下,它写 `import { nowIso } from 'cortico/core/util.ts'`
- * 时 Node 从它自己的位置向上找不到叫 `cortico` 的包——框架是个仓库,不在 node_modules 里。
- * 这里用 `module.registerHooks`(同步钩子;tsx 4.20+ 自己也是同步链,异步 `register`
- * 的钩子排在它后面轮不到)把 `cortico/<路径>` 映到 `<仓库>/src/<路径>`,然后**交给链上
- * 下一个继续解析**而不是短路:最终 URL 与框架自己 import 出来的一致,同一个模块只有
- * 一份实例。
- *
- * 为什么不用 junction/symlink 把仓库根链进 extensions/node_modules:仓库里已经出过
- * 递归删除顺着 junction 把真 node_modules 删掉的事故,不再造第二个。
- *
- * 子进程:World 常把重活放进 fork 出来的子进程,那边也要能解析 `cortico/*`。
- * {@link childExecArgv} 给出一组 execArgv:父进程已有的加载器(tsx)照抄,再
- * `--import` 本文件——import 即注册。
- *
- * 硬前提:扩展包必须 `"type": "module"`。CommonJS 包经 require 走的是另一条编译路,
- * 会得到框架源码的第二份副本(实验:同一个 `WorldAssembly` 变成两个类);manifest
- * 校验在装载前就拒掉这种包。
+ * 将扩展的 cortico/<路径> 导入映射到框架 src/<路径>。
+ * 使用同步 module.registerHooks 与 tsx 的解析链协作；映射后继续调用下一个解析器，
+ * 使最终 URL 与框架内部导入一致，保留共享模块实例。扩展须使用 type=module。
+ * childExecArgv 保留父进程加载器并通过 --import 注册本模块，供引擎子进程使用。
  */
 import { registerHooks } from 'node:module';
 import { FRAMEWORK_SPECIFIER } from './manifest.ts';
@@ -27,7 +12,7 @@ const PREFIX = `${FRAMEWORK_SPECIFIER}/`;
 const SRC_URL = new URL('../', import.meta.url);
 const FLAG = Symbol.for('cortico.extensions.resolver');
 
-/** 注册一次即可;重复调用无事发生(launcher 与测试都可能先 import 一遍)。 */
+/** 重复注册无效。 */
 export function registerFrameworkResolver(): void {
   const g = globalThis as unknown as Record<symbol, unknown>;
   if (g[FLAG]) return;
@@ -45,11 +30,7 @@ export function registerFrameworkResolver(): void {
 /** 本文件的 URL:`--import` 它就等于调了一次 {@link registerFrameworkResolver}。 */
 export const RESOLVER_URL = import.meta.url;
 
-/**
- * 给扩展 fork 子进程用的 execArgv:父进程的加载器原样带上(经 tsx CLI 起的进程,
- * `process.execArgv` 里就是 tsx 的 --require/--import),没有的话补一个 `--import tsx`
- * (vitest 之类不经 tsx 的宿主),最后挂上本文件。
- */
+/** 保留父进程加载器参数；未配置时补充 --import tsx，最后导入本模块注册解析钩子。 */
 export function childExecArgv(): string[] {
   const inherited = process.execArgv.some((a) => /[\\/]tsx[\\/]|(^|\s)tsx$/.test(a))
     ? [...process.execArgv]
@@ -57,5 +38,5 @@ export function childExecArgv(): string[] {
   return [...inherited, '--import', RESOLVER_URL];
 }
 
-// import 即注册:子进程经 `--import` 走到这里就够了。
+// --import 本模块时注册钩子。
 registerFrameworkResolver();

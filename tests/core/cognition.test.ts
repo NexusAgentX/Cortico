@@ -1,15 +1,8 @@
 import { records } from './fixture-protocol.ts';
 /**
- * 认知外包 hook(host.cognition)。
- *
- * 这条路上的主权划分是被测的东西本身:
- *  - World 给 brief 和**自己的**工具名,想不出别的花样——它点不动别人的工具,
- *    也开不出自己的意识面;
- *  - Persona定头/档/预算/开关,没实现或开关关着,World host 上**根本没有这个句柄**;
- *  - core 只做机械三件事:注入、白名单校验、并发记账。用量归账搭 spawnFork
- *    那条既有的路(SessionDecl 自带),不在这里重记一遍。
- *
- * 全程不碰真 LLM:人格实现是 mock,fork 走 FakeLLM。
+ * 认知请求的工具归属、开关、并发统计与用量契约。
+ * World 提供 brief 和自身工具；Persona 决定处理方式与预算，模型来自活跃端点。
+ * Core 校验请求并统计并发，spawnFork 负责计量；测试使用 FakeLLM。
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { Core } from "./fixture-core.ts";
@@ -36,7 +29,7 @@ import {
   sleep,
 } from './helpers.ts';
 
-/** 一个能把 core 交给它的 host 留住的假 World(host 只在 start 时给一次) */
+/** 保留 start() 收到的 WorldHost，供测试调用。 */
 function makeProbe(id: string, tools: ToolDef[]): { mod: World; host: () => WorldHost } {
   const base = makeFakeIO(id, tools);
   let captured: WorldHost | null = null;
@@ -56,7 +49,6 @@ function makeProbe(id: string, tools: ToolDef[]): { mod: World; host: () => Worl
   };
 }
 
-/** Persona声明的那个受理 session(core 只拿它查表) */
 const cognitionDecl: SessionDecl = {
   id: 'cognition',
   label: '认知外包',
@@ -76,9 +68,8 @@ interface Rig {
 }
 
 /**
- * 两个 World:mc(有两把自己的工具)与 other(有一把,专供越权测试点名)。
- * 人格用 silent 档——时机钩子一句话不注入,主循环因此不被唤醒,
- * FakeLLM 的调用记录里只会有 fork 自己的那些。
+ * 两个 World 提供不同工具，用于检查工具归属。
+ * Persona 钩子不注入文本，因此 FakeLLM 调用仅来自 fork。
  */
 async function rig(cognition?: PersonaCognition): Promise<Rig> {
   const tmp = makeTmpDir();
@@ -129,14 +120,13 @@ afterEach(async () => {
 });
 
 describe('认知外包 · 注入与开关', () => {
-  it('Persona没提供实现 = World host 上根本没有这个句柄(不是返回 error)', async () => {
+  it("Persona 未提供实现时 WorldHost.cognition 为 undefined", async () => {
     live = await rig();
     expect(live.host().cognition).toBeUndefined();
-    // World 据此走降级路径,判断方式就是这一句
     expect(Boolean(live.host().cognition)).toBe(false);
   });
 
-  it('全局开关关着也是句柄不存在,且每次现读——热改立即生效', async () => {
+  it("关闭 cognition 后 WorldHost 立即停止提供该接口", async () => {
     let on = false;
     live = await rig({
       enabled: () => on,
@@ -154,7 +144,7 @@ describe('认知外包 · 注入与开关', () => {
     live = await rig({
       request: async (req, ctx) => {
         seen.push({ req, ctx });
-        // 人格可以完全无视 hint(这里就无视了),core 不替它把关
+        // hint 由 Persona 解释，Core 不强制采用。
         return { text: `想完了:${req.brief}` };
       },
     });
@@ -172,7 +162,7 @@ describe('认知外包 · 注入与开关', () => {
     expect(seen[0].ctx.tools).toEqual([]);
   });
 
-  it('brief 是空的 = 机械驳回,不惊动Persona', async () => {
+  it("空 brief 返回错误且不调用 Persona", async () => {
     let called = 0;
     live = await rig({
       request: async () => {
@@ -185,7 +175,7 @@ describe('认知外包 · 注入与开关', () => {
     expect(called).toBe(0);
   });
 
-  it('人格实现抛错不炸穿 World:如实换成一句 error 交回去', async () => {
+  it("Persona 抛错时返回错误给 World", async () => {
     live = await rig({
       request: async () => {
         throw new Error('这一档没配模型');
@@ -216,7 +206,7 @@ describe('认知外包 · 工具白名单(core 的机械校验)', () => {
     expect(ran).toBe('蓝图收下了');
   });
 
-  it('点名别的 World 的工具 = {error},且人格实现根本没被调用', async () => {
+  it("请求其他 World 的工具时返回错误且不调用 Persona", async () => {
     let called = 0;
     live = await rig({
       request: async () => {
@@ -231,14 +221,14 @@ describe('认知外包 · 工具白名单(core 的机械校验)', () => {
     });
 
     expect(out).toHaveProperty('error');
-    // 只点名越权的那把;合法的那把不进"这些不是"名单(错误正文另附本 World 工具表)
+    // 错误字段只列出越权工具，附带的可用工具表可能包含合法名称。
     const error = (out as { error: string }).error;
     expect(error.split('(')[0]).toContain('other_send');
     expect(error.split('(')[0]).not.toContain('mc_blueprint');
     expect(called).toBe(0);
   });
 
-  it('点名人格自己的工具(fork 一类核心动作)同样越权', async () => {
+  it("请求 Persona 工具时返回越权错误", async () => {
     let called = 0;
     live = await rig({
       request: async () => {
@@ -261,7 +251,7 @@ describe('认知外包 · 工具白名单(core 的机械校验)', () => {
 });
 
 describe('认知外包 · 并发记账与用量归账', () => {
-  it('在途请求数对Persona可见(单实例策略归它判断,core 只数数不拦)', async () => {
+  it("Persona 可读取在途请求数，Core 不限制并发", async () => {
     const seen: number[] = [];
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -310,11 +300,10 @@ describe('认知外包 · 并发记账与用量归账', () => {
     });
 
     expect(out).toEqual({ text: '图出好了' });
-    // fork 装配的是 World 点名的那把工具
     const call = live.llm.calls.find((c) => c.tools?.some((t) => t.name === 'mc_blueprint'));
     expect(call).toBeDefined();
     expect(call!.spec.model).toBe(activeSpec(makeCfg()).model);
-    // 归账走 SessionDecl 那条既有的路,core 不在 cognition 这边重记一遍
+    // cognition 不重复记录 spawnFork 已计入的用量。
     const stats = live.core.sessions.list().find((s) => s.role === 'cognition');
     expect(stats?.calls).toBe(1);
     expect(live.core.cognitionInFlight()).toEqual({});

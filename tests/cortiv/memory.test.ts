@@ -1,14 +1,7 @@
 import { GenerationError } from '../../src/core/generation.ts';
 import { FixtureForkOptions as ForkOptions, FixtureSessionInfo as SessionInfo } from '../core/fixture-protocol.ts';
 import { records } from '../core/fixture-protocol.ts';
-/**
- * Cormini memory 系统(cortiv 直播场景):
- *  - 观众档案首见唤起(viewers/<来源>/<键>.md 首行,上下文窗口内去重,交接重置)
- *  - recall_viewer 按 id / 名字取整份档案
- *  - 前缀树 viewers/ 折叠计数,list_files 保持全量
- *  - 软边界速记提醒(onBatchEnd 裁量:先提醒一轮,再请求交接)
- *  - 交接后并行梦(spawnFork 单实例排队,快照头部优先渲染,浮现非空才注入)
- */
+/** 验证观众档案按上下文去重、recall_viewer 检索、目录折叠、软阈值交接与串行梦任务。 */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,7 +20,7 @@ import { makeFakeHarnessApi, sleep } from '../core/helpers.ts';
 
 /** core 交给交接策略的物理上限;这些用例不靠它 */
 const HANDOFF_CTX = { hardTokens: null };
-/** 压力裁量用例的阶段裁量:1000 tok 交接,0.85 预警 */
+/** 阶段预算 1000 tok，软阈值比例 0.85。 */
 const CONTEXT = () => ({ maxTokens: 1000, softRatio: 0.85, keepRatio: 0.25 });
 /** 交接笔记用例的阶段裁量:900 tok 就越过软阈值(笔记分早/近两段),笔记预算 4096 */
 const NOTE_CONTEXT = () => ({ maxTokens: 16384, softRatio: 0.05, keepRatio: 0.25 });
@@ -55,7 +48,7 @@ function sessionInfoOf(est: number | null) {
   });
 }
 
-describe('Cormini 观众档案唤起', () => {
+describe('CortiV 观众档案唤起', () => {
   let dir: string;
   let p: CortiV;
   let injected: string[];
@@ -395,7 +388,7 @@ describe('Cormini 观众档案唤起', () => {
     expect(ws).toContain('viewers/ (1 份人物档案');
     expect(ws).toContain('recall_viewer');
     expect(ws).not.toContain('viewers/bilibili/314544096.md');
-    // 约定说明段随 viewerMemory 开启出现,且指得回那份可编辑模板
+    // 记忆说明段关联可编辑模板。
     const memory = segs.find((s) => s.title === 'MEMORY')!;
     expect(memory.text).toContain('viewers/');
     expect(memory.sourceKey).toBe('memoryNote');
@@ -477,7 +470,7 @@ describe('CortiV recall_viewer:按 id 或名字取整份档案', () => {
   });
 });
 
-describe('Cormini 软边界速记与交接裁量', () => {
+describe('CortiV 软阈值提醒与交接', () => {
   let dir: string;
   let p: CortiV;
   let injected: string[];
@@ -539,7 +532,7 @@ describe('Cormini 软边界速记与交接裁量', () => {
   });
 });
 
-describe('Cormini 并行梦', () => {
+describe('CortiV 并行梦', () => {
   let dir: string;
   let p: CortiV;
   let injected: Array<{ text: string; kind?: string }>;
@@ -760,7 +753,7 @@ describe('Cormini 并行梦', () => {
 });
 
 
-describe('Cormini 梦整理失败重试', () => {
+describe('CortiV 梦整理失败重试', () => {
   let dir: string;
   let p: CortiV;
   let forks: ForkOptions[];

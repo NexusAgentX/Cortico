@@ -15,12 +15,7 @@ import type { ConsoleLamp, ConsolePageManifest } from '../../shared/console-prot
 import { createAvatarControl } from './avatar.ts';
 import { S } from './strings.ts';
 
-/**
- * 部署没给展示名时用它。框架自己不预设身份，所以缺省是一个中性占位而不是
- * 某个具体名字（`index.html` 里那个写死的占位是同一个词）。
- */
 const DEFAULT_BRAND = 'bot';
-/** 框架名（`.brand .kind` 那行小字）。它标的是"这是什么"，不是"这是谁"。 */
 const FRAMEWORK_NAME = 'Cortico';
 const FRAMEWORK_TAGLINE = S.tagline;
 
@@ -137,8 +132,6 @@ export function createShell(deps: ShellDeps): ConsoleShell {
   const footActions = ui.h('div', 'rail-actions');
   const runButton = ui.h('button', 'rail-action rail-run');
   runButton.type = 'button';
-  // 关机与暂停/继续并列:这颗按钮的存在理由是替掉"直接关掉启动器那个窗口"
-  // (关窗是硬杀进程组,托管的外部进程吃硬信号绕过收尾,上次落盘之后的状态全丢)。
   const shutdownButton = ui.h('button', 'rail-action rail-shutdown');
   shutdownButton.type = 'button';
   shutdownButton.appendChild(icon(doc, 'power'));
@@ -151,7 +144,6 @@ export function createShell(deps: ShellDeps): ConsoleShell {
   settingsButton.setAttribute('aria-label', S.settingsAria);
   settingsButton.title = S.settingsTitle;
   settingsButton.appendChild(icon(doc, 'settings'));
-  // 关机在最右下角:与暂停/设置并列同款,危险动作放在这一排的尽头
   footActions.append(runButton, settingsButton, restartButton, shutdownButton);
   foot.append(avatar.el, footActions);
 
@@ -167,11 +159,10 @@ export function createShell(deps: ShellDeps): ConsoleShell {
   };
   renderRun();
 
-  /** 收尾中不许重复点:World stop 不幂等,第二次点也只会拿到同一份账。关机与重启共用这一把锁。 */
+  /** 关机和重启共用请求锁，等待请求完成后释放。 */
   let shuttingDown = false;
   const renderPower = (): void => {
     const canShutdown = capabilities.shutdown === true;
-    // 没挂关机接口(无头部署、测试)就整个不画,而不是画一颗永远点不动的危险按钮
     shutdownButton.hidden = !canShutdown;
     shutdownButton.disabled = !canShutdown || shuttingDown;
     shutdownButton.setAttribute('aria-label', S.shutdownAria);
@@ -188,12 +179,6 @@ export function createShell(deps: ShellDeps): ConsoleShell {
   };
   renderPower();
 
-  const SEQUENCE = S.sequence;
-
-  /**
-   * 关机 / 重启。**双确认**:第一道说这是什么,第二道说不可逆。
-   * 逐步结果摊在一个对话框里 —— 进程马上退出,这是操作员能看到的最后一屏,得留得住。
-   */
   const powerAction = async (kind: 'shutdown' | 'restart'): Promise<void> => {
     if (shuttingDown) return;
     if (kind === 'shutdown' ? capabilities.shutdown !== true : capabilities.restart !== true) return;
@@ -201,13 +186,12 @@ export function createShell(deps: ShellDeps): ConsoleShell {
     const first = await ui.confirm(kind === 'shutdown'
       ? {
           title: S.confirmShutdownTitle,
-          body: `${SEQUENCE}\n\n${S.halfMinute}`,
+          body: S.shutdownBody,
           danger: true,
         }
       : {
           title: S.confirmRestartTitle,
-          body: `${SEQUENCE}\n\n${supervised ? S.restartSupervisedNote : S.restartUnsupervisedNote}`
-            + `\n\n${S.halfMinute}`,
+          body: supervised ? S.restartSupervisedNote : S.restartUnsupervisedNote,
           danger: true,
         });
     if (!first || signal.aborted) return;
@@ -316,8 +300,7 @@ export function createShell(deps: ShellDeps): ConsoleShell {
     item.appendChild(label);
     const lampHost = opts.pageId ? lampRow(doc, lampsFor(opts.pageId)) : undefined;
     if (lampHost) item.appendChild(lampHost);
-    // 修饰键与中键交给浏览器（"在新标签页打开"是 `<a>` 白拿的能力）；
-    // 普通左键才由 router 接管——地址栏归它写。
+    // 修饰键与中键保留浏览器默认行为；普通左键经 router 导航。
     item.addEventListener('click', (ev) => {
       if (ev.button !== 0) return;
       if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;

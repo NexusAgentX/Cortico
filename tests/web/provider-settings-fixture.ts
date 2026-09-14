@@ -7,11 +7,7 @@ import { ProviderSettings } from '../../src/providers/console/settings.ts';
 import type { ProviderModule } from '../../src/providers/base.ts';
 import type { LLMProviderEntry, ModelSpec } from '../../src/core/types.ts';
 
-/**
- * 一个把设置面板每一格都点亮的方言:推理档位带强度、有服务档表、有温度须知。
- * 内建的两个方言各缺一半(deepseek 没有服务档与温度须知,compat 只有开/关两档),
- * 而面板测的是"模块声明什么、界面就显示什么",所以这里给它一份声明齐全的模块。
- */
+/** 供应模块夹具包含推理强度、服务档与温度提示，用于验证声明驱动的设置项。 */
 export const FIXTURE_KIND = 'fixture-llm';
 export const fixtureWorld: ProviderModule = {
   id: FIXTURE_KIND,
@@ -47,7 +43,7 @@ export const openFixtureWorld: ProviderModule = {
 
 const UI = '../../src/web/client/ui/index.ts';
 const CLIENT = '../../src/web/client/console-pages/builtins/llm-settings/panel.ts';
-// Browser worlds are independently checked by tsconfig.web.json.
+// Browser code is independently checked by tsconfig.web.json.
 type Any = any;
 const JSDOM_MODULE = 'jsdom';
 const { JSDOM } = (await import(JSDOM_MODULE)) as Any;
@@ -93,10 +89,7 @@ export async function mountSettings(
     cfg,
     settings,
     guard: mounted.guard,
-    /**
-     * 落盘后的样子。端点表归全局(`<providers>/<端点名>/config.json`),部署 config.json
-     * 只剩 activeProvider 那类选择;这里把两处拼回旧形状,断言照旧写 `providers.<名字>`。
-     */
+    /** 合并全局端点配置与部署选择，提供断言使用的配置视图。 */
     read: () => ({
       ...JSON.parse(readFileSync(file, 'utf8')),
       providers: Object.fromEntries(
@@ -113,10 +106,7 @@ export async function mountSettings(
   };
 }
 
-/**
- * 把真面板挂到一个手搓的 context 上,数据面由调用方给。服务端还没有的方法、或要断言
- * 面板发出的请求体时用它;走真 `ProviderSettings` 的用 `mountSettings`。
- */
+/** 挂载真实面板到测试 context，数据接口由调用方提供。 */
 export async function mountPanel(
   invoke: (method: string, args: unknown[]) => Promise<unknown> | unknown,
   language: 'zh' | 'en' = 'zh',

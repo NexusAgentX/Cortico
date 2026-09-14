@@ -1,13 +1,7 @@
 /**
- * 二进制附件:句柄语法、日志附件库、进入 session 的文本形态。
- *
- * 句柄两个 scheme,按归属命名,与内容类型无关:
- *  - `log:<内容哈希>.<ext>`——日志记录的附件。core 落库时分配,内容寻址、只增;
- *    字节落 `data/media/`,事件库与 session 落盘只存引用。
- *  - `mem:<工作区相对路径>`——记忆里的工件,由Persona的 BlobStore 解析。
- *
- * "media" 一词只在附件被拿给模型看的那一刻出现(渲染层按 mime 与模型能力决定发不发分片);
- * 这里只有二进制。
+ * 附件以句柄存入事件库与 session。
+ * `log:<内容哈希>.<ext>` 引用 data/media/ 中按内容寻址、只增的日志附件。
+ * `mem:<后端标识>` 由 Persona 的 BlobStore 解析，后端决定标识格式。
  */
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -64,8 +58,8 @@ export function withBlobLines(text: string, refs: readonly BlobRef[] | undefined
 }
 
 /**
- * 日志附件库:字节按内容哈希落 `data/media/`,同一份字节重复 put 不重复占盘;
- * 库只增,清理属运维动作。read 认完整句柄与唯一前缀(≥8 位十六进制,同 git 短 hash)。
+ * 字节按内容哈希存入 data/media/，重复写入不增加副本；删除由运维处理。
+ * 读取接受完整句柄或唯一的十六进制前缀（至少 8 位）。
  */
 export class LogBlobStore {
   private readonly dir: string;

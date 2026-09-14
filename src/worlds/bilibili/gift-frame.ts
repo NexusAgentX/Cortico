@@ -26,30 +26,27 @@
  *
  * - `guard_level`:粉丝牌里那个档位(medal.12)是**牌子所属房间**的舰长等级,
  *   不能作为本房间的舰长等级。
- * - `is_admin`:pb 里没有对得上的字段,宁可不显示房管标记。
+ * - `is_admin`:尚未确认对应的 protobuf 字段。
  */
 import { pbFromBase64, pbInt, pbSub, pbText, type PbField } from './protobuf.ts';
 
-/** 告警口。纯函数不落日志,由调用方接 host.log.warn。 */
+/** 由调用方记录解析告警。 */
 type GiftFrameWarn = (message: string, data?: Record<string, unknown>) => void;
 
 /**
- * 送礼帧的 `data`。V1 原样返回;V2 返回补齐 V1 字段名的副本;两种都读不出
- * 就原样返回,让下游按"读不出来"处理(它会成事件 + 告警,而不是悄悄记成免费)。
+ * V1 data 原样返回;V2 返回补齐 V1 字段名的副本。V2 缺少礼物体或名称时返回原 data。
  */
 export function giftFrameData(
   data: Record<string, unknown>,
   warn?: GiftFrameWarn,
 ): Record<string, unknown> {
-  // V1 字段还在就走 V1。迁移期双发、平台回滚、历史 jsonl 回放都靠这一行。
   if (text(data.giftName) || text(data.gift_name)) return data;
   const top = pbFromBase64(data.pb);
   const gift = pbSub(top, 10);
   const giftName = pbText(gift, 2);
   if (!gift || !giftName) {
-    // pb 不在、解不动、或者解出来找不到礼物体:布局又变了。半份数据不端出去。
     if (data.pb !== undefined) {
-      warn?.('SEND_GIFT_V2 的 pb 读不出礼物名,按读不出处理', {
+      warn?.('SEND_GIFT_V2 缺少有效礼物体或礼物名', {
         decoded: top !== null,
         giftBody: gift !== null,
       });
@@ -108,16 +105,8 @@ function senderUinfo(
 }
 
 /**
- * 这一笔花掉的金瓜子。
- *
- * 5 / 6 / 7 三槽在现有真帧里恒等(24 帧全是 num=1),谁是 total_coin、谁是
- * price、谁是 discount_price 分不出来。取三者最大值:按 B 站口径
- * `total_coin = price × num ≥ price ≥ discount_price`,num=1 时三者相等,
- * num>1 时最大的那个才是真花的钱——所以最大值在两种情形下都不会少记。
- *
- * 只要偏离"num=1 且三槽恒等"这个已验证的常态就 warn 一条:那正是能把槽位
- * 钉死的帧。看见告警就去 `bilibili-raw-samples.jsonl` 捞这一帧(采样器对读不出
- * 名字与三槽不一致的帧都会留样),按真值把这里改成定死的字段号。
+ * 金瓜子字段映射尚未确认,暂取字段 5/6/7 中正数的最大值作为 fallback。
+ * 有效值不相等或已知 num 不为 1 时告警。
  */
 function coinTotal(
   gift: readonly PbField[],
@@ -132,7 +121,7 @@ function coinTotal(
   const total = Math.max(...slots);
   const settled = slots.every((value) => value === total) && (num ?? 1) === 1;
   if (!settled) {
-    warn?.('SEND_GIFT_V2 金瓜子槽位还没定死,按最大值入账', { gift: giftName, slots, num });
+    warn?.('SEND_GIFT_V2 金瓜子字段映射未确认,暂取最大值', { gift: giftName, slots, num });
   }
   return total;
 }

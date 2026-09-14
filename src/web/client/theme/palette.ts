@@ -1,14 +1,4 @@
-/**
- * 调色板 → CSS 变量 —— 主题唯一真正写 DOM 的一步。
- *
- * 写的是 `documentElement` 的内联样式（`--paper` 一族）与两个 `data-` 标记，
- * 外加 `<meta name="theme-color">`。**只有这一处**：任何面板想换色都是改调色板，
- * 而不是自己往某个节点上刷颜色——否则"当前是什么颜色"就有了第二个真相来源。
- *
- * 为什么允许碰 `documentElement`：CSS 变量是按继承往下走的，挂在别处就覆盖不到
- * 全站。这不是"绕过 root 往外写 DOM"，这就是主题本身的职责边界。`document.body`
- * 仍然不碰。
- */
+/** 将主题 token 写为 documentElement 的 CSS 变量，并更新明暗标记与 theme-color。 */
 
 import {
   THEME_TOKENS,
@@ -23,12 +13,7 @@ export interface ApplyPaletteOptions {
   schemeId?: string;
 }
 
-/**
- * 调色板 → `[CSS 变量名, 值]` 列表，**按词表顺序**、只含词表里的键。
- *
- * 单独导出是因为这是整套主题里唯一容易悄悄错的映射（少个 `--`、把野键刷上去），
- * 而它一旦写进 `applyPalette` 里面就只能靠看真浏览器来验。
- */
+/** 按 token 词表顺序映射 CSS 变量，仅包含词表中的键。 */
 export function paletteVars(palette: ThemePalette): Array<[string, string]> {
   const out: Array<[string, string]> = [];
   for (const token of THEME_TOKENS) {
@@ -69,13 +54,7 @@ export function applyPalette(
   applyThemeColorMeta(doc, palette.paper);
 }
 
-/**
- * 读一个语义色的当前实际值（`getComputedStyle`）。
- *
- * 画布类组件（成本图表）没法用 CSS 变量，只能拿到具体颜色再往 canvas 里写，
- * 所以给它们留这一个读口。**读不出合法颜色时退回 `--ink-dim`**：图表宁可画成一片
- * 灰，也不该因为一个空字符串而整张图消失。
- */
+/** 读取语义色的计算值；缺少合法颜色时回退到 --ink-dim。 */
 export function readThemeColor(doc: Document, key: string): string {
   const root = doc.documentElement;
   const view = doc.defaultView;
@@ -98,13 +77,7 @@ export interface Hsl {
   l: number;
 }
 
-/**
- * `#rrggbb` / `#rgb` → HSL。
- *
- * 色彩换算的家安在主题这一层，是因为需要它的都是**主题色的派生**：一族堆叠柱要
- * 从同一个语义色分出深浅，靠的就是拿它的 HSL 再挪明度。各自实现一份的话，同一个
- * 系列色在两张图上会分出不一样的深浅。
- */
+/** 将 #rrggbb 或 #rgb 转为 HSL。 */
 export function hexToHsl(hex: string): Hsl {
   let x = String(hex).replace('#', '');
   if (x.length === 3) x = x.split('').map((c) => c + c).join('');

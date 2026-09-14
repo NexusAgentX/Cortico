@@ -1,19 +1,4 @@
-/**
- * corti-soulmate 的 bot 级控制台页 —— **部署绑定**的三块:存档点、
- * 统一重置、强制入梦(= 强制一次交接,梦随之在后台跑)。
- *
- * 与 `Persona.console?()`(`bots/corti-soulmate/persona/consoleSurface.ts`)的分工:
- *
- * - Persona出**认知绑定**的:工作区 / Memory 分层 / 版本历史。换一份Persona,
- *   那三块就该跟着换。
- * - 这里出**部署绑定**的:它们要跨 owner 编排
- *   (统一重置 = persona 回滚 + 清框架存储)、或者本来就是一次运维动作(存档点、
- *   强制入梦)。同一个Persona换台机器部署,这三块可以完全不一样。
- *
- * **为什么不在 `console/` 目录里**:那个目录按约定是浏览器端的(构建脚本按目录名
- * 收入口,tsconfig.web.json 拿 DOM lib 单独 check)。这份是 Node 侧的,放进去会被
- * 拿 DOM 的那份配置检查到,而它 import 的是服务端类型。与 cormini 同一个摆法。
- */
+/** bot 的服务端控制台入口，提供存档点、统一重置和强制入梦。统一重置先回滚 Persona 工作区，再按清单顺序清除框架存储。 */
 import type { StoragePart } from 'cortico/core/types.ts';
 import type {
   ConsoleCheckpointEntry, ConsoleMediumStatus,
@@ -126,17 +111,7 @@ export interface OpsDreamState {
 // 重置的存储清单闸门
 // ---------------------------------------------------------------------------
 
-/**
- * 统一重置要清的是**全部** core 存储(事件库、session、状态、定时器、用量…)。
- * 框架经 `ConsolePageBuildContext.storage` 把权威清单交给 bot(与 `/api/storage`
- * 是同一批对象),所以正常情况下清单是齐的。
- *
- * 但这道闸留着:清单里认不出 core 那几条关键项就**不许执行**。
- * 半次重置(persona 回到出厂态、session 还活在回滚前的世界)比不重置危险得多——
- * 接线哪天断了,宁可拒绝执行,也不要清一半。
- *
- * 闸门用"有没有这两个键"判断,而不是数条数:数条数会随任何一个 World 增删而误判。
- */
+/** 重置要求权威存储清单中包含 session 和 events；核查键名，不依赖条目总数。 */
 const REQUIRED_PART_KEYS = ['session', 'events'];
 
 function readiness(parts: StoragePart[]): { ready: boolean; reason: string | null } {
@@ -144,10 +119,7 @@ function readiness(parts: StoragePart[]): { ready: boolean; reason: string | nul
   if (missing.length === 0) return { ready: true, reason: null };
   return {
     ready: false,
-    reason:
-      `拿不到完整的存储清单(缺 ${missing.join(' / ')})。框架在装配期把清单拼给了 WebApp,`
-      + '但没有接缝把它交回 bot,所以这里不敢执行半次重置——'
-      + '暂时请走旧的「控制台 › 存档点 › 回滚到此」。',
+    reason: `存储清单不完整（缺 ${missing.join(' / ')}），无法执行统一重置。`,
   };
 }
 

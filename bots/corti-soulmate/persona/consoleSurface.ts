@@ -1,30 +1,11 @@
-/**
- * Persona自报的控制面(`Persona.console?()`)——**认知绑定**的那三个面板。
- *
- * 归属判据:
- *
- * - **工作区**:读目录框架本来就能做,但**写**的语义(写完提不提交、提交给谁、
- *   冲突怎么算)是这份人格实现自己的选择——它选了 git、选了 `operator` 署名、
- *   选了 sha256 内容指纹当 baseRevision。一个只能读不能写的工作区没有价值,
- *   所以整块(含目录树)归Persona。
- * - **Memory 分层**:MEMORY 0–4 与写权限矩阵是这份人格实现的设计知识。
- *   第三方人格可能根本不分层,所以这张表由Persona自己声明,而不是硬编码在中央前端里。
- * - **版本历史**:git、快照或无历史由人格实现选择。
- *
- * **部署绑定**的(模型档位 / 存档点 / 统一重置 / 入梦触发)不在这里,它们要写
- * `config.json`、要跨 owner 编排,归装配层的 `ConsoleContribution.consolePages`
- * (见 `bots/corti-soulmate/console-page.ts`)。
- *
- * 这个文件是 **Node 侧**的:它读文件、跑 git。浏览器那一半在 `bots/corti-soulmate/console/`
- * (那个目录名是构建脚本与 tsconfig.web.json 的约定,只放浏览器代码)。
- */
+/** Persona 的服务端工作区、Memory 分层和 Git 历史面板。浏览器实现位于 console/；部署级操作由 console-page.ts 提供。 */
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MEMORY_VAR_DECLS } from './memory.ts';
 
-/** 前缀模板与记忆模板住在软件包里(跟着代码走),不在人格工作区。 */
+/** 前缀与记忆模板由软件包提供。 */
 const CORE_DIR = dirname(fileURLToPath(import.meta.url));
 
 import type { WorldPanelDecl, PersonaConsoleDecl, PromptDocDecl } from 'cortico/core/types.ts';
@@ -40,49 +21,39 @@ import {
 // 面板声明
 // ---------------------------------------------------------------------------
 
-/** 新式对象声明:局部 id + 真标题。id 不带 bot 名前缀,page id 才是命名空间。 */
 export const PERSONA_PANELS: WorldPanelDecl[] = [
   {
     id: 'workspace',
     title: '工作区',
-    description: 'persona/ 的目录树与编辑器:改一份档案立即提交(署名 operator),保存带冲突检测。',
+    description: '保存时以 operator 署名提交到工作区的 Git 仓库。',
   },
   {
     id: 'memory',
     title: 'Memory 分层',
-    description: 'MEMORY 0–4 各层此刻装着什么,以及两条认知路径(主意识 / 梦)的写权限矩阵(机械硬拦,不是文档)。',
   },
   {
     id: 'history',
     title: '版本历史',
-    description: 'persona/ 这个 git 仓的提交流水与逐次 diff;某个版本的全文也在这里取。',
   },
 ];
 
 // ---------------------------------------------------------------------------
-// 与旧 `/api/file` `/api/persona/*` 一字不差的几个常量
 // ---------------------------------------------------------------------------
 
 /** 预览和保存的文件大小上限。 */
 const FILE_MAX_BYTES = 1024 * 1024;
 
-/**
- * 文件的内容指纹 = 保存时的 `baseRevision`。
- *
- * **算法与口径一个字都不能改**:编辑器载入时拿到的 revision 与保存时服务端重算的
- * 那个必须是同一个函数算出来的,否则每一次保存都会撞上"文件已在别处被修改"。
- */
+/** 读取返回的 revision 与保存校验的 baseRevision 使用相同的内容指纹算法。 */
 function revisionOf(buf: Buffer | string): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 
 // ---------------------------------------------------------------------------
-// 返回形状(浏览器那一半 import 不到本文件,两边靠这些注释对齐)
 // ---------------------------------------------------------------------------
 
 export interface WorkspaceNode {
   name: string;
-  /** 相对 persona/ 的路径,正斜杠 */
+  /** 相对 memoryDir 的路径，使用正斜杠。 */
   path: string;
   type: 'dir' | 'file';
   size?: number;
@@ -98,7 +69,7 @@ export interface WorkspaceFile {
   mtime: string | null;
 }
 
-/** 写/删/改名的回执。`conflict` 那一支是"没做,因为底本变了"。 */
+/** conflict 表示文件内容已变化，本次操作未执行。 */
 export type WorkspaceWriteResult =
   | { ok: true; result: string; revision: string }
   | { ok: false; conflict: true; error: string; currentRevision?: string };
@@ -128,9 +99,9 @@ export interface PermissionRow {
 export interface MemoryTier {
   id: string;
   title: string;
-  /** 这一层装的是什么(结构说明,不随数据变) */
+  /** 不随当前数据变化的结构说明。 */
   detail: string;
-  /** 此刻的读数 */
+  /** 当前数据统计。 */
   live: string;
 }
 
@@ -264,12 +235,7 @@ const conflict = (error: string, currentRevision?: string): WorkspaceWriteResult
     ? { ok: false, conflict: true, error }
     : { ok: false, conflict: true, error, currentRevision };
 
-/**
- * 底本核对。**语义与旧的 409 一字不改**,只是承载方式变了:这一页的
- * `invoke` 通道把抛出的错一律压成 500 + 一句话,状态码到不了浏览器,所以"冲突"
- * 改成回执里的一支(`ok:false, conflict:true`)。措辞照抄旧的,连全角逗号都没动
- * ——编辑器上那句提示是用户唯一的线索。
- */
+/** 内容指纹冲突通过 ok:false、conflict:true 回执返回，供编辑器区分冲突与调用错误。 */
 function checkBase(
   ws: GitWorkspaceMemory,
   path: string,

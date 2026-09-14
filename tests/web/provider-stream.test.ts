@@ -1,15 +1,4 @@
-/**
- * 通用 provider 流式通道(`/ws/providers/<provider>/panels/<panel>`)的服务端行为。
- *
- * 要验的是"框架里不再有一个等着某个 World 来填的具名槽位":任何 provider 只要声明
- * 了 `stream`,就能拿到一条流,框架不认识它推的是什么。所以这里全用假 provider,
- * 一个具体 World 都不出现。
- *
- * 三件事重点盯:
- * 1. 双向:服务端 send 客户端收得到,客户端发帧 provider 收得到。
- * 2. 生命周期:任何一头断开,provider 的 `onClose` 恰好触发一次(它可能挂着定时器)。
- * 3. 失败不静默:解析不成时先说明再关,而不是把握好手的连接一掐了事。
- */
+/** 验证通用面板 WS 通道的双向通信、断连时单次通知与解析失败说明。 */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -68,7 +57,6 @@ async function withApp(
   }
 }
 
-/** 一个待兑现的值:测试一律等事件,不睡固定时长 */
 function deferred<T = void>(): { promise: Promise<T>; resolve: (v: T) => void } {
   let resolve!: (v: T) => void;
   const promise = new Promise<T>((r) => { resolve = r; });
@@ -278,7 +266,6 @@ describe('流的关闭', () => {
   });
 });
 
-// ── 解析失败:说明清楚再关,不是静默 destroy ──────────────────────────────
 
 describe('解析失败', () => {
   /** 连上之后应当立刻收到一帧说明,然后被关掉 */
@@ -368,10 +355,7 @@ describe('流式通道的同源闸门', () => {
 });
 
 describe('流的心跳', () => {
-  // 半开 TCP(拔网线/睡眠/NAT 超时)永远不发 close,于是 onClose 不触发,
-  // provider 挂在上面等清理的定时器就一直挂着——那正是这场重构要消灭的泄漏。
-  // 心跳靠 ws 标准的 ping/pong:一拍没等到 pong 就 terminate,terminate 会发 close,
-  // 于是 provider 照常收到通知。
+  // 通过 ping/pong 检测失联，terminate 后触发 close 和贡献方清理。
   it('服务端按间隔发 ping', async () => {
     const pinged = deferred();
     const opened = deferred();

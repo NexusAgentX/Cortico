@@ -1,7 +1,4 @@
-/**
- * 基类的工作区文件工具:读带行区间、精确替换、删除、按名找、按内容搜。
- * 每条断言问的都是回执与盘上文件对不对得上——回执是她唯一看得到的东西。
- */
+/** 验证文件工具回执与实际文件内容、路径、行区间及改动统计一致。 */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

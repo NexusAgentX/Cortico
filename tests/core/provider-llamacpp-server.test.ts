@@ -1,7 +1,4 @@
-/**
- * llama-server 进程管理与端点控制器。spawn 的那一条用一个只答 /health 的 node 脚本顶替
- * 二进制;其余不真起进程,只验托管决策与状态形状。
- */
+/** 使用提供 /health 的 Node 测试进程验证启动和停止；其他测试检查托管配置与状态。 */
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer } from 'node:http';
 import { AddressInfo } from 'node:net';
@@ -19,7 +16,7 @@ const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
   for (const dir of dirs.splice(0)) {
-    try { rmSync(dir, { recursive: true, force: true }); } catch { /* Windows handle lag */ }
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* 测试目录清理失败可忽略。 */ }
   }
 });
 

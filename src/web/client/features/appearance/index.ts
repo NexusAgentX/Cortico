@@ -1,14 +1,4 @@
-/**
- * 外观页 —— 挑方案、拨明暗、调色、另存/删除自定义方案。
- *
- * 这一页**不持有主题状态**：它读 `ThemeStudio` 的快照来画，用户一动就调工作室的
- * 方法，然后等 `onChange` 回来再重画自己。所以"当前是什么主题"只有工作室那一个
- * 真相来源，而这一页可以随时被卸载重建，主题不受影响。
- *
- * 唯一常驻在页面里的可变量是**调色草稿** `draft`：那是用户正在拖但还没保存的一份
- * 调色板，按定义就不该进工作室的存档。离开这一页时草稿连同预览一起撤销
- * （`resetPreview`）——不然全站会停在一份用户已经放弃、下次刷新就消失的配色上。
- */
+/** 外观页读取 ThemeStudio 状态；调色草稿仅用于预览，卸载时撤销预览。 */
 
 import type { Disposable } from '../../../shared/client-panel.ts';
 import type { FeatureContext, FrameworkFeature } from '../feature.ts';
@@ -36,10 +26,6 @@ interface ColorRow {
   hex: HTMLInputElement;
 }
 
-/**
- * 从点击目标往上找方案卡。**用委托而不是给每张卡挂监听**：方案列表随增删重画，
- * 逐卡挂监听意味着每重画一次就往 `signal` 上再压一批待摘的登记。
- */
 function schemeIdAt(target: EventTarget | null, stop: HTMLElement): string | null {
   let node = target as HTMLElement | null;
   while (node && node !== stop) {
@@ -54,7 +40,7 @@ export function mountAppearance(ctx: FeatureContext, opts: { embedded?: boolean 
   const { ui, root, signal } = ctx;
   const doc = root.ownerDocument;
   const studio = getThemeStudio({ doc });
-  const intro = pageIntro(ui, S.pageTitle, S.pageIntro);
+  const intro = pageIntro(ui, S.pageTitle);
 
   // 最先登记 = 最后释放:等订阅摘掉之后再撤预览,免得回调打在一个正在拆的页面上。
   ctx.lifecycle.add(() => studio.resetPreview());
@@ -115,8 +101,6 @@ export function mountAppearance(ctx: FeatureContext, opts: { embedded?: boolean 
     const grid = ui.h('div', 'theme-color-grid');
     for (const token of bucket.tokens) {
       const row = ui.h('label', 'theme-color');
-      // `ui.input` 没有 `type: 'color'` 这一档,取色器只能用 `ui.h` 起一个裸 input;
-      // 监听照样带 `signal`,生命周期语义不打折。
       const picker = ui.h('input');
       picker.type = 'color';
       picker.setAttribute('aria-label', S.colorAria(token.label));
@@ -280,16 +264,13 @@ export function mountAppearance(ctx: FeatureContext, opts: { embedded?: boolean 
   refresh();
 }
 
-/**
- * 组件试色 —— 拿真实终端、状态卡与图表的那几个 class 铺一小片样板。
- * 它没有任何交互，唯一的作用是让调色时能当场看见语义色落在真实版式上的样子。
- */
+/** 无交互的主题预览示例。 */
 function specimen(ctx: FeatureContext): HTMLElement {
   const { ui } = ctx;
   const card = ui.sheet({
     title: S.specimenTitle,
     en: 'live specimen',
-    desc: S.specimenDesc,
+
   });
   card.el.classList.add('theme-preview-sheet');
 
@@ -342,10 +323,7 @@ function specimen(ctx: FeatureContext): HTMLElement {
   return card.el;
 }
 
-/**
- * 外观页。`needs` 空着——换肤不依赖任何服务端表面，后端全挂了这一页照样能用
- * （它的数据全在本机 `localStorage` 里，**不经 `core/api.ts`**，因为压根没有请求）。
- */
+/** 外观设置保存在浏览器本地，不依赖服务端能力。 */
 export const appearanceFeature: FrameworkFeature = {
   route: 'appearance',
   label: S.navLabel,

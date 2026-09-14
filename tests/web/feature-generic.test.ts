@@ -1,13 +1,4 @@
-/**
- * 三个"按声明渲染"的 framework feature：配置 / 存储 / 提示词。
- *
- * 共同点也是它们值得一起测的理由：**这三页都不认识自己在渲染什么**。
- * 配置页只认 JSON Schema 的一个子集，存储页只认服务端给的清单与分节，
- * 提示词页只认 `/api/prompts` 那串文档。所以每一条断言都在问同一件事——
- * 换一份声明，这一页跟不跟得上，而不是"某个具体旋钮画对了没有"。
- *
- * DOM 桩与「specifier 存变量」的理由同 `client-ui.test.ts` / `feature-usage.test.ts`。
- */
+/** 使用模拟 DOM 与接口验证页面行为；浏览器源码由变量动态 import 加载，类型由 tsconfig.web.json 检查。 */
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
@@ -590,7 +581,7 @@ describe('配置页', () => {
     const { ctx, root } = await mkCtx({ config: true });
     await ((await import(CONFIG)) as Any).mountConfig(ctx);
     await flush();
-    expect(root.textContent).toContain('都已归到各自的页面');
+    expect(root.textContent).toContain('参数均位于各自的设置页');
     expect(root.textContent).not.toContain('未挂载配置项声明');
   });
 
@@ -627,7 +618,6 @@ describe('配置页', () => {
     await flush();
     calls.length = 0;
 
-    // 两段式的两个零件都不该在了(boolean 字段自己那个 checkbox 不算)
     expect(root.findButton('应用')).toBeFalsy();
     expect(root.textContent).not.toContain('仅本次运行');
 
@@ -735,7 +725,7 @@ describe('配置页', () => {
     const { mountConfig } = (await import(CONFIG)) as Any;
     mountConfig(a.ctx);
     await flush();
-    expect(a.root.textContent).toContain('(服务端未挂载配置项声明)');
+    expect(a.root.textContent).toContain('未提供配置项。');
 
     stubFetch({}, ['/api/config']);
     const b = await mkCtx({ config: true });
@@ -833,7 +823,7 @@ describe('存储页', () => {
     const modal = doc.body.find('modal')!;
     expect(modal.textContent).toContain('⚠ 危险操作：事件库');
     expect(modal.textContent).toContain('经历不可恢复');
-    expect(modal.findButton('仍要继续')).not.toBeNull(); // danger 的确认键上写着后果
+    expect(modal.findButton('仍要继续')).not.toBeNull();
     answerConfirm(doc, false);
     await flush();
     expect(calls.length).toBe(0);

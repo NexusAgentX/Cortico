@@ -67,10 +67,7 @@ type BlueprintPlacementDecision =
   | { ok: true; source: 'unreserved' | 'surplus' | 'override' }
   | { ok: false; reason: string };
 
-/**
- * 保留账要读的两份外部事实。都是取值函数:名单与箱子账都会在两次判定之间变，
- * 冻在 `sync` 那一刻就又是一个只有账本自己知道的事实源。
- */
+/** 每次计算时读取名单和容器库存。 */
 interface BlueprintLedgerFacts {
   /** 当下生效的垫脚名单(World 侧 = `policy.scaffold ?? cfg.scaffoldBlocks`) */
   scaffold?: () => readonly string[];
@@ -81,14 +78,8 @@ interface BlueprintLedgerFacts {
 }
 
 /**
- * 已装载版本的剩余耗材保留账。
- *
- * 每种材料只保护剩余工程需要量，库存高于 reserve 的盈余仍可用于普通垫路。
- * 背包槽触到 reserve 后：逐块放置由 `placementDecision` 硬否决，垫脚名单只降位不删除
- * （见 `orderScaffoldCandidates`）；临时覆盖则逐块扣预算。
- *
- * 两条豁免都在 `reserve()` 里现算,不在 `sync()` 里冻结 —— 她改垫脚名单、往箱子里
- * 补料都不该等到下一次蓝图变动才生效。
+ * 保护已接受蓝图剩余施工所需的材料，允许使用随身盈余。
+ * 当前垫脚/照明名单和容器存货从预留量扣除；普通放置受逐块许可约束，临时借用按实际消耗扣预算。
  */
 export class BlueprintResourceLedger {
   private projects = new Map<string, { versionId: string; bill: Record<string, number> }>();
@@ -121,13 +112,7 @@ export class BlueprintResourceLedger {
     return new Set([...this.facts.scaffold?.() ?? [], ...this.facts.light?.() ?? []]);
   }
 
-  /**
-   * 剩余工程需求 −(垫脚豁免)−(箱子存货)。
-   *
-   * 箱子里已经囤够的那部分不必再从随身扣:reserve 是「别把将来要用的料现在烧掉」,
-   * 而不是「背包里同名的东西一律不许动」。**满足度看 carried+stored,放置可用性仍
-   * 只看 carried** —— 手里没有就是放不了,那件事由 `placementDecision` 的 `has` 管。
-   */
+  /** 预留量为剩余需求扣除豁免物品与容器存货。施工材料统计使用随身与容器数量，放置要求随身持有。 */
   reserve(): Record<string, number> {
     const exempt = this.scaffoldExempt();
     const stored = this.facts.stored?.() ?? {};
@@ -150,11 +135,7 @@ export class BlueprintResourceLedger {
     return Object.keys(this.reserve()).sort();
   }
 
-  /**
-   * 「装载的工程变了没有」的签名,读原始账单而不是生效 reserve:豁免与箱子抵扣都是
-   * 现算的外部事实,同一次 sync 的前后两次读数必然一致,放进签名也照不出变化;
-   * 名单变化那一路由 `mc_policy` 自己 retune,箱子变化由 `observe` 的跨线判据接。
-   */
+  /** 签名仅包含原始工程需求；名单和容器库存由各自更新路径触发重算。 */
   private projectSignature(): string {
     return JSON.stringify([...this.projects]
       .sort(([left], [right]) => left.localeCompare(right))
@@ -190,12 +171,7 @@ export class BlueprintResourceLedger {
     return { retune, borrowed };
   }
 
-  /**
-   * 此刻被蓝图预留收口的材料:有预留账、库存不高于预留量、且没有生效中的临时覆盖。
-   *
-   * 收口只是「不该主动烧掉」的事实,不代表禁用 —— 判定与呈现共读这一份,
-   * 免得寻路器扣的账和她读到的名单变成两个事实源。
-   */
+  /** 返回存在预留量、随身数量不高于预留量且无临时覆盖的物品。 */
   collapsedItems(
     stock: Readonly<Record<string, number>> = this.observedStock,
     now = Date.now(),
@@ -218,7 +194,7 @@ export class BlueprintResourceLedger {
     now = Date.now(),
   ): string[] {
     const held = new Set(this.collapsedItems(stock, now));
-    // sort 在 Node 上是稳定的:可用的那几样保持她写的优先顺序
+    /** 稳定排序保留同组候选的原顺序。 */
     return [...candidates].sort((left, right) => Number(held.has(left)) - Number(held.has(right)));
   }
 

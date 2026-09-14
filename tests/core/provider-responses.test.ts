@@ -13,7 +13,7 @@ import type { StreamEvent } from '../../src/protocol/open-responses/index.ts';
 const sse = (values: unknown[]): Response => new Response(values.map(value => `data: ${JSON.stringify(value)}\n\n`).join('') + 'data: [DONE]\n\n');
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-/** The Chat transport stays for external extensions; this minimal dialect exercises its shared boundary. */
+/** The Chat transport is used by llamacpp and extensions; this adapter tests their shared transport behavior. */
 class ChatFixture extends OpenAIHttpClient {
   constructor(baseUrl = 'https://fixture.test') { super(baseUrl, nullLogger()); }
   protected buildBody(spec: ModelSpec, messages: NativeChatMessage[], tools?: ToolSchema[]): Record<string, unknown> {
@@ -211,7 +211,7 @@ describe('Provider standard Responses boundary', () => {
       fetches++;
       return new Response(new ReadableStream<Uint8Array>({
         start(controller) {
-          // 真 fetch 在 signal abort 时让 body 读取拒绝;假流照样接线
+          // 模拟 fetch：abort 后读取响应体失败。
           init.signal?.addEventListener('abort', () => { try { controller.error(init.signal?.reason); } catch { /* already closed */ } }, { once: true });
           const ping = (): void => {
             if (init.signal?.aborted) return;
@@ -223,7 +223,7 @@ describe('Provider standard Responses boundary', () => {
       }));
     });
     const promise = new ChatFixture().respond({ model: 'test' }, { onEvent: () => {} }).catch(error => error);
-    // 每次尝试 300s 内容空闲后中止;帧空闲(120s)被 keepalive 不断复位,抓不到它
+    // keepalive 重置帧空闲计时，内容空闲仍在 300 秒后取消请求。
     for (let i = 0; i < 14; i++) await vi.advanceTimersByTimeAsync(100_000);
     const caught = await promise;
     expect(caught).toBeInstanceOf(GenerationError);

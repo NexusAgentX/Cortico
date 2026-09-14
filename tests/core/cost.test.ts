@@ -21,13 +21,13 @@ describe('分时段聚合 aggregateUsage', () => {
     promptTokens: miss, completionTokens: comp, cacheHitTokens: 0, cacheMissTokens: miss, reasoningTokens: 0,
   });
   const recs: UsageRecord[] = [
-    rec('2026-07-18T09:10:00+08:00', 'main', 'flash', 1_000_000, 1_000_000),   // cost 1+2=3
-    rec('2026-07-18T09:40:00+08:00', 'main', 'flash', 0, 500_000),             // cost 1
-    rec('2026-07-19T14:00:00+08:00', 'dream', 'pro', 1_000_000, 0),            // cost 3
+    rec('2026-07-18T09:10:00+08:00', 'main', 'flash', 1_000_000, 1_000_000),
+    rec('2026-07-18T09:40:00+08:00', 'main', 'flash', 0, 500_000),
+    rec('2026-07-19T14:00:00+08:00', 'dream', 'pro', 1_000_000, 0),
     rec('2026-07-17T23:00:00+08:00', 'main', 'flash', 0, 0),                   // 落在范围外
   ];
 
-  it('按天桶+范围过滤+总计,成本按各记录 model 分档', () => {
+  it("按日期范围与天聚合，费用使用记录内 charges", () => {
     const a = aggregateUsage(recs, { from: '2026-07-18', to: '2026-07-19', bucket: 'day' });
     expect(a.series.map((s) => s.bucket)).toEqual(['2026-07-18', '2026-07-19']);
     expect(a.totals.calls).toBe(3);          // 07-17 那条被过滤
@@ -75,18 +75,18 @@ describe('自适应粒度 resolveBucket', () => {
   });
 });
 
-describe('aggregateUsage:新粒度 + 桶内子拆分 + 成本三档', () => {
+describe("aggregateUsage:时间粒度、分组与成本分项", () => {
   const rec = (ts: string, role: string, model: string, hit: number, miss: number, comp: number): UsageRecord => charged({
     ts, sessionId: role, role: role as UsageRecord['role'], label: role, model,
     promptTokens: hit + miss, completionTokens: comp, cacheHitTokens: hit, cacheMissTokens: miss, reasoningTokens: 0,
   });
   const recs: UsageRecord[] = [
-    rec('2026-07-20T14:03:00+08:00', 'main', 'flash', 0, 1_000_000, 1_000_000), // miss1 + out2 = 3
-    rec('2026-07-20T14:59:00+08:00', 'dream', 'pro', 0, 0, 1_000_000),          // pro out 6
-    rec('2026-07-14T10:00:00+08:00', 'main', 'flash', 1_000_000, 0, 0),         // hit 0.02(上一周)
+    rec('2026-07-20T14:03:00+08:00', 'main', 'flash', 0, 1_000_000, 1_000_000),
+    rec('2026-07-20T14:59:00+08:00', 'dream', 'pro', 0, 0, 1_000_000),
+    rec('2026-07-14T10:00:00+08:00', 'main', 'flash', 1_000_000, 0, 0),
   ];
 
-  it('minute 桶:同小时不同分钟分开;桶内带 byRole/byModel 与成本三档', () => {
+  it("按分钟聚合，结果包含 byRole、byModel 与成本分项", () => {
     const a = aggregateUsage(recs, { from: '2026-07-20', to: '2026-07-20', bucket: 'minute' });
     expect(a.bucket).toBe('minute');
     expect(a.series.map((s) => s.bucket)).toEqual(['2026-07-20T14:03', '2026-07-20T14:59']);
@@ -116,7 +116,7 @@ describe('aggregateUsage:新粒度 + 桶内子拆分 + 成本三档', () => {
     expect(a.series[0].calls).toBe(2);
   });
 
-  it('顶层分组也带成本三档(cost = hit+miss+output 三档之和)', () => {
+  it("顶层分组成本等于记录中的费用之和", () => {
     const a = aggregateUsage(recs, { from: '2026-07-01', to: '2026-07-31', bucket: 'day' });
     for (const g of [...a.byRole, ...a.byModel, a.totals]) {
       expect(g.costCacheHit + g.costCacheMiss + g.costOutput).toBeCloseTo(g.cost, 6);
@@ -133,7 +133,7 @@ describe('aggregateUsage:新粒度 + 桶内子拆分 + 成本三档', () => {
     let cross = 0;
     for (const r of Object.keys(p.byRoleModel)) for (const m of Object.keys(p.byRoleModel[r])) cross += p.byRoleModel[r][m].cost;
     expect(cross).toBeCloseTo(p.cost, 6);
-    // byRole 的行合计 = 对应 byRoleModel 各模型之和(可拆到 类型×角色×模型)
+    // 每个角色的费用等于该角色下各模型费用之和。
     expect(p.byRoleModel.main.flash.cost + (p.byRoleModel.main.pro ? p.byRoleModel.main.pro.cost : 0)).toBeCloseTo(p.byRole.main.cost, 6);
   });
 });
@@ -165,7 +165,7 @@ describe('aggregateUsage:失败流单列', () => {
     expect(a.failed.cost).toBeCloseTo(2, 6);
   });
 
-  it('grok 口径下失败流同样计 $0,但 token 数照样看得见', () => {
+  it("零价目下失败调用的成本为 0，token 用量仍保留", () => {
     const grokRecs: UsageRecord[] = recs
       .filter((r) => r.outcome === 'failed')
       .map((r) => charged({ ...r, model: 'grok-4.5' }));
@@ -174,7 +174,7 @@ describe('aggregateUsage:失败流单列', () => {
     expect(a.failed.promptTokens).toBe(2_000_000);
   });
 
-  it('没有失败行时 failed 是一格零(不缺席,前端不必判 undefined)', () => {
+  it("没有失败记录时仍返回全零的 failed 统计", () => {
     const a = aggregateUsage([recs[0]], { bucket: 'day' });
     expect(a.failed.calls).toBe(0);
     expect(a.failed.cost).toBe(0);

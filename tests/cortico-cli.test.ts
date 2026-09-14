@@ -1,7 +1,4 @@
-/**
- * 启动器(`bin/cortico.mjs`)里那几个纯判断。起进程、装依赖、画菜单那几段要真终端与真
- * 网络,不在这里;这里守的是「什么时候重起」「启动哪一个」「pnpm 从哪来」三条决策。
- */
+/** 验证部署选择、pnpm 发现与子进程重启条件;监管测试使用本地假子进程。 */
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,7 +21,7 @@ describe('shouldRelaunch', () => {
     expect(shouldRelaunch({ askedRestart: true, dataDir: null, exists: never })).toBe(true);
   });
 
-  it('IPC 没来但标志文件在:消息发出前被硬杀,照样重起', () => {
+  it('缺少 IPC 消息但存在重启标志时重新启动', () => {
     const dataDir = '/deploy/data';
     const exists = (p: string) => p === join(dataDir, RESTART_FLAG_FILE);
     expect(shouldRelaunch({ askedRestart: false, dataDir, exists })).toBe(true);
@@ -34,7 +31,7 @@ describe('shouldRelaunch', () => {
     expect(shouldRelaunch({ askedRestart: false, dataDir: '/deploy/data', exists: never })).toBe(false);
   });
 
-  it('子进程连 data 目录都没来得及报,就没有兜底可查', () => {
+  it('未收到 data 目录时不检查重启标志', () => {
     expect(shouldRelaunch({ askedRestart: false, dataDir: null, exists: never })).toBe(false);
   });
 });
@@ -72,7 +69,7 @@ describe('chooseBot', () => {
     expect(chooseBot({ bot: null, available: ['a', 'b'], interactive: true })).toEqual({ kind: 'ask' });
   });
 
-  it('多份 + 非交互 → 不空转,要求命令行指定并列出名字', () => {
+  it('多份部署且非交互时要求指定名称并列出可选项', () => {
     const out = chooseBot({ bot: null, available: ['a', 'b'], interactive: false });
     expect(out.kind).toBe('error');
     expect(out.kind === 'error' && out.message).toContain('a / b');
@@ -86,7 +83,7 @@ describe('chooseBot', () => {
 });
 
 describe('resolvePnpm', () => {
-  it('corepack 优先:版本由 packageManager 钉死', () => {
+  it('优先使用 corepack 提供项目指定版本的 pnpm', () => {
     expect(resolvePnpm(() => true)).toEqual({ command: 'corepack', prefix: ['pnpm'] });
   });
 
@@ -104,19 +101,19 @@ describe('pnpmMissingMessage', () => {
     expect(pnpmMissingMessage(20)).toContain('nodejs.org');
   });
 
-  it('Node 够新只是没 corepack:指路装 pnpm,不再反向让人升 Node', () => {
+  it('Node 版本满足要求但缺少 pnpm 时提示安装 pnpm', () => {
     const text = pnpmMissingMessage(25);
     expect(text).toContain('npm i -g pnpm');
     expect(text).not.toContain('nodejs.org');
   });
 });
 
-describe('监管循环(真子进程)', () => {
+describe('子进程监管', () => {
   const entry = fileURLToPath(new URL('./fixtures/launcher/fake-child.mjs', import.meta.url));
   const dirs: string[] = [];
   afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
-  /** 起一轮监管,回退出码与子进程实际被起了几次。 */
+
   async function run(mode: string): Promise<{ code: number; runs: number }> {
     const dir = mkdtempSync(join(tmpdir(), 'cortico-supervise-'));
     dirs.push(dir);
@@ -138,7 +135,7 @@ describe('监管循环(真子进程)', () => {
     }
   }
 
-  it('干净退出:起一次就收工', async () => {
+  it('正常退出后不再启动', async () => {
     expect(await run('clean')).toEqual({ code: 0, runs: 1 });
   });
 

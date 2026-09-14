@@ -44,21 +44,17 @@ export function defaultPricing(): PriceDefinition[] {
   }];
 }
 
-/** Probe budget: enough for a reasoning model to answer one word without an `incomplete` stop. */
+/** Output token limit used by the connectivity probe. */
 const PROBE_MAX_OUTPUT_TOKENS = 256;
 
-/**
- * Every console-facing text here follows the language of the request that asked for it;
- * `language` is therefore a parameter on each console entry point, defaulting to Chinese
- * for callers that do not present anything to an operator.
- */
+/** Console entry points receive the request language; callers that omit it use Chinese. */
 export class ProviderSettings {
   constructor(
     private readonly config: CoreConfig,
     private readonly registry: ProviderRegistry,
-    /** 这份部署的 config.json。现在只写"用哪个端点"这一个选择,不再写端点表。 */
+    /** 当前部署的 config.json，用于保存 activeProvider。 */
     private readonly file: string,
-    /** 全局端点表的根(`<部署根>/providers/`);端点的改动写进 `<它>/<端点名>/config.json`。 */
+    /** 共享端点目录，配置写入各端点的 config.json。 */
     private readonly providersDir: string,
     private readonly modules: readonly ProviderModule[] = providerModules,
   ) {
@@ -119,10 +115,7 @@ export class ProviderSettings {
     return S.saved;
   }
 
-  /**
-   * 落一次盘。端点是**全局**的,写 `<providers>/<端点名>/config.json`;
-   * `activeProvider`(这份部署用哪个端点)是这份部署自己的选择,仍写它的 config.json。
-   */
+  /** 端点配置写入共享目录；activeProvider 写入当前部署的 config.json。 */
   private persist(name: string, entry: LLMProviderEntry, activeProvider: string): void {
     const next = structuredClone(entry);
     updateJsonObject(this.file, (raw) => {
@@ -148,10 +141,7 @@ export class ProviderSettings {
     this.persist(name, validateEntry(module, entry, language), this.config.activeProvider);
   }
 
-  /**
-   * 把某个实例设为当前端点。模型档整组归 Provider,所以启用的前提就是它自己
-   * 有一份 —— 框架没有"Persona那份 baseline"可以拿来兜底了。
-   */
+  /** 设为当前端点前，要求端点具有有效的模型配置。 */
   activate(name: string, spec?: ModelSpec, language: Language = 'zh'): void {
     const S = text(language);
     const entry = this.config.providers[name];
@@ -162,7 +152,7 @@ export class ProviderSettings {
     this.persist(name, next, name);
   }
 
-  /** 删端点:它的目录整个走(config.json、密钥文件都归它)。当前端点不能删。 */
+  /** 删除端点及其整个目录；当前活跃端点不能删除。 */
   delete(name: string, language: Language = 'zh'): void {
     const S = text(language);
     if (!this.config.providers[name]) throw new Error(S.unknownInstance);
@@ -173,7 +163,7 @@ export class ProviderSettings {
     rmSync(join(this.providersDir, name), { recursive: true, force: true });
   }
 
-  /** 密钥值的来源:进程环境 > 端点目录的 `.env`;没有变量名就谈不上来源。 */
+  /** 密钥值优先来自进程环境，其次为端点 .env；未配置变量名时没有来源。 */
   secretStatus(name: string, entry: LLMProviderEntry): SecretStatus {
     if (!entry.secret) return 'none';
     if (process.env[entry.secret]) return 'env';
@@ -206,7 +196,7 @@ export class ProviderSettings {
   private assertNewName(name: string, language: Language): void {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name)) throw new Error(text(language).nameFormat);
     const existing = this.config.providers[name];
-    // 一个没有模块认领的旧条目(被删掉的 kind)可以被同名新建覆盖;它的目录与密钥文件留用。
+    // kind 未注册的条目可被同名新端点覆盖，沿用现有目录和密钥。
     if (existing && this.modules.some((module) => module.id === existing.kind)) throw new Error(text(language).nameTaken);
   }
 
@@ -304,7 +294,7 @@ export class ProviderSettings {
           title: S.settingsPanel,
           description: S.settingsPanelDescription,
           getMethods: ['state'],
-          // 端点表每一页长得一样,界面归控制台核心;这里只出数据面(下面的 invoke)。
+          // 使用控制台内建端点面板，操作由下方 invoke 提供。
           builtin: 'llm-settings',
         },
         ...(extra.panels ?? []),

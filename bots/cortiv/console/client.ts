@@ -1,8 +1,5 @@
 /**
- * 可缇Corti 的浏览器扩展 —— 工作区 / Memory / 版本历史。
- *
- * 三个面板都由 `CortiV.console()` 自报,bundle 目录约定铸成 `persona:cortiv`。
- * 数据面一律走 `ctx.invoke`,DOM 一律用 `ctx.ui`,未保存改动走 `ctx.guardLeave`。
+ * Persona 控制台的浏览器入口；面板声明见 ../persona/consoleSurface.ts。
  */
 
 import type {

@@ -12,10 +12,8 @@ import { currentAnchors } from './log-context.ts';
 export { estimateTokens, estimateMessagesTokens } from '../protocol/open-responses/tokens.ts';
 
 /**
- * 请求前缀的指纹:前 count 条消息按发出去的形状串起来做 sha256,取前 12 位。
- *
- * 纯观测,不参与任何判定。上游按字节前缀命中缓存,这一列让"前缀该相同却 miss"
- * 与"前缀确实变了"分得开——否则只看得见命中率掉了,看不见是谁改了前缀。
+ * 前 count 条消息按请求形状序列化后计算 SHA256，取前 12 位用于日志比较。
+ * 该指纹不参与运行控制，也不证明上游缓存是否命中。
  */
 export function prefixFingerprint(messages: readonly ContextRecord[], count = PREFIX_FINGERPRINT_MESSAGES): string {
   const parts = messages.slice(0, count).map(({ item }) => {
@@ -25,17 +23,11 @@ export function prefixFingerprint(messages: readonly ContextRecord[], count = PR
   return createHash('sha256').update(parts.join('\0'), 'utf8').digest('hex').slice(0, 12);
 }
 
-/** 指纹覆盖的消息条数:system 前缀 + 首轮对话锚(合成 3 条)之后再多带几条。 */
+/** 指纹覆盖的消息条数，包含 system 前缀、合成首轮对话及其后的部分上下文。 */
 export const PREFIX_FINGERPRINT_MESSAGES = 8;
 
 
-/**
- * 给一个等不起的 await 套上时限。超时**抛错**而不是静默放行 —— 调用方由此分得清
- * "这一步做完了"和"这一步不肯回来",收尾日志才说得出哪一步没走完。
- *
- * 底下那个 promise 不会被取消(JS 里也取消不了):超时只是不再等它。所以只用在
- * "等不到就得往下走"的地方,别拿它当撤销。
- */
+/** 超时后拒绝返回的 Promise；不会取消仍在运行的底层 Promise。 */
 export function withDeadline<T>(work: Promise<T>, ms: number, what = '这一步'): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${what}超时(${Math.round(ms / 1000)}秒)`)), ms);
@@ -77,28 +69,24 @@ export function shortTime(timezone: string, d: Date = new Date()): string {
   }).format(d);
 }
 
-/** 目标时区当前小时(0-23),Persona表达作息节律用 */
 export function hourIn(timezone: string, d: Date = new Date()): number {
   return parseInt(new Intl.DateTimeFormat('en-US', {
     timeZone: timezone, hour: 'numeric', hour12: false,
   }).format(d), 10) % 24;
 }
 
-/**
- * 返回 World 已渲染的事件正文，不添加存储游标或语义文本。external_event_frame
- * 投递、qq_read_history 与 qq_grep_history 共用此出口。
- */
+/** 返回 World 提供的事件正文，不添加存储游标或语义文本。 */
 export function renderEventLines(events: EventEnvelope[]): string {
   return events.map((e) => e.text).join('\n');
 }
 
 /** 折叠窗口:同一 (area, event|msg 模板) 的 warn/error 在窗口内只落第一条,窗口末补一条计数。 */
 const FOLD_MS = 30_000;
-/** 事故包同一 key 的最短间隔 */
+/** 同一 key 的错误上下文快照写入间隔 */
 const INCIDENT_GAP_MS = 60_000;
-/** 事故包带的最近记录条数 */
+/** 错误上下文快照附带的最近记录条数 */
 const RING_SIZE = 300;
-/** log.jsonl 单文件上限,超过滚成 log.1.jsonl、log.2.jsonl … 一场之内不限代数 */
+/** 单文件大小上限；轮转文件数在当前 run 内不设上限。 */
 const ROTATE_BYTES = 64 * 1024 * 1024;
 
 export interface RunlogLevels {
@@ -112,7 +100,7 @@ export interface RunlogOptions {
   timezone?: string;
   /** 现读:配置热改立即生效 */
   levels?: () => RunlogLevels;
-  /** error 级记录的现场包目录;不给就不写事故包 */
+  /** error 记录的上下文快照目录；未提供时不写快照。 */
   incidentsDir?: string | null;
   /** 是否同时打到 stdout(测试关掉) */
   console?: boolean;
@@ -162,8 +150,8 @@ function slug(text: string): string {
 const ANCHOR_KEYS = ['sess', 'round', 'resp', 'call', 'ev', 'task'] as const;
 
 /**
- * 运行日志的落点:`data/runs/<run>/log.jsonl` 一行一条 LogRecord,同时按门槛打到 stdout。
- * 锚点在落盘刻从异步上下文补齐;warn/error 按 (area, event|msg 模板) 折叠;error 写事故包。
+ * 日志写入 data/runs/<run>/log.jsonl，并按独立门槛输出到 stdout。
+ * 写入时读取异步作用域的关联字段；重复 warn/error 合并计数，error 可另存诊断记录。
  */
 export class Runlog {
   private readonly file: string | null;
@@ -200,12 +188,12 @@ export class Runlog {
   get path(): string | null { return this.file; }
   get runId(): string { return this.run; }
 
-  /** 实时观察接缝(web调试界面用) */
+  /** 日志追加订阅，供控制台实时观察。 */
   onWrite(cb: (entry: LogRecord) => void): void {
     this.writeListeners.push(cb);
   }
 
-  /** 最近落盘的记录(事故包与控制台用) */
+  /** 内存中最近的日志记录，包含未写入文件的记录。 */
   recent(limit = RING_SIZE): LogRecord[] {
     return this.ring.slice(-limit);
   }
@@ -267,7 +255,7 @@ export class Runlog {
     return record;
   }
 
-  /** 窗口内重复的 warn/error 只计数;返回 true 表示这条被吞。 */
+  /** 窗口内重复的 warn/error 只累计计数；返回 true 表示本条无需另行写入。 */
   private fold(record: LogRecord): boolean {
     const key = foldKey(record);
     const open = this.folds.get(key);
@@ -333,7 +321,7 @@ export class Runlog {
       const name = `${record.ts.slice(0, 23).replace(/[:.]/g, '-')}-${slug(record.event ?? record.msg)}.json`;
       writeFileSync(join(this.incidentsDir, name), JSON.stringify({ record, anchors: currentAnchors(), recent: this.ring.slice(0, -1) }, null, 1), 'utf8');
     } catch {
-      // 事故包写不出去不影响运行
+      // 快照写入失败不影响运行
     }
   }
 

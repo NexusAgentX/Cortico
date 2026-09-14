@@ -46,7 +46,7 @@ describe('assembleSystem', () => {
       now: new Date(),
       timezone: 'Asia/Shanghai',
     });
-    // 不重排、不加标题、不加分隔符,也不加胶水换行——段间怎么隔开由装配模板说了算
+    // 按 Persona 返回的顺序直接拼接，段间分隔符由段文本提供。
     expect(text).toBe('B\nA\n');
   });
 
@@ -68,7 +68,7 @@ describe('assembleSystem', () => {
   });
 
 
-  it('工具不再往前缀里塞用法段;无 World 也能拼', async () => {
+  it("不为工具 description 单独生成前缀段，无 World 时也可组装", async () => {
     const text = await assembleSystem({
       persona: makeFakePersona(),
       worlds: [makeFakeIO('qq', [makeTool('send', 'x')])],

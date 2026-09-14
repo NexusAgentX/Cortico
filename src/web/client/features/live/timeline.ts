@@ -1,31 +1,10 @@
 /**
- * 时间线 —— 把 session 的 Item 流画成一列"组"。
- *
- * 版式是 `styles.css` 里 `.grp` / `.turn` / `.think` / `.monolog` / `.toolcall` /
- * `.world` 那一整套字面,这里用 `ui.h` 拼既有 class,不发明新皮。
- *
- * 数据是标准 Open Responses Item(`ContextRecord`)。这一页是**实际组装进上下文的
- * 内容**的便利可视化,不是语义化的转述:标签写的就是 role 与工具名。画法按来源分
- * 左右,同一种组结构(头像栏 + 组头 + 内容列)镜像使用:
- *
- * | Item                          | 画成                                             |
- * | ----------------------------- | ------------------------------------------------ |
- * | system / developer message    | 全宽可折叠的系统前缀条(`.syscard`)                |
- * | user message                  | 靠右的 USER 组:一只气泡,一行一条(`.world`)        |
- * | reasoning / assistant message / function_call | 同一 Response 合成一个靠左的 ASSISTANT 组(`.turn`),头像在左栏,卡内按 Item 顺序排;合成的 external_event_frame 调用也在这里,只多一只「合成」框与稀虚线 |
- * | function_call_output          | 按 `call_id` 填回原调用的回执槽;对不上号才单独成卡 |
- * | compaction / item_reference   | 独立卡(`.standalone`)                             |
- *
- * 一个 `.turn` 组对应一段**连续**的同 `responseId` Item;没有 responseId 的连续
- * assistant 侧 Item 也合成一组。夹在中间的回执或输入会结束这一段。组头的
- * 「原始 Item」展开这一段的标准 Item 原文(含 phase / status / 加密载荷),所以
- * 正文里不重复印这些元数据,只按字面报长度(明文按字、加密载荷按字符)。
- *
- * 序号 `#n` 是这条 Item 在 session 记录里的位置(`session.append` 用的 index)。
- * 合成首轮(出线态注入,不落盘)没有序号,用前后两道分隔线标出。
- *
- * 生命周期:打字机走 `lifecycle.frame`(重画即停);滚动粘滞用 `shouldStick`;
- * 监听全带 signal;没有 innerHTML。
+ * 按标准 Open Responses Item 渲染 session 时间线。
+ * 连续的同 responseId assistant 侧 Item 合为一组；无 responseId 的连续 Item 也合组，
+ * 回执或输入结束当前组。function_call_output 按 call_id 回填，未匹配时单独显示。
+ * 原始 Item 包含 phase、status 与加密载荷；明文计字数，加密载荷计字符数。
+ * #n 对应 session 记录 index；合成首轮不落盘且无序号。
+ * 打字机由 lifecycle.frame 管理，监听使用 signal，滚动保持由 shouldStick 判断。
  */
 
 import type { ConsoleUi, Disposable } from '../../../shared/client-panel.ts';
@@ -46,7 +25,6 @@ const EXTERNAL_EVENT_FRAME = 'external_event_frame';
 /** bot 头像。不带缓存破坏参数:一条时间线上几十个组共用同一份缓存。 */
 const AVATAR_URL = '/api/avatar';
 
-/** 加/去一个 class,不碰 `classList`——那是本仓 DOM 桩不实现的一层。 */
 function toggleClass(el: HTMLElement, cls: string, on: boolean): void {
   const set = new Set(el.className.split(' ').filter((s) => s !== ''));
   if (on) set.add(cls);
@@ -59,7 +37,7 @@ type ReasoningItem = Extract<Item, { type: 'reasoning' }>;
 type CallItem = Extract<Item, { type: 'function_call' }>;
 type OutputItem = Extract<Item, { type: 'function_call_output' }>;
 
-/** 内容数组的可读投影:文本原样,其余部件只留类型标记。 */
+/** 文本原样显示，其他内容部件显示类型标记。 */
 function partsText(content: MessageItem['content'] | OutputItem['output']): string {
   if (typeof content === 'string') return content;
   return content.map((part) => {
@@ -101,7 +79,6 @@ export interface TimelineDeps {
 }
 
 export interface TimelineView {
-  /** 整块(滚动区 + 思考条 + 回到底部),调用方 append 到自己的根里 */
   el: HTMLElement;
   /**
    * 整份重画。`note` 是顶上一条分隔说明,`banner` 是置顶横幅(fork 视图用)。
@@ -115,10 +92,7 @@ export interface TimelineView {
       banner?: HTMLElement | null;
       empty?: string;
       keepScroll?: boolean;
-      /**
-       * 合成首轮对话(出线态注入,不落盘)。与 session 里的 Item 画法相同,前后各一道
-       * 分隔线,插在开头的 system 卡之后——与实际请求体里的位置一致。空数组/不传=不画。
-       */
+      /** 合成首轮显示在开头 system 之后；空数组或未提供时不显示。 */
       firstTurn?: readonly ContextRecord[] | null;
     },
   ): void;
@@ -175,12 +149,7 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     typing.clear();
   };
 
-  /**
-   * 打字机。点一下立即写完(长思考不必等)。
-   *
-   * `frame` 返回的句柄同时登记在 `lifecycle` 上,所以三条退出路径——写完、用户点、
-   * 页面离开——最终都收在同一个地方。
-   */
+  /** 打字机点击后立即完成；帧句柄由 lifecycle 管理。 */
   const typewriter = (target: HTMLElement, text: string): void => {
     toggleClass(target, 'typing', true);
     let i = 0;
@@ -209,9 +178,7 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     target.addEventListener('click', finish, { signal });
   };
 
-  // ── 小零件 ─────────────────────────────────────────────────────────
 
-  /** 折叠容器(`.clps` 的两层:外层控高度,内层裁切)。 */
   const clps = (body: HTMLElement, open: boolean): HTMLElement => {
     const w = ui.h('div', open ? 'clps open' : 'clps');
     const b = ui.h('div');
@@ -220,7 +187,6 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     return w;
   };
 
-  /** 点标题展开/收起,顺带翻转小箭头。 */
   const bindToggle = (head: HTMLElement, box: HTMLElement, chev?: HTMLElement | null): void => {
     head.addEventListener(
       'click',
@@ -279,11 +245,6 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     return s;
   };
 
-  /**
-   * 键值框:键名用框的颜色,值用正文色。`value` 省略就是只有键名的标记框
-   * (比如合成调用对上的「合成」)。class 带上键名,测试与样式都能按键找;
-   * `label` 是印出来的键名,省略就印键本身。
-   */
   const kv = (key: string, value?: string, label?: string): HTMLElement => {
     const box = ui.h('span', `kv kv-${key}`);
     box.appendChild(ui.h('span', 'kv-k', label ?? key));
@@ -291,7 +252,6 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     return box;
   };
 
-  /** 组的左/右栏:头像(ASSISTANT)或一枚记号(USER / 合成调用对)。 */
   const gutterGlyph = (glyph: string, title: string): HTMLElement => {
     const box = ui.h('div', 'gutter');
     box.appendChild(ui.h('span', 'glyph', glyph));
@@ -318,10 +278,6 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     return box;
   };
 
-  /**
-   * 一个组:左栏 + 内容列(`right` 时镜像:内容列在前、右栏在后)。
-   * 返回组与内容列,调用方往内容列里放组头与正文。
-   */
   const group = (cls: string, gutter: HTMLElement, right: boolean): { grp: HTMLElement; col: HTMLElement } => {
     const grp = ui.h('div', right ? `${cls} grp r` : `${cls} grp`);
     const col = ui.h('div', right ? 'gcol r' : 'gcol');
@@ -330,7 +286,6 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     return { grp, col };
   };
 
-  // ── 每一种 Item ────────────────────────────────────────────────────
 
   const renderSystem = (entry: ContextRecord, live: boolean): HTMLElement => {
     const item = entry.item as MessageItem;
@@ -338,7 +293,6 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     const card = tag(ui.h('div', live ? 'tcard syscard anim-in' : 'tcard syscard'), entry);
     const head = ui.h('div', 'cardhead');
     const chev = ui.h('span', 'chev', '▼');
-    // 折叠时露正文第一行(CSS 截断),不写任何说明
     const firstLine = text.split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';
     head.append(
       ui.h('span', 'badge', item.role.toUpperCase()),
@@ -373,11 +327,7 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     return grp;
   };
 
-  /**
-   * 一条 reasoning Item 一个思考块。明文、摘要、加密载荷三样分别呈现:明文是正文,
-   * 摘要另起一小节,加密载荷只在头上留一枚锁(它本来就读不出内容)。三样都没有的
-   * 空 reasoning 不画。
-   */
+  /** reasoning 明文、摘要与加密载荷分别显示；三者皆空时不显示。 */
   const renderReasoning = (entry: ContextRecord, live: boolean): HTMLElement | null => {
     const item = entry.item as ReasoningItem;
     const text = (item.content ?? [])
@@ -416,10 +366,7 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     return block;
   };
 
-  /**
-   * assistant 正文＝模型的直接输出,画成靠左的气泡。每个内容部件一个气泡;只有拒绝
-   * 与非 final_answer 的 phase 才印小标签。它没有外送到任何出口,这点放 hover。
-   */
+  /** assistant 正文是直接输出，未发送到 World；拒绝与非 final_answer 的 phase 显示标签。 */
   const renderMonolog = (entry: ContextRecord): HTMLElement[] => {
     const item = entry.item as MessageItem;
     const phase = 'phase' in item && typeof item.phase === 'string' ? item.phase : '';
@@ -442,7 +389,6 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     return out;
   };
 
-  /** 工具卡:卡头是 tool_name / call_id 两只键值框(合成调用对再加一只「合成」),参数折叠,回执槽等结果。 */
   const toolCard = (entry: ContextRecord, cls: string, synthetic: boolean): HTMLElement => {
     const item = entry.item as CallItem;
     const card = tag(ui.h('div', cls), entry);
@@ -459,10 +405,7 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     return card;
   };
 
-  /**
-   * 事件投递帧(core 合成的一对 external_event_frame 调用/回执)与普通工具调用
-   * 画在同一个 ASSISTANT 组里,只靠「合成」框与稀虚线识别。
-   */
+  /** external_event_frame 合成调用对与普通调用同组，并标为合成。 */
   const renderToolCall = (entry: ContextRecord, live: boolean): HTMLElement => {
     const synthetic = isEventFrame(entry.item);
     const cls = ['toolcall'];
@@ -509,11 +452,7 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     return card;
   };
 
-  /**
-   * 同一 Response 的 assistant 侧 Item 共用一个组;没有 responseId 的连续 assistant
-   * 侧 Item 也合成一组(合成首轮就是这样)。组头印 ASSISTANT、序号、状态(只在不是
-   * completed 时)与一枚「原始 Item」开关——展开这一段的标准 Item 原文。
-   */
+  /** 连续同 Response 的 assistant 侧 Item 共用一组；缺 responseId 时按连续性分组。可展开原始 Item。 */
   const ensureTurn = (entry: ContextRecord, index: Ordinal, live: boolean): Turn => {
     const responseId = entry.context.responseId ?? '';
     if (turn && turn.responseId === responseId) return turn;
@@ -575,7 +514,6 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
     stick();
   };
 
-  /** 合成首轮:画法与 session 里的 Item 完全一样,前后各一道轻分隔线。 */
   const renderFirstTurn = (entries: readonly ContextRecord[]): void => {
     turn = null;
     inner.appendChild(ui.h('div', 'divider firstturn', S.firstTurnStart));

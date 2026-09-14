@@ -1,16 +1,4 @@
-/**
- * 整条前缀的编辑器：**一个文档**，不是一摞输入框。
- *
- * 为什么非得是一个文档:分成 N 个 textarea 之后,某一块写长了只会把自己撑出滚动条,
- * 下面的块纹丝不动——读起来就不是一条连续的前缀了。整体感这件事没法靠拼卡片凑出来。
- *
- * 于是块变成**文档上的行区间**:背景色是行装饰,标签与分割线由页面按 `blockGeometry()`
- * 在旁边另画一层。区间随编辑自动跟随(`changes.mapPos`),所以在任意一块里增删多少行,
- * 后面的块都跟着上下移动,而"这段文字属于哪份模板"始终算得清。
- *
- * 只读块(工具用法那种来自代码的段)用 `changeFilter` 挡住:它照常参与排版与滚动,
- * 但改不动——比把它挪出编辑器好,挪出去就又不是一整条了。
- */
+/** 前缀以单文档编辑；模板对应可跟随编辑变化的区间，只读区间由 changeFilter 拦截。 */
 
 import { EditorState, StateEffect, StateField, type Extension, type Range } from '@codemirror/state';
 import {
@@ -77,16 +65,7 @@ const saveField = StateField.define<{ state: SaveState; at: number }>({
   },
 });
 
-/**
- * 块区间。文档一变就把每个边界映射到新位置——**这是"改哪块"这件事的唯一真相**,
- * 不靠行数快照,也不靠重新扫文本。
- *
- * 两个 assoc 是反的,而且必须反:
- *  - `to` 用 `1`:在块**末尾**敲的字要被这块吃进去(否则边界停在插入点之前,
- *    切出来的文本纹丝不动——那正是"打了字却存不下去"的样子)。
- *  - `from` 用 `-1`:在块**开头**敲的字也归这块。若也用 `1`,起点会让到新内容
- *    之后,那几个字就掉进两块之间的缝里,谁也不认领。
- */
+/** 编辑时映射块边界：to 的 assoc=1、from 的 assoc=-1，使边界插入内容归入该块。 */
 const blockField = StateField.define<BlockRange[]>({
   create: () => [],
   update(value, tr) {
@@ -100,12 +79,7 @@ const blockField = StateField.define<BlockRange[]>({
   },
 });
 
-/**
- * 每一行按所属块上底色;块首行额外一个 class 用来画上边界。
- *
- * 另外两种提示也在这里出:**鼠标停着的块**与**光标所在的块**。它们必须是行装饰
- * 而不是 CSS `:hover`——一块是很多行,CSS 只命中鼠标底下那一行,整块亮不起来。
- */
+/** 悬停与光标高亮覆盖所属块的全部行。 */
 const blockDecorations = EditorView.decorations.compute(
   [blockField, hoverField, saveField, 'doc', 'selection'],
   (state) => {
@@ -131,18 +105,7 @@ const blockDecorations = EditorView.decorations.compute(
         ).range(line.from));
       }
     }
-    /*
-     * 行尾小字,落在**光标那一行**上。
-     *
-     * 它是那一行的一个属性(`data-save-hint`),字由 CSS 伪元素画。**不能改回
-     * widget**:空行上 widget 是那一行仅有的内容,contentEditable 的原生退格删掉
-     * 的就是它,于是光标停在空行上时那一下删不掉换行。伪元素同时保住了原来的
-     * 性质——字选不中也复制不走,横跨编辑器内外的原生复制也带不上它。
-     *
-     * 「已保存」是个例外:它只在**存的时候那一行**待着,光标一走开就没了。
-     * 让它跟着光标跑的话,那句话就从"这一下存上了"变成了一块跟着走的贴纸——
-     * 人在别处改字时它还在旁边说"已保存",正好是最容易看错的时候。
-     */
+    /* 保存提示使用属性与 CSS 伪元素，不插入 contentEditable 节点，以保留空行退格行为。已保存提示仅留在保存时的光标行。 */
     const save = state.field(saveField);
     const line = state.doc.lineAt(Math.min(caret, state.doc.length));
     const pinned = save.state === 'saved'
@@ -174,12 +137,7 @@ const hoverTracker = EditorView.domEventHandlers({
   },
 });
 
-/*
- * 游标标签**不做成 gutter marker**。试过:gutter 元素的位置与内容行会越走越偏
- * (实测第三块起差到 268px),对不上"尖头指着分割线"这件事。
- * 改由页面在编辑器左侧画一层绝对定位的标签,坐标取 `blockGeometry()` ——
- * 和右栏同一套 `lineBlockAt` 读数,那套已经验过是逐块严丝合缝的。
- */
+/* 块标签由页面按 blockGeometry 绝对定位。 */
 
 /** 落在只读块里的改动一律拦掉。 */
 const readonlyGuard = EditorState.changeFilter.of((tr) => {
@@ -299,12 +257,7 @@ export function createPrefixEditor(opts: PrefixEditorOptions): PrefixEditor {
       view.dispatch({ effects: setSaveState.of(state) });
     },
     contentTop: () => view.contentDOM.getBoundingClientRect().top,
-    /**
-     * 各块此刻的垂直位置。**优先量真实 DOM**:`lineBlockAt` 给的是 heightMap 读数,
-     * 而视口外的行是**估算**高度——中文加自动折行之后估得很不准,实测到第三块就差
-     * 近 300px,标签和右栏会整体飘走。块首行上挂了 `data-block`,量它最准;
-     * 那一行没渲染出来时才退回估算。
-     */
+    /** 优先测量已渲染块首行的 DOM 位置；不可见行回退到 lineBlockAt 估算值。 */
     blockGeometry() {
       const out: Array<{
         sourceKey?: string; title: string; tone: PrefixBlock['tone']; top: number; height: number;

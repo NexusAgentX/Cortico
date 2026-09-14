@@ -61,7 +61,7 @@ const SECTIONS: readonly SettingSection[] = [
 
 export function mountSettings(ctx: FeatureContext): void {
   const { ui } = ctx;
-  const intro = pageIntro(ui, S.pageTitle, S.pageIntro);
+  const intro = pageIntro(ui, S.pageTitle);
   const layout = ui.h('div', 'settings-layout');
   const index = ui.h('nav', 'settings-index');
   index.setAttribute('aria-label', S.sectionsAria);

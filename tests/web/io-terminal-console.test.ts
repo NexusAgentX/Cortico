@@ -1,17 +1,4 @@
-/**
- * 终端 World 的通用流式通道与控制台贡献。
- *
- * 这一份**不起服务器**:流式通道的框架侧行为已经在 `provider-stream.test.ts` 里
- * 用假 provider 钉过了,这里要钉的是另一半——World 接到一条 `ConsoleStream` 之后
- * 干了什么。所以直接拿假 socket 调 World,快且没有端口。
- *
- * 四件事:
- * 1. `stream()` 能双向收发,连接生命周期(进场/离场)照常产出事件。
- * 2. 协议解析的全部分支(非法 JSON、非对象、未 hello 先说话、未知类型)都走得到。
- *    World 只有 `stream()` 这一条入口,协议解析也只有这一份。
- * 3. contribution 形状:新式对象 panel 声明,局部 id 不带 World 名前缀。
- * 4. `stream()` 按**局部** panel id 分派,旧的全局扁平 id 不再受理。
- */
+/** Terminal World 使用假 ConsoleStream 验证协议与双向通信。连接进出更新状态，只有消息产生投递事件；控制台贡献按局部 panel id 分派。 */
 import { describe, it, expect } from 'vitest';
 import { TerminalWorld } from '../../src/worlds/terminal/world.ts';
 import { TERMINAL_DEFAULTS, type TerminalConfigSection } from '../../src/worlds/terminal/config.ts';
@@ -167,12 +154,10 @@ describe('TerminalWorld 的流式通道', () => {
     await mod.start(host);
     const send = mod.tools().find((t) => t.name === 'terminal_send')!;
 
-    // 一个人都没连:回执要说清没人看到,而不是一句干巴巴的 [sent]。给模型的文本固定英文。
     const alone = String(await send.handler({ text: '有人在吗' }, toolCtx));
     expect(alone).toContain('"Terminal" page');
     expect(alone).toContain('no connection is open');
     expect(alone).toContain('nobody sees this');
-    // 不越界:不说"没人读过",也不谈直播在不在线
     expect(alone).not.toMatch(/read it|has read/);
     expect(alone).not.toMatch(/stream is|live/);
 
@@ -345,7 +330,6 @@ describe('终端消息附图', () => {
   });
 });
 
-// ── 2. 协议解析(唯一一份) ─────────────────────────────────────────────
 
 describe('协议解析', () => {
   it('一串覆盖全分支的输入:合法/非法 JSON、非对象、未 hello 先说话、未知类型', async () => {
@@ -531,7 +515,6 @@ describe('stream 按局部 panel id 分派', () => {
   });
 });
 
-// ── 5. 整条链路真的接上了 ────────────────────────────────────────────────
 
 describe('界面语言', () => {
   it('同一个实例按请求的语言报显示名与面板文案,装配层的槽位名仍是定义里的', () => {
@@ -571,10 +554,6 @@ describe('界面语言', () => {
 });
 
 describe('World 的 stream 经装配层适配后对框架可达', () => {
-  // 这条盯的是一个真实的接线漏洞:协议侧 ConsolePageContribution 早就有
-  // stream 了,但 WorldConsoleDecl 没有对应字段、适配器也不转发,于是 World
-  // 声明的流式面对框架**根本够不着**——WS 握手会以"没有流式面"被拒。
-  // 单测 World 自己或单测协议都发现不了这个断点,只有把两头接起来看才行。
   it('ioPageContribution 转发 stream,并把局部 id 反归一化给 World', async () => {
     const host = new FakeHost();
     const mod = new TerminalWorld();

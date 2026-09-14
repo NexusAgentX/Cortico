@@ -1,8 +1,4 @@
-/**
- * 「QQ 接入」面板(World 侧):gate 状态/开关/连接、分会话事件列表。
- * 面板已从控制台具名路由下沉进 QQWorld.invoke——这里直接在 World 的
- * 通用调用面上验语义;HTTP 层的透传另在 worlds-config.test.ts 里验。
- */
+/** 验证 QQ 接收控制的控制台调用与配置。 */
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import { QQWorld } from '../../src/worlds/qq/world.ts';
 import { FakeStore } from './fakes.ts';

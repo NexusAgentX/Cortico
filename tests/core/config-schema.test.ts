@@ -1,9 +1,4 @@
-/**
- * 配置项声明的读取与校验。
- *
- * coerceGroupValues 的行为完全由声明决定,不为任何具体字段写特例——
- * 加一个旋钮只该改声明,不该改这里的逻辑。
- */
+/** 配置声明的读取、值校验与原位写入。 */
 import { describe, it, expect } from 'vitest';
 import {
   coerceGroupValues, readGroupValues, getByPath, setByPath,
@@ -38,7 +33,7 @@ describe('coerceGroupValues', () => {
     expect(r).toEqual({ values: { 'a.count': 3 } });
   });
 
-  it('声明外的键静默忽略——控制台不能靠猜往配置里塞东西', () => {
+  it("忽略未声明的配置键", () => {
     const r = coerce({ 'a.count': 3, 'api.key': 'stolen', 'a.nonexistent': 1 });
     expect(r).toEqual({ values: { 'a.count': 3 } });
   });
@@ -97,11 +92,11 @@ describe('readGroupValues', () => {
 });
 
 describe('setByPath / getByPath', () => {
-  it('就地写叶子,沿途父对象身份保持(热改靠的就是这一点)', () => {
+  it("写入叶子属性时保留父对象引用", () => {
     const root: Record<string, unknown> = { a: { count: 1 } };
     const a = root.a;
     setByPath(root, 'a.count', 9);
-    expect(root.a).toBe(a); // 同一个对象,持有引用的组件立刻看到新值
+    expect(root.a).toBe(a);
     expect(getByPath(root, 'a.count')).toBe(9);
   });
 

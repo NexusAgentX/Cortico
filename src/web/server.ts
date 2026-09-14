@@ -85,10 +85,7 @@ import {
 export interface WebAppDebugDeps {
   /** WebApp 不修改返回的 session 消息数组。 */
   sessionMessages(): readonly ContextRecord[];
-  /**
-   * 当前生效的合成首轮对话(出线态注入、不落盘的那几条;关/空=空数组)。
-   * 时间线把它标注成合成块,让展示与实际请求体对得上。不挂=不标注。
-   */
+  /** 当前合成首轮请求内容；关闭或内容为空时返回空数组，不写入 session 记录。省略时不标注合成首轮。 */
   firstTurnMessages?(): ContextRecord[];
   onSessionAppend(cb: (msg: ContextRecord, index: number) => void): void;
   onSessionReset(cb: (messages: ContextRecord[]) => void): void;
@@ -125,10 +122,7 @@ export interface WorldInfo {
    * 连接不断、它持有的页面照常工作。
    */
   visible?: boolean;
-  /**
-   * 可见性已改、但当前 system 前缀还是按旧的烘出来的。
-   * 前缀段与工具同属缓存前缀;重载时机由操作者决定,每次重载丢一次缓存。
-   */
+  /** 当前系统前缀和工具声明尚未按新的可见性重载。 */
   prefixDrifted?: boolean;
   /** 人工撰写的环境提示词描述 */
   envPrompt: string;
@@ -282,10 +276,7 @@ export interface PromptDocument {
   revision: string;
   /** `envPrompt`=某 World 进前缀那份;`prefix`=顶层装配表 */
   role?: 'envPrompt' | 'prefix';
-  /**
-   * World 环境提示词此刻读的是哪份:`bot` = bot 目录下的覆盖文件,`module` = World 自带的
-   * 默认模板。保存永远写 bot 侧;其它模板没有这一项。
-   */
+  /** 当前模板来源：部署覆盖、bot 包覆盖或 World 默认。保存写入部署覆盖。 */
   origin?: EnvPromptOrigin;
   vars?: PromptVarView[];
 }
@@ -302,7 +293,7 @@ export interface WebAppPromptDeps {
   list(language: Language): PromptDocument[] | Promise<PromptDocument[]>;
   /** 回执按 `language`。`baseRevision` 过期时抛 `PromptRevisionConflict`,控制台据此回 409。 */
   write(key: string, content: string, baseRevision: string | undefined, language: Language): string;
-  /** 删掉 bot 侧覆盖文件,这份模板回到 World 自带的默认。只对 `origin` 为 `bot` 的模板有事可做。 */
+  /** 删除部署覆盖，回落到 bot 包覆盖或 World 默认。 */
   reset?(key: string, language: Language): string;
   /**
    * 整条前缀的分段视图,**现拼**——不需要活 session。
@@ -313,13 +304,7 @@ export interface WebAppPromptDeps {
   prefix?(): Promise<PrefixSegmentView[]>;
 }
 
-/**
- * 工具的归属。控制台按它分栏,不再靠前端一份写死的工具名单——那份名单每加一个
- * World 就过期一次。
- *  - `core`: 流程原语(tags 含 flow),schema 由 core 给、Persona承接
- *  - `core`:    Persona自有工具(记忆/文件一类)
- *  - `worlds`:      某个 World 的工具,`id`/`label` 指向那个 World
- */
+/** 工具归属：core 为流程原语，persona 为 Persona 工具，world 的 id/label 指向对应 World。 */
 export type ToolOwner =
   | { kind: 'core' }
   | { kind: 'persona' }
@@ -513,10 +498,7 @@ function strParam(v: unknown): string | undefined {
   return typeof v === 'string' && v !== '' ? v : undefined;
 }
 
-/**
- * 控制台展示口径:滤掉摄取刻落的原始归档,只留发车刻的投影。
- * 归档本身一条不动——这里只是不把同一件事在界面上摆两遍。
- */
+/** 展示时过滤 contextDelivery 为 archive-only 的记录，不修改存储。 */
 function dropArchiveOnly(events: readonly EventEnvelope[]): EventEnvelope[] {
   return events.filter((event) => event.contextDelivery !== 'archive-only');
 }
@@ -540,17 +522,9 @@ function parseQueryArgs(raw: unknown): { args: unknown[] } | { error: string } {
 const hasPort = (h: string): boolean => /:\d+$/.test(h);
 const barePort = (h: string): string => h.replace(/:\d+$/, '');
 
-/**
- * "这个请求是别的站点的页面发来的"吗?
- *
- * 控制台没有身份认证,同源判据是唯一的防线:浏览器发跨站请求必带 `Origin`,
- * 所以带着外站 Origin 的写请求一律拒。**没有 Origin 的请求照旧放行**——
- * 命令行、测试、脚本这些程序化客户端本来就不带这个头,拒它们等于换一种坏。
- *
- * 判据用 `Host` 头对照而不是写死回环:反向代理后面的部署照样成立。
- */
+/** 按 Host 校验 Origin；缺失 Origin 时放行，null、非法或主机不匹配时拒绝。 */
 function isForeignOrigin(origin: unknown, hostHeader: unknown): boolean {
-  if (typeof origin !== 'string' || origin === '') return false; // 非浏览器
+  if (typeof origin !== 'string' || origin === '') return false;
   if (origin === 'null') return true; // 沙箱 iframe / file:// 一类,不是本控制台
   let originHost: string;
   try {
@@ -654,14 +628,7 @@ function toConsoleStream(ws: WebSocket, log: Logger, heartbeatMs: number): Conso
     fireClose();
   });
 
-  /**
-   * 心跳。**半开 TCP 永远不发 `close`** ——拔网线、睡眠、NAT 超时都会留下一条
-   * 看着还活着的死连接,于是 `onClose` 不触发,那一页挂在上面等清理的定时器
-   * 就一直挂着。那正是这场重构要消灭的那类泄漏,不能在新通道上原样复发。
-   *
-   * 做法是 ws 标准的 ping/pong:每拍先看上一拍的 pong 回没回,没回就 terminate
-   * （terminate 会发 `close`,于是 `fireClose` 照常跑,那一页收得到通知）。
-   */
+  /** 上一轮 ping 未收到 pong 时终止连接，触发关闭清理。 */
   let alive = true;
   ws.on('pong', () => { alive = true; });
   const beat = setInterval(() => {
@@ -810,10 +777,7 @@ export class WebApp {
     };
   }
 
-  /**
-   * 关机 / 重启共用的回执:请求一直挂到仪式跑完(最长三十秒量级),逐步结果
-   * 原样发出去——"世界存上了没有"正是操作员按这颗按钮想看的东西。
-   */
+  /** 关机和重启请求等待编排完成，并返回各步骤结果。 */
   private async respondPowerAction(
     res: Response,
     language: Language,
@@ -980,13 +944,7 @@ export class WebApp {
     }
   }
 
-  /**
-   * 通用控制台页流式通道的新连接。
-   *
-   * 解析不成时**不静默 destroy**:连接已经握好手了,直接掐断前端只看得到
-   * "连接莫名其妙断了"。照 /ws/debug 未挂载的做法,先发一帧说明再按约定 code 关——
-   * `no-surface` 对应 HTTP 的 503(1013),其余对应 404(1008)。
-   */
+  /** 通道不可用时先发送错误帧，再关闭连接：no-surface 使用 1013，其余使用 1008。 */
   private handleConsolePageStream(ws: WebSocket, pageId: string, panelId: string, language: Language): void {
     // 先包再解析:解析要 await,期间对端可能已经发帧,适配器会替那一页攒着
     const socket = toConsoleStream(ws, this.deps.log, this.deps.streamHeartbeatMs ?? STREAM_HEARTBEAT_MS);
@@ -1135,8 +1093,7 @@ export class WebApp {
 
     // 固定端口被占时顺延;0 交给 OS 分配且只尝试一次。
     //
-    // 上限 5(原为 50):顺延一两个是"上次没退干净",顺延到第 20 个只可能是有人在
-    // 反复起实例——那种情况下继续顺延只会把两个实例都留在跑,而不是把问题露出来。
+    // 固定端口最多尝试 5 个候选端口。
     const maxAttempts = port === 0 ? 1 : 5;
     let server: Server | null = null;
     let lastErr: unknown;
@@ -1147,7 +1104,7 @@ export class WebApp {
         if (i > 0) {
           // 端口顺延记录 warn，便于发现预期端口被其他实例占用。
           this.deps.log.warn(
-            `端口 ${port} 被占用,改用 ${candidate}——如果没在跑第二个实例,说明上一次没退干净`,
+            `端口 ${port} 被占用，改用 ${candidate}。`,
           );
         }
         break;
@@ -1192,7 +1149,7 @@ export class WebApp {
     if (server) {
       await new Promise<void>((res) => {
         server.close(() => res());
-        server.closeAllConnections(); // 掐断keep-alive,保证close回调触发
+        server.closeAllConnections();
       });
     }
   }
@@ -1317,7 +1274,6 @@ export class WebApp {
       res.json({ id, messages, estTokens: estimateMessagesTokens(messages) });
     }));
 
-    // 存储部分清单:落盘/内存各部分的规模与说明(清除按钮的数据源)
     app.get('/api/storage', wrap((req, res) => {
       const parts = (this.deps.storage?.(this.languageOf(req)) ?? []).map((p) => {
         let stat = '';
@@ -1383,13 +1339,7 @@ export class WebApp {
       res.json({ ok: true, paused: false, result: pick(this.languageOf(req), SERVER_TEXT).resumed });
     }));
 
-    /**
-     * 规范关机。**这条请求会一直挂到仪式跑完**(最长三十秒量级):关机的逐步结果
-     * 正是操作员按这颗按钮想看的东西 —— 尤其"世界存上了没有"。立刻回 202 再让人
-     * 去日志里翻,等于把唯一的回执藏起来。
-     *
-     * 编排、每步的钟、退不退进程全在装配层;这一层只转交并把账原样发出去。
-     */
+    /** 将关机请求转交装配层，等待完成后返回各步骤结果。 */
     app.post('/api/run/shutdown', (req: Request, res: Response) => {
       void this.respondPowerAction(
         res, this.languageOf(req), this.deps.run?.shutdown, '关机控制不可用', '收到关机请求(人工操作)', '进程即将退出',
@@ -1576,7 +1526,7 @@ export class WebApp {
       if (!key) { res.status(400).json({ error: '缺少 key' }); return; }
       try {
         const result = src.reset(key, this.languageOf(req));
-        this.deps.log.warn('固定提示词已恢复 World 默认(人工)', { key });
+        this.deps.log.warn('固定提示词部署覆盖已移除', { key });
         res.json({ ok: true, result });
       } catch (err) {
         res.status(400).json({ error: String(err) });
@@ -1713,7 +1663,6 @@ export class WebApp {
       res.json({ ...src.aggregate(opts), ledger: src.status?.() });
     }));
 
-    // 新旋钮只在所属配置组的 schema 中声明。
     app.get('/api/config', wrap((req, res) => {
       const src = this.deps.config;
       if (!src) { res.status(503).json({ error: '配置项声明不可用' }); return; }

@@ -8,7 +8,7 @@ import { Cormini, CORMINI_ORIENTATION_FILE } from '../../bots/cormini/persona/pe
 import type { World } from '../../src/core/types.ts';
 import { makeFakeHarnessApi } from '../core/helpers.ts';
 
-describe('Cormini 实时参数化', () => {
+describe('CortiV 实时参数化', () => {
   let dir: string;
   beforeEach(() => (dir = mkdtempSync(join(tmpdir(), 'cormini-rt-'))));
   afterEach(() => {

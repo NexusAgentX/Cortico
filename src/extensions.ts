@@ -1,26 +1,10 @@
 /**
- * 扩展:装在 `extensions/` 下的 npm 包,package.json 的 `cortico` 块说明它是哪一类
- * (`world` World、`provider` 端点或 `bot` 代码包),默认导出对应的定义。
- *
- * `extensions/` 是部署产物(gitignored),有自己的 package.json 与 node_modules,经
- * `corepack pnpm add --ignore-workspace` 增删。启动时按 package.json 的 dependencies
- * 逐个 import;加载失败的包只影响自己那一格。新装或卸掉的包要重启进程才生效:
- * ESM 模块缓存不支持运行中换代码。
- *
- * 三类扩展走同一条装载线,只在三处按 `kind` 分叉:默认导出的形状校验、id 命名空间
- * (World 与 provider 各一份,互不相干)、控制台页前缀(`world:` / `llm:` / `persona:`)。
- * manifest 解析不过的包一律不 import——是什么类由包自己声明,框架不靠鸭子类型猜。
- *
- * bot 包与另两类的差别在于**一个进程只跑一个 bot**:`deployment.json` 的 `bot` 字段指向
- * 哪个包,启动器就只 import 那一个({@link locateBotPackage} / {@link importBotDefinition}),
- * 装了但没被引用的 bot 包在清单里记 `idle`,连入口都不碰——bot 包的模块级代码会读自己的
- * 文件、注册自己的状态。仓内 `bots/<名>/` 与扩展是同一种东西的两条轨,仓内赢。
- *
- * 框架从不往扩展包目录写:pnpm 把包文件硬链接进 store,透过链接写等于改坏 store 里那份。
- * 提示词模板的写侧规则在 `src/bot.ts` 的 `derivePrompts`。
- *
- * 浏览器端产物(`cortico.consoleClient`)的 URL 由服务端分配,这里只把包内相对路径
- * 解析成绝对路径并确认文件在;扩展永远给不出路径。
+ * 扩展是 extensions/ 下的 npm 包，manifest.kind 为 world、provider 或 bot。
+ * 启动时读取直接依赖并分别校验 manifest、默认导出、id 命名空间与控制台页前缀。
+ * 单包失败不阻止其他包加载；安装或卸载后需重启进程，ESM 模块不会在运行时替换。
+ * 仅导入 deployment.json 选定的 bot；其他 bot 包记为 idle，仓内同名 bot 优先。
+ * 扩展包目录只读，避免修改 pnpm store 的硬链接文件；模板写入规则见 src/bot.ts。
+ * 扩展提供包内相对产物路径，服务端校验后分配 URL，只提供已声明文件。
  */
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -65,10 +49,7 @@ export interface ExtensionRecord {
   api?: number;
   /** 包声明了浏览器端产物(`cortico.consoleClient`)。 */
   consoleClient: boolean;
-  /**
-   * 浏览器端产物的状态:`none` = 没声明;`served` = 文件在、经 `/assets/extensions/` 发出;
-   * `missing` = 声明了但文件不在(没 build,或路径写错)。
-   */
+  /** 浏览器产物状态：none=未声明，served=文件可提供，missing=声明的文件不存在。 */
   console?: 'none' | 'served' | 'missing';
   loaded: boolean;
   /** bot 包装了但这份部署没引用它:没有 import,不算失败。 */
@@ -105,7 +86,7 @@ function readPackageJson(file: string): ExtensionPackageJson | null {
   return JSON.parse(readFileSync(file, 'utf8')) as ExtensionPackageJson;
 }
 
-/** extensions/package.json 的直接依赖。目录不存在 = 没装过任何扩展。 */
+/** 读取 extensions/package.json 的直接依赖；目录不存在时返回空列表。 */
 export function readInstalled(dir: string): Array<{ name: string; spec: string }> {
   const pkg = readPackageJson(join(dir, 'package.json'));
   return Object.entries(pkg?.dependencies ?? {}).map(([name, spec]) => ({ name, spec }));
@@ -166,19 +147,14 @@ export function extensionShapeMismatch(kind: ExtensionKind): string {
   return `声明是 ${kind} 类,但默认导出缺 ${SHAPE_NEEDS[kind]}。`;
 }
 
-/**
- * 包内相对路径 → 绝对路径;越出包目录或文件不在都是 null。
- * 两者对扩展作者是同一件事:说好的产物没在那儿。
- */
+/** 解析包内相对路径；超出包目录或文件不存在时返回 null。 */
 export function extensionPackageFile(pkgDir: string, relative: string): string | null {
   const abs = resolve(pkgDir, relative);
   if (!abs.startsWith(resolve(pkgDir) + sep)) return null;
   return existsSync(abs) ? abs : null;
 }
 
-// ---------------------------------------------------------------------------
 // bot 包:定位与 import(启动器在装载其它扩展之前做)
-// ---------------------------------------------------------------------------
 
 export type BotPackageLocation =
   | { source: 'tree'; pkgDir: string; entry: string }
@@ -229,12 +205,8 @@ export async function importBotDefinition(
 }
 
 /**
- * 加载 `extensions/` 下的全部包。`reserved` / `reservedProviders` 是内建的 World id 与
- * provider id:与之同名的扩展不装,两个扩展同 id 时先到的赢。两个命名空间互不相干,
- * 一个 World 扩展叫 `grok` 不受内建 provider 影响。
- *
- * `activeBot` 是启动器已经 import 过的 bot 包(见 {@link importBotDefinition}):同名的那条
- * 记录直接记 loaded,其余 bot 包记 idle,这里一个 bot 包都不 import。
+ * 加载扩展 World 与 provider；id 与内建冲突时拒绝，扩展间重名时保留先加载项。
+ * 两个 kind 使用独立命名空间。activeBot 已由启动器导入，此处只标记 loaded，其他 bot 记 idle。
  */
 export async function loadExtensions(
   repoRoot: string,
@@ -277,7 +249,7 @@ export async function loadExtensions(
     record.api = api;
     record.consoleClient = consoleClient !== undefined;
 
-    // 面板产物在不在不影响本体加载:缺了只是控制台少那一块,包照常装上。
+    // 缺少面板产物不阻止定义加载。
     const jsFile = consoleClient === undefined ? null : extensionPackageFile(pkgDir, consoleClient);
     record.console = consoleClient === undefined ? 'none' : jsFile ? 'served' : 'missing';
     if (consoleClient !== undefined && !jsFile) {
@@ -357,9 +329,7 @@ export async function loadExtensions(
   return { dir, records, worlds, providers, consoleAssets, ...(bot ? { bot } : {}) };
 }
 
-// ---------------------------------------------------------------------------
 // 装卸与搜索(控制台那一面)
-// ---------------------------------------------------------------------------
 
 /** npm 包名。与 npm 自己的校验同形;不含任何 shell 元字符。 */
 const PACKAGE_NAME = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
@@ -373,7 +343,7 @@ const LOCAL_PATH = /^[A-Za-z0-9_.\-/:\\ ~]{1,512}$/;
 
 export type PackageManagerRunner = (args: string[], cwd: string) => Promise<{ code: number; output: string }>;
 
-/** `corepack pnpm <args>`。Windows 上 corepack 是 .cmd 垫片,只能经 shell 起,参数逐个加引号。 */
+/** Windows 通过 shell 调用 corepack 的 .cmd 文件，参数逐个加引号。 */
 export const runPnpm: PackageManagerRunner = (args, cwd) => new Promise((done, fail) => {
   const viaShell = process.platform === 'win32';
   const argv = ['pnpm', ...args].map((a) => (viaShell ? `"${a}"` : a));
@@ -411,10 +381,7 @@ export interface ExtensionManagerOptions {
   fetchJson?: (url: string) => Promise<unknown>;
 }
 
-/**
- * 控制台的扩展面:当前磁盘状态对照启动时的加载结果,npm 搜索,装卸。
- * 装卸串行:两个 pnpm 同时写一个目录会互相破坏 lockfile。
- */
+/** 扩展管理接口；安装与卸载串行执行，避免并发修改同一依赖目录。 */
 export class ExtensionManager {
   private readonly dir: string;
   private readonly run: PackageManagerRunner;
@@ -442,7 +409,7 @@ export class ExtensionManager {
     return this.booted.consoleAssets;
   }
 
-  /** 启动时的加载结果 × 此刻的 package.json:装了没加载的待重启,卸了还在跑的也待重启。 */
+  /** 将启动时的加载结果与当前安装状态比较；不一致时标记待重启。 */
   list(): { dir: string; extensions: ExtensionInfo[] } {
     const onDisk = new Map(readInstalled(this.dir).map((p) => [p.name, p.spec]));
     const out: ExtensionInfo[] = [];
@@ -454,8 +421,7 @@ export class ExtensionManager {
         : r.loaded ? 'loaded' : r.idle ? 'idle' : 'failed';
       out.push({ ...r, state });
     }
-    // 启动后新装的包:manifest 读得出类别与契约版本,面板状态读不出——产物在不在要等
-    // 这一进程重启后真加载过才算数,这里只说它声明了没有。
+    // 新装包仅报告 manifest 声明，浏览器产物状态在下一次加载时确定。
     for (const [name, spec] of onDisk) {
       const pkg = readPackageJson(join(this.dir, 'node_modules', ...name.split('/'), 'package.json'));
       const parsed = pkg ? parseExtensionManifest(pkg) : null;
@@ -519,7 +485,7 @@ export class ExtensionManager {
     if (!PACKAGE_NAME.test(name)) throw new Error(`不是合法的包名: ${name}`);
     if (!readInstalled(this.dir).some((p) => p.name === name)) throw new Error(`没有安装这个包: ${name}`);
     const output = await this.exclusive(['remove', name, '--ignore-workspace']);
-    return `已卸载 ${name}。它在本进程里仍在运行,重启后消失。\n${output}`;
+    return `已卸载 ${name}。重启进程后生效。\n${output}`;
   }
 
   private installSpec(target: ExtensionInstallTarget): string {

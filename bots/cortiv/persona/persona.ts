@@ -14,7 +14,7 @@ import { hasRole, textOf } from 'cortico/protocol/open-responses/context-helpers
  *  - 主动取档 `recall_viewer`:按 id 交回整份档案;按名字对本场见过的人与档案首行。
  *    唤起只带首行、弹幕正文不带 id,这是她拿到整份印象的路。
  *  - 前缀卫生:前缀树里 viewers/ 折叠为计数(handoffs/ 的折叠与交接笔记本身在 Cormini);list_files 指定目录时全量。
- *  - 写入留痕:她每写一份笔记提交一次 workspace 的 git 历史,署她自己的名;
+ *  - 笔记写入后尝试提交工作区 Git 历史；提交失败时文件写入仍保留。
  *    `git_log`/`git_show` 让她自己读得到这份历史,覆写缩水时回执点名丢的小节。
  *  - 并行梦:交接立即返回(直播不断流),交接前完整快照头部优先渲染交后台
  *    dream fork 整理(档案合并/场次蒸馏);单实例排队,同档模型;浮现非 (nothing)
@@ -27,7 +27,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type {
-  
+
   CognitionContext,
   CognitionRequest,
   CognitionResult,
@@ -63,7 +63,7 @@ export const COGNITION = 'cognition';
  * 后台构思的轮数预算：硬上限 8 轮，软上限 6 轮。
  */
 const COGNITION_ROUNDS = { soft: 6, hard: 8 };
-/** 整体超时预算为 15 分钟；工具循环收线与硬拒使用同一截止时刻。 */
+/** 整体超时预算为 15 分钟；工具循环与请求超时使用同一截止时刻。 */
 const COGNITION_TIMEOUT_MS = 15 * 60_000;
 /**
  * 后台构思成品在她工作区里的落脚处。蓝图设计没有世界性(跨存档通用),
@@ -127,7 +127,7 @@ function clip(text: string, max: number): string {
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
-/** git 的 %aI(提交机器的本地时区,即北京)→「08-23 20:21」;认不出形状就原样交回 */
+/** 显示输入时间的月日和时分，不转换时区；无法识别时返回原文。 */
 function shortStamp(iso: string): string {
   const m = /^\d{4}-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso);
   return m ? `${m[1]}-${m[2]} ${m[3]}:${m[4]}` : iso;
@@ -230,10 +230,7 @@ export interface CortiVOptions extends CorminiOptions {
 }
 
 export class CortiV extends Cormini {
-  /**
-   * `<来源>/<键>` → 上一次唤起摘要的指纹。热重启续用;交接与新 session 清空——
-   * 唤起是说给当前上下文听的,交接把上文清空后那一行也没了,交接笔记又只带上一窗。
-   */
+  /** `<来源>/<键>` 对应上次唤起摘要的指纹；热重启续用，交接与新 session 清空。 */
   private readonly recalledSummary = new Map<string, string>();
   /** `<来源>/<键>` → 本场最近一次见到的昵称;recall_viewer 按名字找人用。新 session 清空。 */
   private readonly viewerNames = new Map<string, string>();
@@ -250,7 +247,7 @@ export class CortiV extends Cormini {
   private dreamChain: Promise<void> = Promise.resolve();
   /** `<工作区相对路径>` → 本场每一次写入的时刻。只用来报频次(见 noteWrite) */
   private readonly writeStamps = new Map<string, number[]>();
-  /** 上一次梦整理连重试都没成:下一次交接的告知里要说清"上一段没被整理" */
+  /** 上次梦整理重试后仍失败；在下一次交接中告知。 */
   private dreamUnfinished = false;
   /** 工作区提交串行链:git 索引不容并发,主线程与梦共用这一条 */
   private commitChain: Promise<void> = Promise.resolve();
@@ -292,13 +289,7 @@ export class CortiV extends Cormini {
     }
   }
 
-  /**
-   * 认知外包受理:World 请托她在后台想一件事(蓝图设计是第一个用户)。
-   *
-   * 主权划分照 types.ts 那份:World 只给 brief 和它自己的工具,头/档/预算/开关
-   * 全在这里。开关关着 = World host 上根本没有这个句柄(它据此走降级路径,
-   * 而不是拿到一句 error)。
-   */
+  /** World 提供 brief 与工具；Persona 提供上下文、工作区和执行预算。开关关闭时 World 的 cognition 句柄不可用。 */
   readonly cognition: PersonaCognition = {
     enabled: () => this.cognitionEnabled(),
     request: (req, ctx) => this.acceptCognition(req, ctx),
@@ -349,14 +340,7 @@ export class CortiV extends Cormini {
     ];
   }
 
-  /**
-   * 受理一次认知请求。四条路各有各的返回,World 会把它们如实回执给她:
-   *  - 还没接上 core / 内部异常 → `{error}`(说人话的原因);
-   *  - 上一件还在想 → `{error}`,排队本身不做(她只有一个脑子,排队会让"想"
-   *    与"回执"隔着几分钟,不如当场说清);
-   *  - 15 分钟没交稿 → 先让工具循环收线,再 `{error}` 认超时;
-   *  - 正常 → `{text}` = fork 的最后一段话(撞满 8 轮时末尾另附一句说明)。
-   */
+  /** 同时只受理一个构思请求，不排队；失败或超时返回 error，成功返回 fork 最终文本。 */
   private async acceptCognition(req: CognitionRequest, ctx: CognitionContext): Promise<CognitionResult> {
     const core = this.core;
     if (!core) return { error: '后台思考现在接不上(Persona还没挂上 core),这次请托没受理' };
@@ -436,11 +420,7 @@ export class CortiV extends Cormini {
     ].join('\n');
   }
 
-  /**
-   * 基类文件工具之上,写类工具(write / edit / append / delete / save_blob)每次落盘都提交一次,
-   * 署她自己的名。没有它,笔记怎么变坏的只能靠 mtime 拼。再加读历史的两只(historyTools)
-   * 和按 id / 名字取档的那一只(recallTool)。
-   */
+  /** 写类工具成功后尝试提交工作区；Git 失败不撤销文件写入。另提供版本历史与观众档案读取工具。 */
   protected override tools(): ToolDef[] {
     return [
       ...super.tools().map((t) => (
@@ -455,7 +435,7 @@ export class CortiV extends Cormini {
     ];
   }
 
-  /** 落盘成功(回执以 `ok` 起头)就提交一次;失败回执原样交回,不提交。 */
+  /** 成功回执触发一次提交尝试；失败回执不提交。 */
   private committed(base: ToolDef, kind: 'edit' | 'delete' | 'save' | 'append', ok: string): ToolDef {
     return {
       ...base,
@@ -861,7 +841,7 @@ export class CortiV extends Cormini {
     }
     const summary = content.split('\n').map((l) => l.trim()).find(Boolean);
     if (!summary) return false;
-    // 同一句摘要只说一次(跨交接):档案没变,重念就是逐字重复
+    // 同一上下文窗口内不重复注入未变的摘要。
     const digest = createHash('sha256').update(summary).digest('base64url');
     if (this.recalledSummary.get(seenKey) === digest) return false;
     const line = `[memory] 你记得${e.source}的${key}:${summary}`;
@@ -884,8 +864,7 @@ export class CortiV extends Cormini {
   ): void {
     if ((!qualified && hits < ENROLL_MIN_HITS) || this.enrollNudged.has(seenKey)) return;
     if ((this.enrollWindows.get(seenKey) ?? 0) >= ENROLL_NUDGE_WINDOWS) return;
-    // 只劝建"键本身就是个干净文件名"的档:需要消毒才落得下来的键(路径片段、
-    // 空白、通配符)一律不劝。唤起已有档案不受此限——那份文件既然在,就认。
+    // 新档案的键须无需文件名归一化；读取已有档案不受此限制。
     if (fileSeg(key) !== key) return;
     const name = typeof e.meta?.uname === 'string' ? e.meta.uname.trim() : '';
     if (!name) return;
@@ -994,19 +973,15 @@ export class CortiV extends Cormini {
         message('system', this.dreamPrompt()),
         message('user', renderDreamTranscript(snapshot)),
       ],
-      // 撞顶时交回来的是半截活,不是结论——她读到的那一行必须说清这件事
       capNote: `(这次后台整理没做完:${DREAM_ROUNDS} 轮用满被收线了,已经落盘的部分有效,剩下的没整理。)`,
       wrapUpHint: '收线:该落盘的现在写完,下一轮直接给结论,不要再调工具。',
     });
-    // 「最近在说的事」必须回到主 session:她的台词刚被占位化,这是接着说下去的
-    // 唯一线索。走文件而不是 fork 的返回值——撞顶时返回的是半截活,而这一份
-    // 第一轮就落盘了,照样送得到。
+    // 从本次更新的 recent 文件读取摘要，独立于 fork 最终文本。
     const recent = this.readRecent();
     if (recent && recent !== before) {
       core.injectInternal(`[memory] 最近在说的事:${clip(recent, 900)}`, 'dream');
     }
     const text = surfaced.trim();
-    // 其余的梦大多安静落盘;只有会丢的东西才另外浮现一次。
     if (text && text !== '(nothing)') {
       core.injectInternal(`[memory] 后台整理浮现:${clip(text, 600)}`, 'dream');
     }

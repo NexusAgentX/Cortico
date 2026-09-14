@@ -1,8 +1,4 @@
-/**
- * 最小完整的 Persona。Core 只通知时机、自己不写一个字:前缀的每个字来自 PREFIX.md,开场白经
- * 注入原语进上下文。Memory 是 memoryDir 下的 MEMORY.md(整份进前缀)与 blobs/(二进制),
- * 写 Memory 只经 memory_write;World 的工具由 session 声明收进来,Persona 不绑它们的实现。
- */
+/** Persona 示例：PREFIX.md 渲染前缀，MEMORY.md 全文与 World 环境段进入前缀；memory_write 追加笔记，blobs/ 保存附件，session 声明收集 World 工具。 */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
@@ -69,7 +65,6 @@ export class ExamplePersona implements Persona {
     ];
   }
 
-  /** session 开场:Core 只报时机,要说的话 Persona 自己注入。 */
   onOpening({ reason }: { reason: SessionOpeningReason }): void {
     this.core?.injectInternal(`[session ${reason}] 上面是你的记忆与环境。按你的判断行动,或直接结束本轮。`);
   }
@@ -94,7 +89,7 @@ export class ExamplePersona implements Persona {
   }
 }
 
-/** 往 MEMORY.md 追加一行。哪些值得记是 bot 的判断;工具只搬字。 */
+/** 向 MEMORY.md 追加一行。 */
 export function memoryWriteTool(memoryDir: string): ToolDef {
   return {
     name: 'memory_write',

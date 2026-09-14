@@ -34,8 +34,7 @@ function enableSheet(ctx: ConsolePanelContext, st: QQGateState): HTMLElement {
   const card = ui.sheet({
     title: '接入开关',
     en: 'enabled',
-    desc: '开/关都会重启进程(回来是暂停态,去「控制台 › 运行」点"继续"才连真 QQ)。'
-      + '没有运行时动态载入,这是唯一生效路径。',
+    desc: '开启或关闭 QQ 接入会重启进程。',
   });
 
   const status = ui.rowbar();
@@ -51,7 +50,7 @@ function enableSheet(ctx: ConsolePanelContext, st: QQGateState): HTMLElement {
   );
   card.body.appendChild(status);
   if (st.enabled && !st.connected) {
-    card.body.appendChild(ui.msgline('NapCat 未就绪 / 未登录 / 地址不对。', true));
+    card.body.appendChild(ui.msgline('NapCat 未连接。', true));
   }
   const actions = ui.actions();
   actions.append(ui.h('span', 'grow'), btn);
@@ -68,7 +67,7 @@ async function toggleEnabled(
   const verb = next ? '开启' : '关闭';
   const ok = await ctx.ui.confirm({
     title: `${verb} QQ 接入?`,
-    body: '这会重启进程(回来是暂停态,需去控制台点"继续"才上线)。',
+    body: '此操作会重启进程。',
     danger: true,
   });
   if (!ok) return;
@@ -94,10 +93,10 @@ function connSheet(ctx: ConsolePanelContext, st: QQGateState): HTMLElement {
     ? '未启用'
     : st.connected
       ? '已连接'
-      : '未连接(NapCat 未就绪 / 未登录 / 地址错)';
+      : '未连接';
   const self = st.selfId != null
     ? `${st.selfId}${st.nickname ? ` · ${st.nickname}` : ''}`
-    : '—(连上后自动发现,无需填写)';
+    : '—';
   const groups = st.groups.length
     ? st.groups
       .map((g) => `${g.name}(${g.id})${g.card ? ` · 我的群昵称「${g.card}」` : ''}`)
@@ -126,8 +125,7 @@ function napcatSheet(ctx: ConsolePanelContext, st: QQGateState): HTMLElement {
   const card = ui.sheet({
     title: 'NapCat 连接',
     en: '正向 WS + token',
-    desc: 'NapCat 是外部协议端:安装后扫码登录一个 QQ 并保持运行,控制台仅连接它的正向 WS。'
-      + '改这里会重启生效。QQ 号由 NapCat 扫码登录,这里不需要也不能填密码。',
+    desc: 'NapCat 需保持运行并登录 QQ，通过正向 WebSocket 连接。保存连接配置后重启进程。',
   });
 
   const ws = ui.input({ value: st.wsUrl || '', placeholder: 'ws://127.0.0.1:3001' });
@@ -171,7 +169,7 @@ async function saveConnection(
   msg.classList.remove('bad');
   const ok = await ctx.ui.confirm({
     title: '保存 NapCat 连接并重启?',
-    body: '进程会重启(回来是暂停态)。',
+    body: '保存连接配置后重启进程。',
   });
   if (!ok) return;
   save.disabled = true;
@@ -202,7 +200,7 @@ function restartWatch(ctx: ConsolePanelContext, verb: string): void {
   const view = ctx.root.ownerDocument?.defaultView ?? null;
   let notice = ui.drawer(
     `${verb}中`,
-    `正在重启……\n进程回来后这一页会自动刷新。\n回来是暂停态,去「控制台 › 运行」点"继续"才上线。`,
+    '正在重启，完成后自动刷新页面。',
   );
 
   let ticks = 0;

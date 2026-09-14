@@ -1,23 +1,12 @@
 /**
- * 蓝图格式:Palette 方案的解析与严格校验(纯函数,不碰 bot / 不碰磁盘)。
- *
- * 格式取自 benchmark 定稿(`PALETTE_SCHEME.md`):
- * `{size_xyz:[X,Y,Z], axis_order:"YZX", palette:[完整 Java block-state 串],
- *   layers[y][z][x] 整数索引满矩阵}`。y=0 是最低层,X 西→东,Z 北→南,
- * **空气也必须显式写入**——满矩阵没有"省略即空气"这条捷径,漏一格就是漏一格,
- * 校验会指着那一格说话。
- *
- * 校验错误一律带**精确路径**(`layers[2][3]` / `palette[5]`),因为这份错误要原样
- * 回给生成侧自纠;"格式不对"这种话对她毫无用处。
- *
- * 本文件只管协议与几何,不认识 Minecraft:哪个方块存在、哪个状态放得出来,
- * 归 `blueprint-registry.ts`;漏属性怎么补、参差矩阵怎么补齐,归 `blueprint-repair.ts`。
+ * Palette 蓝图格式的解析与校验。layers[y][z][x] 为 Palette 索引满矩阵，y 自下向上、x 自西向东、z 自北向南。
+ * Minecraft 状态校验由 blueprint-registry.ts 负责；格式修复由 blueprint-repair.ts 负责。
  */
 
 export type SizeXYZ = [x: number, y: number, z: number];
 export type PositionXYZ = [x: number, y: number, z: number];
 
-/** 工地策略：新建会清场；改造先探测，冲突须显式确认。 */
+/** 新建与改造均须确认冲突后清场；改造首次调用只调查现场。 */
 type BlueprintSiteMode = 'new' | 'retrofit';
 
 export interface ParsedBlockState {
@@ -41,10 +30,7 @@ const KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 /** 固定轴序;矩阵按 高度 → 南北 → 东西 三层数组读 */
 export const AXIS_ORDER = 'YZX' as const;
 
-/**
- * 校验失败:`path` 是矩阵里的精确位置,原样进回执让生成侧照着改。
- * `message` 已经是中文人话,`Error.message` 是 `路径: 人话`。
- */
+/** 校验错误包含精确路径和中文说明。 */
 export class BlueprintValidationError extends Error {
   constructor(
     message: string,
@@ -64,7 +50,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** 数组且没有空洞(`[1,,3]` 这种稀疏数组按缺格处理,不当 undefined 放行) */
+/** 稀疏数组的空洞按缺格处理。 */
 function expectDenseArray(value: unknown, path: string): unknown[] {
   if (!Array.isArray(value)) fail(path, '这里应该是一个数组');
   for (let index = 0; index < value.length; index++) {
@@ -99,7 +85,7 @@ export function parseBlockId(value: unknown, path = 'block id'): string {
   return id;
 }
 
-/** 完整状态串 → `{id, properties}`;方括号语法本身的毛病在这里报 */
+/** 解析完整方块状态串。 */
 export function parseBlockState(value: unknown, path = 'block state'): ParsedBlockState {
   const state = expectString(value, path);
   const bracket = state.indexOf('[');
@@ -140,7 +126,7 @@ export function parseBlockState(value: unknown, path = 'block state'): ParsedBlo
   return { id, properties };
 }
 
-/** `{id, properties}` → 完整状态串;属性按名排序,同一状态永远得到同一串 */
+/** 按属性名排序序列化状态串。 */
 export function formatBlockState(state: ParsedBlockState): string {
   const id = parseBlockId(state.id);
   const entries = Object.entries(state.properties)
@@ -244,10 +230,7 @@ export interface NormalizeOptions {
   expectedSize?: SizeXYZ;
 }
 
-/**
- * 提交 → 规范化蓝图。默认按 palette 格式读(有 `palette` 字段);
- * 没有 palette 字段时按逐格完整状态串读,方便测试与内部构造直接喂矩阵。
- */
+/** 有 palette 时解析索引矩阵；无 palette 时解析逐格状态串。 */
 export function normalizeBlueprint(
   value: unknown,
   options: NormalizeOptions = {},
@@ -270,7 +253,6 @@ export function normalizeBlueprint(
   }
 
   if (value.axis_order !== undefined) {
-    // 严格口径要求一字不差;大小写不一致由宽容层统一(那是它的活)
     const axis = expectString(value.axis_order, 'axis_order');
     if (axis !== AXIS_ORDER) {
       fail('axis_order', `轴序固定写 ${AXIS_ORDER},给的是 ${JSON.stringify(axis)}`);
@@ -321,7 +303,7 @@ export function tryNormalizeBlueprint(
   }
 }
 
-/** 信封字段:键与人话名字。归 runtime 用来做 {realm,key} 缓存,几何一侧不碰。 */
+/** 运行时使用的蓝图键和显示名。 */
 export interface BlueprintLabel {
   key: string;
   name: string | null;
@@ -356,14 +338,8 @@ function isCardinal(value: string): value is Cardinal {
 }
 
 /**
- * 一格在多部件方块里的身份。
- *
- * 判据取自 registry 的属性值域,不维护方块名清单:
- * `half=upper/lower` 只有门与高草这类两格高的方块有(楼梯的 half 是 top/bottom,
- * 值域不同不会撞);`part=head/foot` 在 1.20.6 只有床有。
- *
- * 从部件不单独出步——原版放主部件时从部件自己会长出来。`mainOffset` 是从这一格
- * 走到主部件那一格的位移。
+ * 按注册表属性识别多部件方块：half=upper/lower 或 part=head/foot。
+ * 从部件不单独生成步骤，mainOffset 指向对应主部件。
  */
 type MultiPartRole =
   | { role: 'single' }
@@ -482,10 +458,7 @@ interface BlueprintLayerMap {
 
 const LEGEND_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-/**
- * 逐层字符图。给 dryRun 与回读回执用——她读一张图比读一堆坐标快。
- * 状态多过 62 种时余下的一律画 `?`,图例里也不列(与其编号不如说不清)。
- */
+/** 供 dryRun 与核验回执使用的逐层字符图；超过 62 种的状态显示为 ?，不进入图例。 */
 export function renderLayerMap(blueprint: NormalizedBlueprint): BlueprintLayerMap {
   const counts = new Map<string, number>();
   forEachCell(blueprint, (_x, _y, _z, state) => {

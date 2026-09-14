@@ -1,15 +1,7 @@
 // @ts-check
 /**
- * 操作员那一层的启动器:选部署、把依赖与控制台产物补齐、起进程、听重启。
- *
- * 它是**纯 JS 零依赖**,`node_modules` 还不存在时也跑得起来——第一步就是把依赖装上,
- * 所以自己不能有依赖。`start.bat` 与 `start.sh` 只是两行壳,逻辑一份都不许留在那边。
- *
- * 与 `pnpm start <bot>` 的分工:那条是原语,服务器上交给 systemd 就够了;这一层管的是
- * 菜单、装依赖、开浏览器、按重启键之后把进程拉回来。
- *
- * **崩溃不自动重启。** 只有子进程明说要重启才重起。进程自己死掉是需要人看一眼的事,
- * 悄悄拉回来只会让同一个故障在日志里刷屏,还盖掉第一现场。
+ * 启动前准备依赖与控制台产物，选择部署并监管 src/launcher.ts 子进程。
+ * 此入口需要在 node_modules 不存在时运行，不得依赖第三方包。
  */
 import { spawnSync, fork } from 'node:child_process';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
@@ -20,26 +12,18 @@ import { fileURLToPath } from 'node:url';
 /** 仓库根:本文件在 `<根>/bin/` 下。 */
 export const REPO_ROOT = resolve(fileURLToPath(new URL('../', import.meta.url)));
 
-/** 子进程说自己想重启用的 IPC 消息;与 src/boot.ts 的 `RESTART_MESSAGE` 是同一个字面量。 */
+/** 与 src/boot.ts 的 RESTART_MESSAGE 保持一致。 */
 export const RESTART_MESSAGE = 'cortico:restart';
-/** 子进程报出自己的 data 目录用的 IPC 消息,父进程靠它找兜底的标志文件。 */
+/** 子进程上报 data 目录；与 src/boot.ts 的 READY_MESSAGE 保持一致。 */
 export const READY_MESSAGE = 'cortico:ready';
 /** 重启标志文件名;与 src/boot.ts 的 `RESTART_FLAG_FILE` 是同一个字面量。 */
 export const RESTART_FLAG_FILE = '.restart-request';
 
 const MIN_NODE_MAJOR = 22;
 
-// ---------------------------------------------------------------------------
-// 纯判断(可测,不碰进程)
-// ---------------------------------------------------------------------------
-
 /**
- * 这次子进程退出之后要不要再起一遍。
- *
- * 只认「子进程明说要重启」这一件事,两条证据任一成立即可:IPC 消息,或它落在 data 目录里
- * 的标志文件。文件那条是给「消息发出前就被硬杀」兜底的——请求重启的第一步就是落盘。
- *
- * 崩溃、非零退出、被信号打死,一律不重起。
+ * 收到重启 IPC 消息或检测到重启标志文件时重新启动；其他退出不自动重启。
+ * 标志文件用于 IPC 通知中断时保留请求。
  *
  * @param {{ askedRestart: boolean, dataDir: string | null, exists?: (path: string) => boolean }} state
  * @returns {boolean}
@@ -63,9 +47,7 @@ export function parseArgs(argv) {
 }
 
 /**
- * 名字、清单、这是不是个交互终端 → 到底启动哪一个。
- *
- * `{ kind: 'ask' }` 表示要弹菜单;非交互时不弹,把可选项写进错误里,让人在命令行上指定。
+ * 未指定部署且有多个可选项时,交互终端返回 ask,非交互终端返回错误与可选项。
  *
  * @param {{ bot: string | null, available: readonly string[], interactive: boolean }} input
  * @returns {{ kind: 'run', bot: string } | { kind: 'ask' } | { kind: 'error', message: string }}
@@ -73,11 +55,11 @@ export function parseArgs(argv) {
 export function chooseBot(input) {
   const { bot, available, interactive } = input;
   if (available.length === 0) {
-    return { kind: 'error', message: '部署根下没有可启动的 bot。一份部署 = 一个含 deployment.json 的目录。' };
+    return { kind: 'error', message: '部署根下没有含 deployment.json 的部署目录。' };
   }
   if (bot) {
     if (available.includes(bot)) return { kind: 'run', bot };
-    return { kind: 'error', message: `没有这个 bot: ${bot}。可选:${available.join(' / ')}` };
+    return { kind: 'error', message: `没有这个部署: ${bot}。可选:${available.join(' / ')}` };
   }
   if (available.length === 1) return { kind: 'run', bot: available[0] };
   if (interactive) return { kind: 'ask' };
@@ -88,12 +70,6 @@ export function chooseBot(input) {
 }
 
 /**
- * 用哪个命令调 pnpm。corepack 优先(版本由 package.json 的 packageManager 钉死,
- * 用户不必自己先装);没有 corepack 就退到 PATH 上的 pnpm。
- *
- * Node 25 起不再自带 corepack,所以「没有 corepack」不等于「Node 太旧」——这条分支的
- * 存在就是为了不再给那些人反向指路。
- *
  * @param {(cmd: string) => boolean} has
  * @returns {{ command: string, prefix: string[] } | null}
  */
@@ -103,17 +79,12 @@ export function resolvePnpm(has) {
   return null;
 }
 
-/** 没有 pnpm 时说人话:分清「Node 太旧」与「Node 够新但 corepack 被拿掉了」。 */
 export function pnpmMissingMessage(nodeMajor = Number(process.versions.node.split('.')[0])) {
   if (nodeMajor < MIN_NODE_MAJOR) {
     return `Node ${process.versions.node} 太旧,需要 ${MIN_NODE_MAJOR}+。下载 https://nodejs.org`;
   }
-  return '找不到 pnpm。Node 25 起不再自带 corepack,装一个:npm i -g pnpm';
+  return '找不到 pnpm。请安装：npm i -g pnpm';
 }
-
-// ---------------------------------------------------------------------------
-// 跑起来
-// ---------------------------------------------------------------------------
 
 /** @param {string} cmd */
 function onPath(cmd) {
@@ -124,7 +95,7 @@ function onPath(cmd) {
 }
 
 /**
- * 同步跑一条 pnpm 命令,输出直接落到本窗口。
+ * 同步执行 pnpm 命令并继承终端输入输出。
  * @param {{ command: string, prefix: string[] }} pnpm
  * @param {string[]} args
  */
@@ -132,7 +103,7 @@ function runPnpm(pnpm, args) {
   const result = spawnSync(pnpm.command, [...pnpm.prefix, ...args], {
     cwd: REPO_ROOT,
     stdio: 'inherit',
-    // Windows 上 corepack 与 pnpm 都是 .cmd 垫片,只能经 shell 起。
+    // Windows 上的 .cmd 启动文件需要经 shell 执行。
     shell: process.platform === 'win32',
     env: { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' },
   });
@@ -140,7 +111,7 @@ function runPnpm(pnpm, args) {
 }
 
 /**
- * 跑一条 pnpm 命令并把 stdout 收回来(菜单要的部署清单走这条)。
+ * 执行 pnpm 命令并返回 stdout。
  * @param {{ command: string, prefix: string[] }} pnpm
  * @param {string[]} args
  */
@@ -159,15 +130,13 @@ function readPnpm(pnpm, args) {
 }
 
 /**
- * 方向键菜单。一份代码两个平台——这正是 pick-bot.ps1 存在过的唯一理由。
  * @param {readonly string[]} items
  * @returns {Promise<string | null>} null = 操作员按了 Esc
  */
 export function promptChoice(items, out = process.stdout, input = process.stdin) {
   return new Promise((done) => {
     let idx = 0;
-    // 显式装 keypress。`createInterface` 只在 input 是 TTY 时顺手装上,靠那个副作用会让
-    // 这里在非 TTY 上一声不响地永远等下去;而这里也不需要 readline 的行编辑。
+    // 非 TTY 输入也需要 keypress 事件，不能依赖 readline 的 TTY 初始化。
     emitKeypressEvents(input);
     if (input.isTTY) input.setRawMode(true);
     const draw = (first = false) => {
@@ -193,17 +162,12 @@ export function promptChoice(items, out = process.stdout, input = process.stdin)
     };
     input.on('keypress', onKey);
     input.resume();
-    out.write('\n  可启动的 bot:  ↑↓ 移动  Enter 确认  Esc 取消\n\n');
+    out.write('\n  可启动的部署:  ↑↓ 移动  Enter 确认  Esc 取消\n\n');
     draw(true);
   });
 }
 
 /**
- * 监管循环:起子进程,只在它明说要重启时再起一遍。
- *
- * `entry` 与 `execArgv` 摊开是为了可测——测试拿一个假子进程打完这四条路
- * (要重启 / 干净退出 / 崩溃 / 硬杀但标志文件在),不必真起一个 bot。
- *
  * @param {string} bot
  * @param {string[]} passthrough
  * @param {boolean} firstRunOpensBrowser
@@ -240,8 +204,7 @@ export async function supervise(bot, passthrough, firstRunOpensBrowser, opts = {
       if (m.type === RESTART_MESSAGE) askedRestart = true;
     });
 
-    // Windows 上 Ctrl+C 发给整个控制台进程组,父子都收得到。父在这里**只是不退**:
-    // 收尾归子进程那套仪式管,父等它自己走完,否则世界来不及落盘。
+    // Windows 将 Ctrl+C 发给父子进程；父进程等待子进程完成关机后再退出。
     const hold = () => {};
     process.on('SIGINT', hold);
     process.on('SIGTERM', hold);
@@ -252,7 +215,7 @@ export async function supervise(bot, passthrough, firstRunOpensBrowser, opts = {
 
     if (!shouldRelaunch({ askedRestart, dataDir })) {
       if (code !== 0) {
-        warn(`\n进程退出(${code})。崩溃不自动重启:先看一眼日志,再决定要不要起。`);
+        warn(`\n进程异常退出（${code}）。未自动重启。`);
         return typeof code === 'number' ? code : 1;
       }
       log('\n进程已退出。');
@@ -261,7 +224,7 @@ export async function supervise(bot, passthrough, firstRunOpensBrowser, opts = {
 
     if (dataDir) rmSync(join(dataDir, RESTART_FLAG_FILE), { force: true });
     openBrowser = false;
-    log(`\n[重启] 正在重新拉起 ${bot}。回来仍是暂停态,去控制台点「继续」上线。\n`);
+    log(`\n[重启] ${bot}\n`);
   }
 }
 
@@ -275,14 +238,14 @@ async function main() {
   }
 
   if (!existsSync(join(REPO_ROOT, 'node_modules'))) {
-    console.log('[首次运行] 正在安装依赖 pnpm install ...\n');
+    console.log('正在安装依赖: pnpm install ...\n');
     const code = runPnpm(pnpm, ['install']);
     if (code !== 0) return code;
   }
 
-  // 控制台产物不进版本控制,新检出没有。不补的话首页只会停在"正在载入"。
+  // 控制台产物不纳入版本控制。
   if (!existsSync(join(REPO_ROOT, 'dist', 'web', 'asset-manifest.json'))) {
-    console.log('[首次运行] 正在构建控制台 pnpm build:web ...\n');
+    console.log('正在构建控制台: pnpm build:web ...\n');
     const code = runPnpm(pnpm, ['build:web']);
     if (code !== 0) return code;
   }
@@ -303,12 +266,9 @@ async function main() {
   }
 
   console.log(`\n  启动: ${choice.bot}`);
-  console.log('  启动后是暂停态,去控制台点「继续」才上线;停止用控制台的「关机」键。');
-  console.log('  ⚠ 别直接关本窗口:那是硬杀,Minecraft 世界会回档到上次自动存档。\n');
   return supervise(choice.bot, passthrough, process.env.CORTICO_OPEN_BROWSER !== '0');
 }
 
-// 被 import(测试)时不跑 main。
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().then((code) => process.exit(code), (err) => {
     console.error('启动失败:', err instanceof Error ? err.message : err);

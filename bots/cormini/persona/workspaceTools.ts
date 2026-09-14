@@ -1,9 +1,5 @@
 /**
- * 平铺工作区的文件工具与清单渲染:Workspace Memory 这套记忆实现的**全部对外动作面**。
- *
- * 这里只有工具定义 —— schema、usage 文案、准入、回执措辞。底层动作(路径安全、
- * 读写、遍历、检索)全在 `GitWorkspaceMemory`(`memory.ts`);换一种记忆(数据库、
- * 外部服务、什么都不留)就是换掉那一份,这七只手的形状可以不变。
+ * 工作区工具绑定 GitWorkspaceMemory；WorkspaceHost 提供角色权限、虚拟文件和常驻文件约束。
  *
  * 路径一律相对工作区并经 `memory.insideWorkspace` 校验;写类工具的回执以 `[written]` /
  * `[edited]` / `[appended]` / `[deleted]` 起头,变体据此判断要不要提交版本。
@@ -119,10 +115,6 @@ function writeTool(host: WorkspaceHost): ToolDef {
   };
 }
 
-/**
- * 精确替换:`old_string` 原样出现且唯一(或 `replace_all`)才动手。改一句话——档案首行、
- * 过时的一个事实、写错的数字——走这里,整份重写留给真正的重写。
- */
 function editTool(host: WorkspaceHost): ToolDef {
   return {
     name: 'edit_file',

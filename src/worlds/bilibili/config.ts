@@ -6,9 +6,9 @@ export const BILIBILI_DEFAULTS = {
   enabled: false,
   /** 直播间号;短号与真实房间号都行,World 自己换算 */
   roomId: 0,
-  /** 登录 cookie 的 SESSDATA;空=匿名接入(收得到弹幕,但服务端会把观众 uid 抹成 0) */
+  /** 登录 cookie 的 SESSDATA;空值使用匿名接入。 */
   sessdata: '',
-  /** 礼物提到 flush(插队叫醒她)的门槛,单位元 */
+  /** 礼物使用 flush 投递的金额门槛,单位元。 */
   giftFlushYuan: 1,
   /** 相同弹幕与常规礼物进入总线前的固定归并窗 */
   coalesceWindowMs: 300,
@@ -17,15 +17,14 @@ export const BILIBILI_DEFAULTS = {
   /** 高能榜拥挤代理的开启/退出水位 */
   audienceOnlineRankOn: 200,
   audienceOnlineRankOff: 170,
-  /** 低于退出水位需持续这么久才解除拥挤态 */
+  /** 人数持续不高于退出线达到此时长后解除拥挤态,单位秒。 */
   audienceReleaseHoldSec: 120,
   /** 人数信号新鲜度与已拥挤时的最长陈旧保持 */
   audienceSignalFreshSec: 90,
   audienceActiveStaleHoldSec: 300,
-  /** 近期两场最大上下文负荷加 30% */
   audienceEventLineBudget: 114,
   audienceEventTokenBudget: 1061,
-  /** 限流时重要观众规则项最多占正常预算的比例 */
+  /** 重要观众常规互动占总批预算的上限比例,同时受剩余额度限制。 */
   audienceImportantShare: 0.5,
   overlay: cloneOverlayConfig(),
 };
@@ -51,17 +50,16 @@ export const BILIBILI_CONFIG_GROUP: ConfigGroup = {
         title: '登录凭证 SESSDATA',
         'x-hot': false,
         description:
-          '浏览器登录 bilibili 后的 SESSDATA cookie。留空也收得到弹幕,但服务端会把观众 uid 抹成 0、' +
-          '昵称打码,认不出人。约一个月过期,过期是静默失效(徽标会报「脱敏中」)。改动需重启后生效。',
+          '浏览器登录 bilibili 后的 SESSDATA cookie。留空使用匿名接入,观众身份可能被脱敏。修改后需重启。',
       },
       'worlds.bilibili.giftFlushYuan': {
         type: 'number',
-        title: '礼物插队门槛',
+        title: '礼物即时投递门槛',
         minimum: 0,
         maximum: 1000,
         'x-suffix': '元',
         'x-hot': true,
-        description: '达到这个金额的礼物立刻叫醒她;低于它的礼物排进常规合批。',
+        description: '达到此金额的礼物立即投递;其余礼物参与常规合批。',
       },
       'worlds.bilibili.coalesceWindowMs': {
         type: 'integer',
@@ -81,7 +79,7 @@ export const BILIBILI_CONFIG_GROUP: ConfigGroup = {
         maximum: 1000,
         'x-suffix': '条',
         'x-hot': true,
-        description: '固定窗内累计到此数量就立即冲刷,限制突发流量下的内存与延迟。',
+        description: '固定窗内累计到此数量时立即输出归并结果,交给事件总线调度。',
       },
       'worlds.bilibili.audienceOnlineRankOn': {
         type: 'integer',
@@ -99,7 +97,7 @@ export const BILIBILI_CONFIG_GROUP: ConfigGroup = {
         maximum: 100000,
         'x-suffix': '人',
         'x-hot': true,
-        description: '低于此值并持续达到退出等待时间后解除拥挤态。',
+        description: '人数持续不高于此值,达到退出等待时间后解除拥挤态。',
       },
       'worlds.bilibili.audienceReleaseHoldSec': {
         type: 'integer',
@@ -108,7 +106,7 @@ export const BILIBILI_CONFIG_GROUP: ConfigGroup = {
         maximum: 1800,
         'x-suffix': 's',
         'x-hot': true,
-        description: '防止高能榜人数在边界附近抖动时反复开关。',
+        description: '高能榜人数需持续不高于退出线的时长。',
       },
       'worlds.bilibili.audienceSignalFreshSec': {
         type: 'integer',
@@ -148,13 +146,13 @@ export const BILIBILI_CONFIG_GROUP: ConfigGroup = {
       },
       'worlds.bilibili.audienceImportantShare': {
         type: 'number',
-        title: '重要观众常规席位上限',
+        title: '重要观众常规互动预算比例',
         minimum: 0.01,
         maximum: 1,
         'x-scale': 100,
         'x-suffix': '%',
         'x-hot': true,
-        description: '关键事件之外，重要观众常规互动最多使用的批预算比例。',
+        description: '重要观众常规互动占总批预算的上限比例,同时受批次剩余额度限制。',
       },
       'worlds.bilibili.overlay.enabled': {
         type: 'boolean',

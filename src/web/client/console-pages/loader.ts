@@ -1,26 +1,7 @@
 /**
- * 控制台页扩展加载器 —— 新架构在浏览器这一侧的核心。
- *
- * 流程：
- * ```
- * manifest.client.js  →  dynamic import()  →  校验导出  →  取 panel  →  mount(ctx)
- * ```
- *
- * 四条硬约束：
- *
- * 1. **懒加载。** 只有真的进了某一页的面板才 import 它的 bundle。停在
- *    live 页不该把所有页的代码都拉下来。
- * 2. **失败隔离。** 一个 bundle 404 了、语法错了、default export 不是扩展——
- *    都只影响它自己那一格，其余页与框架照常。
- * 3. **URL 只来自 manifest。** 加载器**不拼路径**。贡献方给不出路径，服务端
- *    只答构建产物里有的 key，这里再对拿到的 URL 过一次闸——三道都在。
- * 4. **不缓存失败。** 加载失败常常是"还没 build"或临时 404，缓存住会让用户必须
- *    刷整页才能重试。所以只对**进行中**的请求去重。
- *
- *    但要说清楚这条到哪儿为止：**浏览器自己的 module map 会把 fetch 失败的 URL
- *    记住并持久失败**，同一个 URL 再 `import()` 一次不会真的重发请求。所以
- *    "重来能成功"实际靠的是**产物带内容 hash**——重新 build 之后 manifest 给出的
- *    是一个新 URL，绕开了那条死记录。加载器这一层不缓存失败是必要条件，不是充分条件。
+ * 按 manifest URL 懒加载扩展；进行中的加载去重，成功模块缓存，失败允许重试。
+ * 浏览器仍可能缓存失败的 ESM URL；重新构建后的内容 hash URL 可避开该缓存。
+ * JS 与 CSS URL 均校验清单规定的路径和字符。
  */
 
 import {
@@ -31,11 +12,6 @@ import {
 import { isSafeAssetUrl, type ConsoleAssetEntry } from '../../shared/console-protocol.ts';
 import { S } from './strings.ts';
 
-/**
- * `<link rel=stylesheet>` 的最小形状。`dataset` 的值带 `undefined` 是为了直接接住
- * DOM 的 `DOMStringMap`——写死成 `Record<string,string>` 的话真 `HTMLLinkElement`
- * 反而塞不进来。
- */
 export interface StyleLink {
   rel: string;
   href: string;
@@ -43,10 +19,6 @@ export interface StyleLink {
 }
 
 export interface LoaderDeps {
-  /**
-   * 注入而不是直接写 `import(url)`：测试要能喂假模块，
-   * 而 `import()` 的 specifier 一旦是字面量就没法拦。
-   */
   importModule(url: string): Promise<unknown>;
   /** 注入 `<link rel=stylesheet>` 的宿主（一般是 document.head）。 */
   styleHost: { appendChild(node: unknown): void };
@@ -124,10 +96,7 @@ export class ConsolePageLoader {
     return candidate;
   }
 
-  /**
-   * 面板样式跟着 bundle 走。同一页只注入一次；样式表**不随面板卸载移除**
-   * ——移除会让同一页的其他面板闪一下，而多留一张 CSS 没有代价。
-   */
+  /** 每页样式只注入一次，面板卸载时保留。 */
   private injectStyle(pageId: string, asset: ConsoleAssetEntry): void {
     if (!asset.css || this.styled.has(pageId)) return;
     if (!isSafeAssetUrl(asset.css)) {
@@ -142,10 +111,7 @@ export class ConsolePageLoader {
     this.deps.styleHost.appendChild(link);
   }
 
-  /**
-   * 取某个面板的扩展实现。
-   * 声明了面板但扩展里没有对应键 → 明确报错，而不是渲染一片空白让人猜。
-   */
+  /** 获取声明的面板实现；缺失时错误列出扩展提供的面板键。 */
   async resolvePanel(
     pageId: string,
     panelId: string,
@@ -153,14 +119,11 @@ export class ConsolePageLoader {
   ): Promise<ConsolePanel> {
     const bundle = await this.load(pageId, asset);
     const panel = bundle.panels[panelId];
-    // 判据用 `in` 而不是真值:`panels: { x: null }` 是"键在、实现坏了",若掉进
-    // 下面那支就会印出自相矛盾的话——"没有面板 x。它提供的是: x"。
+    // 分别报告键缺失与实现不合法。
     if (!(panelId in bundle.panels)) {
       const known = Object.keys(bundle.panels).join(' / ') || S.none;
       throw new PanelBundleError(pageId, S.noSuchBundlePanel(pageId, panelId, known));
     }
-    // 键在、但不是个能 mount 的东西(含 null/undefined):分开措辞。说成"没有这个
-    // 面板"会把人引去查声明和拼写,而真相是这一项写坏了。
     if (!panel || typeof panel.mount !== 'function') {
       throw new PanelBundleError(pageId, S.badPanelImpl(pageId, panelId));
     }

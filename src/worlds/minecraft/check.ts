@@ -1,15 +1,6 @@
 /**
- * mc_check:她出一组断言,系统对照世界,回执只报差异。与 dryRun 对偶——那个是动手
- * 之前试算,这个是做完之后对账。
- *
- * 全部纯函数:世界数据由调用方经 `CheckWorld` 喂进来,这里不认识 bot、不寻路、
- * 不改动任何东西,也不等待——只读已加载区块,读不到的格照实说"没加载"。
- *
- * 几条口径,代码按它写:
- * - 方块比对一律 **id 级**:朝向、连接面这些由邻居决定的属性不参与,不然一堵砌好的
- *   墙会因为服务端算出来的 `north=true` 被判成不符;
- * - **没加载 ≠ 不符**,也 ≠ 符合。它自成一档结论,在回执里单独一句;
- * - `sealed` 的通路判定按**能不能灌进来**算,所以水和岩浆算通路,不算墙。
+ * 通过 CheckWorld 读取当前状态并核验断言。
+ * 方块按 ID 比较；未加载单独报告；sealed 将水和岩浆视为通路。
  */
 
 import { blueprintStepStateMatches, diffBlueprint, type BlueprintPlan } from './blueprint-plan.ts';
@@ -17,18 +8,12 @@ import { blockIdOf, isAirState, type NormalizedBlueprint, type PositionXYZ } fro
 import type { ItemEnchant } from './item-facts.ts';
 import { roman, zhDimension, zhEnchant, zhName } from './names.ts';
 
-/** 一次调用最多几条断言。她一口气想核对的东西超过这个数,该分两次核 */
 export const CHECK_MAX_ASSERTS = 16;
-/** 单条区域断言的格数上限(沿用蓝图回读那一档) */
 export const CHECK_BOX_CELL_CAP = 4096;
-/** sealed 洪泛的体积上限;它按格走不按格读,所以比区域断言宽一档 */
 export const CHECK_SEALED_VOLUME_CAP = 32 * 32 * 32;
-/** 一条不符的断言最多点几处名 */
 const CHECK_SAMPLE_CAP = 6;
-/** 漏口最多点几处名 */
 const CHECK_LEAK_SAMPLE_CAP = 3;
 
-/** 空气族:她写 `air` 指的是"该空着",三种空气都算空着 */
 const AIR_IDS = new Set(['air', 'cave_air', 'void_air']);
 
 const LIQUID_IDS = new Set(['water', 'lava', 'bubble_column']);
@@ -54,14 +39,12 @@ export interface CheckSite {
   anchor: PositionXYZ | null;
 }
 
-/** 一处路标的核验结论(module 那边 checkMark 的结果摊平进来) */
 export interface CheckMarkProbe {
   name: string;
   kind: string;
   dimension: string;
   pos: PositionXYZ;
   verdict: 'ok' | 'mismatch' | 'unloaded' | 'other-dimension' | 'unchecked';
-  /** 对不上时那一格现在是什么(中文名) */
   found: string | null;
 }
 
@@ -70,12 +53,9 @@ export interface CheckWorld {
   cell(x: number, y: number, z: number): CheckCell | null;
   /** 背包现有:物品名 → 个数 */
   inventory(): ReadonlyMap<string, number>;
-  /**
-   * 背包里叫这个名字的每一摞各带什么附魔(一摞一条,没附魔的是空数组)。
-   * 不接 = 这个部署读不到附魔,`enchant` 断言如实说读不到,不拿「没有」冒充。
-   */
+  /** 每个同名物品栈的附魔；未提供读取接口时，enchant 断言报告不可读取。 */
   enchantsOf?: (item: string) => ItemEnchant[][];
-  /** 这一版认不认得这个方块名;拿不到 registry 时不给,断言就不做名字校验 */
+  /** 方块名的注册表校验；无此接口时跳过名字校验。 */
   knowsBlock?: (id: string) => boolean;
   site(key: string): CheckSite | null;
   mark(name: string): CheckMarkProbe | null;
@@ -95,13 +75,11 @@ type CheckAssert =
   | { kind: 'blueprint'; key: string }
   | { kind: 'mark'; name: string };
 
-/** 已归正的盒子:min 各轴都不大于 max */
 interface CheckBox {
   min: PositionXYZ;
   max: PositionXYZ;
 }
 
-/** 一条断言的受理结果:收下了,或者这一条就地报错(不废整单) */
 export type CheckParsed = { ok: true; assert: CheckAssert } | { ok: false; error: string };
 
 function posText(p: readonly [number, number, number]): string {
@@ -116,12 +94,10 @@ function boxCells(box: CheckBox): number {
   return (box.max[0] - box.min[0] + 1) * (box.max[1] - box.min[1] + 1) * (box.max[2] - box.min[2] + 1);
 }
 
-/** 世界侧读回来的状态串 → 纯 id(去前缀去属性) */
 function idOf(state: string): string {
   return blockIdOf(state).replace(/^minecraft:/, '');
 }
 
-/** 她写的方块名归正:`minecraft:Chest` / ` chest ` 都收 */
 function parseBlockId(value: unknown, path: string): string | { error: string } {
   if (typeof value !== 'string' || value.trim() === '') return { error: `${path} 要一个方块名` };
   return value.trim().toLowerCase().replace(/^minecraft:/, '');
@@ -134,7 +110,6 @@ function parsePos(value: unknown, path: string): PositionXYZ | { error: string }
   return out as PositionXYZ;
 }
 
-/** `box: [[x1,y1,z1],[x2,y2,z2]]`;两端谁大谁小随便写,这里归正 */
 function parseBox(value: unknown): CheckBox | { error: string } {
   if (!Array.isArray(value) || value.length !== 2) {
     return { error: 'box 要 [[x1,y1,z1],[x2,y2,z2]] 两个角' };
@@ -149,7 +124,6 @@ function parseBox(value: unknown): CheckBox | { error: string } {
   };
 }
 
-/** 计数值:整数 = 恰好这么多;`">=8"` / `"<=2"` = 一侧的界 */
 function parseCompare(value: unknown, path: string): CheckCompare | { error: string } {
   if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return { op: '=', n: value };
   if (typeof value === 'string') {
@@ -187,10 +161,7 @@ function parseWantMap(
   return out;
 }
 
-/**
- * `inv` 的值有两形:个数(`4` / `">=8"`),或 `{"enchant":"efficiency"}` 那种
- * 「带这个附魔的有几件」。后者不写 count 时按「至少一件」。
- */
+/** inv 接受数量或附魔条件；附魔条件未指定 count 时要求至少一件。 */
 function parseInvWant(
   raw: unknown,
 ): Array<{ item: string; enchant?: string } & CheckCompare> | { error: string } {
@@ -221,7 +192,6 @@ function parseInvWant(
   return out;
 }
 
-/** 一条断言的受理。**认不出形状就报错**,不猜她想核对什么 */
 export function parseAssert(raw: unknown, knowsBlock?: (id: string) => boolean): CheckParsed {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return { ok: false, error: '一条断言要一个对象' };
@@ -315,7 +285,7 @@ export function parseAssert(raw: unknown, knowsBlock?: (id: string) => boolean):
   return { ok: false, error: '给了 box 但没说要对什么:count / all / air / sealed 选一个' };
 }
 
-/** 整单受理。`checks` 不成形是整单的错;单条不成形只坏那一条 */
+/** checks 格式错误拒绝整单；单条格式错误不影响其余断言。 */
 export function parseChecks(
   args: Record<string, unknown>,
   knowsBlock?: (id: string) => boolean,
@@ -331,15 +301,11 @@ export function parseChecks(
 
 // ── 求值 ──────────────────────────────────────────────────────────────────────
 
-/**
- * 一条断言的结论。`unknown` 是**区块没加载**那一档 —— 它既不算符合也不算不符,
- * 混进任何一边都会让她拿"这边什么都没有"当结论。
- */
+/** unknown 表示读数不可用，不计入符合或不符。 */
 export type CheckVerdict = 'ok' | 'bad' | 'unknown' | 'error';
 
 export interface CheckResult {
   verdict: CheckVerdict;
-  /** 这一条怎么念;`ok` 的那几条不进回执正文 */
   text: string;
 }
 
@@ -431,11 +397,8 @@ function evalUniform(
 }
 
 /**
- * 封闭性:从盒内一点洪泛可通行格,能走到盒外就是漏。
- *
- * 漏口按**盒内那一格**报(她要堵的是这一格),盒外邻格只用来判定通不通。液体算
- * 通路:水会顺着灌进来,一堵"用水当墙"的房子不封闭。没加载的邻格既不算通也不算堵,
- * 单独记数说清没对全。
+ * 从盒内起点搜索可通行格；与盒外相连时报告盒内漏口。
+ * 液体视为通路，未加载的格单独计数。
  */
 function evalSealed(a: Extract<CheckAssert, { kind: 'sealed' }>, world: CheckWorld): CheckResult {
   const { box } = a;
@@ -464,7 +427,6 @@ function evalSealed(a: Extract<CheckAssert, { kind: 'sealed' }>, world: CheckWor
   const leaks: PositionXYZ[] = [];
   let leakCount = 0;
   let liquidLeak = false;
-  /** 读不到的格按坐标去重:同一格会被六个方向各碰一次 */
   const unloadedCells = new Set<string>();
   const steps: ReadonlyArray<PositionXYZ> = [
     [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
@@ -519,7 +481,6 @@ function evalSealed(a: Extract<CheckAssert, { kind: 'sealed' }>, world: CheckWor
   return { verdict: 'ok', text: `${boxText(box)} 封闭(从 ${posText(start)} 洪泛 ${seen.size} 格,没走出去)` };
 }
 
-/** 盒中心那一格;实心就在盒内找离中心最近的可通行格 */
 function findStart(box: CheckBox, world: CheckWorld): PositionXYZ | null {
   const center: PositionXYZ = [
     Math.floor((box.min[0] + box.max[0]) / 2),
@@ -574,7 +535,6 @@ function evalInv(a: Extract<CheckAssert, { kind: 'inv' }>, world: CheckWorld): C
   return { verdict: 'ok', text: `包里现有:${okBits.join('、')}` };
 }
 
-/** 蓝图缺的那几格点名:「橡木木板 在 (x, y, z)」,按施工步序取前几处 */
 function missingSamples(site: CheckSite, anchor: PositionXYZ, world: CheckWorld, cap: number): string[] {
   const out: string[] = [];
   for (const step of site.plan.steps) {
@@ -594,10 +554,7 @@ function missingSamples(site: CheckSite, anchor: PositionXYZ, world: CheckWorld,
   return out;
 }
 
-/**
- * 一份蓝图的现场对账:对上多少格、缺多少格(点名)、冲突多少格。
- * 没装载、没绑锚点都照实说 —— 这两种情况下没有可对的账,不拿 0/0 充数。
- */
+/** 蓝图核验报告符合、缺失和冲突格；未装载或未绑定锚点时不计算。 */
 export function blueprintCheckText(site: CheckSite | null, key: string, world: CheckWorld): CheckResult {
   if (!site) return { verdict: 'error', text: `蓝图「${key}」没装载,对不了` };
   if (!site.anchor) {
@@ -665,11 +622,7 @@ export function evalAssert(assert: CheckAssert, world: CheckWorld): CheckResult 
   }
 }
 
-/**
- * 整单回执:先一句总账,符合的合并成一句带过,其余逐条点名。
- *
- * 只报差异是这个工具存在的理由 —— 符合的那几条逐条复述回去,省下来的上下文就还回去了。
- */
+/** 符合项合并计数，其余逐条报告。 */
 export function renderChecks(parsed: readonly CheckParsed[], world: CheckWorld): string {
   const lines: Array<{ n: number; result: CheckResult }> = parsed.map((item, i) => ({
     n: i + 1,

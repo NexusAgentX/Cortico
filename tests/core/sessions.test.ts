@@ -57,7 +57,7 @@ describe('SessionTracker', () => {
     const t = new SessionTracker('Asia/Shanghai');
     const a = t.open('association', '联想fork');
     a.close();
-    a.close(); // 幂等
+    a.close();
     t.open('main', '主意识', { id: 'main' });
 
     const list = t.list();
@@ -86,7 +86,7 @@ describe('SessionTracker', () => {
 
     t.reset();
     const list = t.list();
-    expect(list).toHaveLength(1); // 已结束的被移除
+    expect(list).toHaveLength(1);
     expect(list[0].id).toBe('main');
     expect(list[0].calls).toBe(0);
     expect(list[0].promptTokens).toBe(0);
@@ -106,7 +106,7 @@ describe('SessionTracker', () => {
     h.close();
     expect(n).toBe(3);
     expect(t.messages('不存在')).toBeNull();
-    expect(t.messages(t.list()[0].id)).toBeNull(); // 没给引用也是null
+    expect(t.messages(t.list()[0].id)).toBeNull();
   });
 
   it('观察流水失败不打断record;close后的迟到record被忽略', () => {

@@ -1,10 +1,4 @@
-/**
- * QQ 的 roster / gate 面板语义,直接在 World 的通用调用面(`WorldConsoleDecl.invoke`)
- * 上验——控制台只翻译请求,不认识任何 World。
- *
- * HTTP 那一层(args 校验、$binary、404/503/500 的分工)在 `providers.test.ts` 里
- * 用假 provider 钉过,不在这里重复:那是框架的事,与 QQ 无关。
- */
+/** 验证 World 配置的声明、读取、保存与校验。 */
 import { describe, it, expect } from 'vitest';
 import { QQWorld } from '../../src/worlds/qq/world.ts';
 import { type QQRosterEntry } from '../../src/worlds/qq/config.ts';

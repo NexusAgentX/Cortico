@@ -54,13 +54,13 @@ describe('Provider module discovery', () => {
       ).resolve('cloud');
 
       const host = seen as unknown as ProviderHost;
-      expect(host.stateDir).toBe(join(stateRoot, 'cloud')); // 目录名就是端点名
+      expect(host.stateDir).toBe(join(stateRoot, 'cloud'));
       expect(host.secret('ONLY_HERE')).toBe('yes');
       expect(host.secret('SHARED')).toBe('from-endpoint');
-      expect(host.secret('MODULE_KEY')).toBe(''); // 端点那份没有就是没有
+      expect(host.secret('MODULE_KEY')).toBe('');
       process.env.SHARED = 'from-process';
       try {
-        expect(host.secret('SHARED')).toBe('from-process'); // 进程环境永远最前
+        expect(host.secret('SHARED')).toBe('from-process');
       } finally {
         delete process.env.SHARED;
       }

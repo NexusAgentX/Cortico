@@ -1,22 +1,15 @@
 /**
- * level.dat 读取:存档目录里那份 gzip NBT,给控制台「存档」一屏提供每份存档的
- * 自述(名字、上次游玩、种子、模式、版本、世界类型)。
- *
- * 只读不写。server.properties 里的那几项是**下次启动**的意图,而这里是存档
- * 生成时就定死、之后再改也没用的事实——世界类型与种子尤其如此,面板要能把
- * 两者分开显示,才不会让人以为改了 level-type 就能把老世界变平。
- *
- * 解析器只走到取值需要的深度:遇到不认识的分支照样按 NBT 语法跳过,读坏了
- * 整份当作没有(存档还在,只是少几行字)。
+ * 读取存档 level.dat 的 NBT 元数据；同时支持 gzip 压缩和未压缩内容。
+ * 解析失败返回 null。存档元数据与下次启动的 server.properties 配置分别显示。
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 
-/** level.dat 里值得摆到界面上的那几项;缺的项为 null。 */
+/** 存档元数据；缺失字段为 null。 */
 export interface LevelDatInfo {
   /** 存档自己记的显示名,可能与目录名不同 */
   levelName: string | null;
-  /** 上次游玩(ms);存档的活跃时间以它为准,比目录 mtime 准 */
+  /** 上次游玩时刻，Unix 毫秒。 */
   lastPlayed: number | null;
   /** 世界种子;1.16+ 在 WorldGenSettings 下 */
   seed: string | null;
@@ -25,7 +18,7 @@ export interface LevelDatInfo {
   /** 0=和平 1=简单 2=普通 3=困难 */
   difficulty: number | null;
   hardcore: boolean | null;
-  /** 生成这份存档的版本名,如 1.20.6 */
+  /** 存档 Version.Name 字段。 */
   version: string | null;
   /** 主世界生成器:flat / amplified / large_biomes / normal;认不出为 null */
   generator: string | null;
@@ -135,7 +128,7 @@ function generatorOf(gen: Record<string, NbtValue> | null): string | null {
   return settings.replace(/^minecraft:/, '');
 }
 
-/** GameRules 复合体 → 纯字符串表;认不出的值(不该有)跳过而不是猜成空串 */
+/** 只保留 GameRules 中的字符串值。 */
 function gameRulesOf(rules: Record<string, NbtValue> | null): Record<string, string> | null {
   if (!rules) return null;
   const out: Record<string, string> = {};

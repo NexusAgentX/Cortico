@@ -1,9 +1,5 @@
 import { messages as legacyMessages } from '../core/fixture-protocol.ts';
-/**
- * 启动即暂停(main.ts 的 CORTICO_START_PAUSED / --paused 行为):
- * start 前把总线按住 → boot 事件照常入队、但不投递唤醒、零 LLM 调用;
- * 继续后才处理积压的 boot 批。用 FakeLLM,不打真实 API。
- */
+/** 验证 launcher.ts 的启动暂停顺序:boot 事件排队,继续后才调用模型。 */
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -43,7 +39,7 @@ describe('启动即暂停', () => {
     const llm = new FakeLLM();
     bot = assembleBot(loaded, { llm });
 
-    // 模拟 main.ts 的 startPaused:主循环开跑前按住总线
+
     bot.core.bus.setPaused(true);
     await bot.start();
 

@@ -17,7 +17,6 @@ export interface Route {
 export type LeaveGuard = () => string | null;
 
 export interface RouterDeps {
-  /** 注入而不是直接摸全局：测试与多实例都需要。 */
   win: Window;
   /** 拦截时问用户。返回 true 表示确认离开。 */
   confirmLeave(message: string): Promise<boolean>;
@@ -72,14 +71,7 @@ export class Router {
   private readonly listeners = new Set<(route: Route) => void>();
   private readonly guards = new Set<LeaveGuard>();
   private current: Route;
-  /**
-   * 正在等待的回拨目标。
-   *
-   * **不能用一个布尔。** 回拨写进去的值若恰好等于地址栏现值，浏览器根本不发
-   * hashchange，那面旗子就没人消费、永远留在 true，把下一次正当导航整个吃掉。
-   * 触发路径很实在：确认框挂起期间又来一次 hashchange，两次都被拒，两次回拨
-   * 目标是同一个原值 → 第二次赋值哑火。所以记**具体是哪个 hash**，比对上才清。
-   */
+  /** 待处理的回拨 hash；写入相同 hash 不触发 hashchange，因此按目标值识别回拨。 */
   private pendingRevert: string | null = null;
   /** 确认框是否已经开着。开着时再来的变更直接拨回，不叠第二个框。 */
   private confirming = false;
@@ -97,8 +89,7 @@ export class Router {
   start(): Disposable {
     if (this.started) throw new Error('Router 已经启动');
     this.started = true;
-    // 重读一次:构造与 start 之间地址可能已经变了(异步 boot、加载中用户点了链接)。
-    // 拿构造时的快照广播会让 router 一上来就与地址栏错位。
+    // start 时重新读取地址，构造后的地址可能已变化。
     this.current = parseHash(this.deps.win.location.hash);
     const handler = (): void => { void this.onHashChange(); };
     this.deps.win.addEventListener('hashchange', handler);
@@ -111,11 +102,7 @@ export class Router {
     return toDisposable(() => this.listeners.delete(cb));
   }
 
-  /**
-   * 离开拦截。编辑器类面板（有未保存改动）用它。
-   * 返回的 `Disposable` 解除拦截——面板 unmount 时必须解除，否则一个已经不在的
-   * 页面会永远拦着别人。
-   */
+  /** 登记离开拦截；返回的 Disposable 必须随面板卸载释放。 */
   addLeaveGuard(guard: LeaveGuard): Disposable {
     this.guards.add(guard);
     return toDisposable(() => this.guards.delete(guard));
@@ -125,17 +112,13 @@ export class Router {
     this.go(buildHash(segments, query), (hash) => { this.deps.win.location.hash = hash; });
   }
 
-  /**
-   * 与 `navigate` 同，但替换当前历史条目而不新增。重定向必须走这条：新增条目会让
-   * 后退键回到被重定向的地址、再次被送走，永远退不出去。
-   */
+  /** 替换当前历史条目，不新增条目。 */
   replace(segments: readonly string[], query?: Record<string, string>): void {
     this.go(buildHash(segments, query), (hash) => this.deps.win.location.replace(hash));
   }
 
   private go(next: string, write: (hash: string) => void): void {
-    // 去重要跟**地址栏**比，不能跟 `current` 比：两者一旦脱节，"写一个地址栏里
-    // 已经有的值"既不早退、也不触发 hashchange，这个路由就永远到不了了。
+    // 按地址栏判重；写入相同 hash 不触发 hashchange。
     if (sameHash(this.deps.win.location.hash, next)) {
       if (!sameHash(this.current.raw, next)) {
         this.current = parseHash(next);
@@ -146,7 +129,7 @@ export class Router {
     write(next);
   }
 
-  /** 把地址栏拨回某个值。已经是它了就不写——那样不会有 hashchange，旗子会漏消费。 */
+  /** 回拨地址；当前地址已相同则不写入。 */
   private revertTo(raw: string): void {
     const target = `#${raw}`;
     if (sameHash(this.deps.win.location.hash, target)) {
@@ -178,7 +161,6 @@ export class Router {
       return;
     }
     // 已经在问用户了:再来的变更一律先拨回去,不叠第二个确认框。
-    // (连按后退、或弹窗期间有程序化导航,都会走到这里。)
     if (this.confirming) {
       this.revertTo(this.current.raw);
       return;

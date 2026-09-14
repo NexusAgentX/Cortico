@@ -36,7 +36,7 @@ describe('CoreState', () => {
   });
 
   // 连败记录须跨重启保留，供重启后第一次成功时结清并报告。
-  it('LLM 连败账跨重启保留,坏形状回落到空账本', () => {
+  it('LLM 连续失败记录跨重启保留，无效结构恢复为空记录', () => {
     const s = new CoreState(tmp.dir);
     s.load();
     s.data.llmStall = { since: 1000, at: [1000, 2000] };
@@ -80,7 +80,7 @@ describe('CoreState', () => {
   });
 
   it('部分字段缺失/文件损坏都回默认', () => {
-    // 历史版本的字段(lastDreamCursor/softNoticeSent)会被忽略并在下次save时自然淘汰。
+    // 未声明的旧字段不加载，也不写回。
     writeFileSync(join(tmp.dir, 'core-state.json'), '{"lastDreamCursor":7,"softNoticeSent":true}', 'utf8');
     const s = new CoreState(tmp.dir);
     s.load();

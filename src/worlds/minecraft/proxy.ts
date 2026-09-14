@@ -1,15 +1,4 @@
-/**
- * MinecraftWorldProxy — 主进程侧的 Minecraft World。
- *
- * MinecraftWorld 在引擎子进程(engine-child.ts)中运行。mineflayer 的 20Hz
- * physicsTick、寻路 A* 同步搜索、执行器循环、world tick 与 viewer 抓帧均与
- * 主进程事件循环隔离。
- *
- * 装配层用它替换 MinecraftWorld,选项形状不变。x-hot 配置在这里定期采样成
- * 快照推给子进程(子进程就地改同一形状的 cfg 对象,现读语义原样成立);
- * 徽标、存储统计走推送缓存(1s 级新鲜度);世界快照走投递成文事件
- * (arm-deferred 代挂 + 发车刻 render-deferred 现拿)。
- */
+/** 主进程中的 Minecraft World 代理。游戏连接、执行器和客户端管理在引擎子进程；此处转发工具、事件、控制台及存储请求，并每秒推送配置。 */
 import { fork, type ChildProcess } from 'node:child_process';
 import { nowIso } from '../../core/util.ts';
 import { emitLogNote, logChildStdio } from '../../core/ipc-logger.ts';
@@ -39,20 +28,19 @@ import { loadPolicy, renderPolicyEnv } from './policy.ts';
 import { worldEnvLine, worldIdentityOf } from './server-config.ts';
 
 const ENV_PROMPT_FILE = fileURLToPath(new URL('./ENV_PROMPT.md', import.meta.url));
-/** 只在开了观察者客户端时才进前缀的那一段;独立成文件才能让措辞归人。 */
 const CAMERA_NOTE_FILE = fileURLToPath(new URL('./ENV_PROMPT_CAMERA.md', import.meta.url));
 const CHILD_ENTRY = fileURLToPath(new URL('./engine-child.ts', import.meta.url));
 
 const CONFIG_SAMPLE_MS = 1000;
 const RESTART_DELAY_MS = 3000;
-/** Windows 关控制台窗口/Ctrl+C 把整组进程打死时的退出码(STATUS_CONTROL_C_EXIT) */
+/** Windows STATUS_CONTROL_C_EXIT。 */
 const CONSOLE_KILL_EXIT_CODE = 3221225786;
-/** 工具回执死线:受理类工具同步回执,放宽只为覆盖子进程繁忙时的排队 */
+/** 工具 RPC 超时。 */
 const RPC_TIMEOUT_MS = 150_000;
-/** 投递成文渲染的 IPC 死线:必须小于 loop 侧 RENDER_DEADLINE_MS(3s),先于它干净地失败 */
+/** 延迟事件渲染的 RPC 超时须短于主循环的 3 秒等待上限。 */
 const DEFERRED_RENDER_TIMEOUT_MS = 2500;
 const PANEL_RPC_TIMEOUT_MS = 150_000;
-/** init 含连服与世界加载的前置,不等它们(start() 只等子进程收到 init) */
+/** 初始化确认只表示请求已受理，不等待游戏连接完成。 */
 const INIT_TIMEOUT_MS = 30_000;
 
 interface PendingRpc {
@@ -73,7 +61,6 @@ export class MinecraftWorldProxy implements World {
   private declCache: Pick<WorldConsoleDecl, 'lamps' | 'badges' | 'links'> = {};
   private storageCache: StorageStat[] = [];
   private lastConfigJson = '';
-  /** 上一次推给子进程的「认知外包在不在」;null = 还没推过 */
   private lastCaps: boolean | null = null;
   private configTimer: ReturnType<typeof setInterval> | null = null;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
@@ -107,7 +94,6 @@ export class MinecraftWorldProxy implements World {
             {
               kind: 'tool', name: decl.name, args, role: ctx.role,
               callId: ctx.callId ?? null,
-              // 引擎将此轮号写入工具 ctx.round。
               round: roundTokenOf(ctx),
             },
             RPC_TIMEOUT_MS,
@@ -121,14 +107,12 @@ export class MinecraftWorldProxy implements World {
 
   console(): WorldConsoleDecl {
     return {
-      // 子进程报上来之前只有一件事是确定的:引擎在不在。真 World 那排灯一到就盖掉这颗。
       lamps: this.declCache.lamps ?? [this.child
         ? { label: '引擎', state: 'loading' as const, hint: '启动中' }
         : { label: '引擎', state: 'offline' as const, hint: '未启动' }],
       badges: this.declCache.badges ?? [
         { label: '引擎', value: this.child ? '启动中' : '未启动', tone: 'off' },
       ],
-      // 与真 World 共用同一份声明:控制台隔着代理看到的表面必须与直连时一模一样。
       panels: [...MINECRAFT_PANEL_DECLS],
       invoke: (panel, method, args) => {
         // 路径选择保存后紧接着会读状态或启动；同一 IPC 通道先投最新配置，
@@ -170,8 +154,6 @@ export class MinecraftWorldProxy implements World {
           path: CAMERA_NOTE_FILE,
         },
       ],
-      // 存储项在装配期注册，以纳入清除数据清单。
-      // stat 优先使用子进程缓存，缺少缓存时读取文件；clear 由 storageClear 处理。
       storage: MINECRAFT_STORAGE_DECLS.map((d): StoragePart => ({
         ...d,
         stat: () =>
@@ -198,7 +180,6 @@ export class MinecraftWorldProxy implements World {
     return null;
   }
 
-  /** 子进程没起时的存储统计:直接看文件 */
   private storageStatOffline(key: string): string {
     const file = this.storageFileOf(key);
     if (!file || !existsSync(file)) return '(无文件)';
@@ -209,11 +190,7 @@ export class MinecraftWorldProxy implements World {
     }
   }
 
-  /**
-   * 清除一个存储项。子进程活着必须走 RPC(它内存里还有一份,直清文件会被下一次
-   * flush 复活);正在启动时拒绝(子进程可能已把旧数据读进内存);没起就直清文件
-   * ——之后启动会从清过的文件重读,旧数据不会复活。
-   */
+  /** 在线存储操作经 RPC 转发；引擎启动中拒绝操作，离线时直接清理文件。 */
   private async storageClear(key: string): Promise<string> {
     if (this.child?.connected) {
       if (!this.ready) throw new Error('引擎子进程正在启动,稍后再清');
@@ -244,7 +221,7 @@ export class MinecraftWorldProxy implements World {
       try {
         await this.rpc({ kind: 'shutdown' }, 15_000);
       } catch {
-        /* 停机死线内没回执就直接杀 */
+        /** shutdown RPC 超时后终止子进程。 */
       }
       await waitExit(child, 5000);
       if (child.exitCode === null && !child.killed) child.kill();
@@ -278,7 +255,6 @@ export class MinecraftWorldProxy implements World {
       INIT_TIMEOUT_MS,
     );
     this.ready = true;
-    // 能力位赶在第一次工具调用之前到位(采样线要等 1s,而 init 之后随时可能来一单)
     this.lastCaps = null;
     this.pushCapsIfChanged();
     this.host?.log.info(`Minecraft 引擎子进程已就绪 pid=${child.pid}`);
@@ -301,15 +277,12 @@ export class MinecraftWorldProxy implements World {
     this.teardownChild();
     if (wasStopping) return;
     if (code === CONSOLE_KILL_EXIT_CODE) {
-      // 子进程随控制台窗口一起被打死:这是人为关停不是崩溃,整机跟着退,别对着空气重启
-      this.host?.log.warn('Minecraft 引擎子进程随控制台关闭退出(0xC000013A),判定人为关停,整机退出');
+      this.host?.log.warn('Minecraft 引擎子进程收到 0xC000013A 退出状态，宿主退出');
       if (process.listenerCount('SIGINT') > 0) process.emit('SIGINT');
       else process.exit(0);
       return;
     }
     this.host?.log.error(`Minecraft 引擎子进程意外退出(code=${code}),${RESTART_DELAY_MS / 1000}s 后重启`);
-    // 子进程死了自己发不了讣告,这条只能由主进程侧来说——上一场收播时她对
-    // "世界已下线"一无所知,整段只有运行日志一行可见
     this.host?.pushEvent(
       {
         ts: nowIso(this.opts.timezone ?? 'Asia/Shanghai'),
@@ -319,7 +292,7 @@ export class MinecraftWorldProxy implements World {
         senderKey: 'minecraft',
       },
       { trigger: 'flush' },
-    ).catch(() => { /* 宿主也在收摊时投不进去,认了 */ });
+    ).catch(() => {  });
     this.scheduleRestart();
   }
 
@@ -366,8 +339,7 @@ export class MinecraftWorldProxy implements World {
       } else if (req.kind === 'drain') {
         value = await host.drainPendingEvents((e) => e.source === this.id);
       } else if (req.kind === 'cognition') {
-        // 句柄是 core 上的 getter,Persona的开关一关它就没了 —— 每次现取。
-        // 工具白名单由那一侧按本 World tools() 校验(与真 World 共用同一份声明)。
+        /** 能力按当前 getter 读取，跨进程只发送白名单字段。 */
         const port = host.cognition;
         value = port
           ? await port.request(req.req)
@@ -390,8 +362,7 @@ export class MinecraftWorldProxy implements World {
         host.reportUsage(note.usage, note.opts);
         return;
       case 'arm-deferred': {
-        // 渲染回调留在子进程登记表;这里代挂,发车刻 IPC 回去现拿正文。
-        // rpc 失败(子进程没了/超时)按 null 处理 → 该项蒸发,与契约一致。
+        /** 事件消费时请求子进程渲染；RPC 失败返回 null。 */
         const type = note.type;
         host.pushDeferred(
           {
@@ -442,7 +413,7 @@ export class MinecraftWorldProxy implements World {
     child.send({ t: 'cast', cast });
   }
 
-  /** x-hot 配置的采样推送:控制台热改最迟 1s 到达子进程 */
+  /** 每秒采样并推送配置。 */
   private pushConfigIfChanged(): void {
     if (!this.ready) return;
     this.pushCapsIfChanged();
@@ -452,11 +423,7 @@ export class MinecraftWorldProxy implements World {
     this.cast({ kind: 'config', cfg: JSON.parse(json) as MinecraftWorldOptions['cfg'] });
   }
 
-  /**
-   * 可选宿主能力的可用位。`host.cognition` 是 getter(Persona的全局开关热改),
-   * 而子进程那边的 World 要能用 `if (host.cognition)` 判断能力在不在 —— 搭配置那条
-   * 采样线走,最迟 1s 到位;真正调用时主进程还会再现取一次句柄。
-   */
+  /** 每次采样调用能力 getter。 */
   private pushCapsIfChanged(): void {
     const on = this.host?.cognition !== undefined;
     if (on === this.lastCaps) return;

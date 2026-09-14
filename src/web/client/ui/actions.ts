@@ -1,12 +1,4 @@
-/**
- * 「一次操作期间」的两件事：`disable`（把一组控件置灰）与 `copyButton`（复制 + 回执）。
- *
- * 归在一处是因为它们共享同一个语境——用户按下一颗按钮之后、结果回来之前的那几百
- * 毫秒。那段时间里控制台要做两件事：**别让人重复点**，以及**做完了要吭一声**。
- *
- * 两件都不新增样式：`disable` 只动 `disabled` 属性（`.btn:disabled` / `.field:disabled`
- * 既有样式已经处理了置灰），`copyButton` 就是一颗 `.btn` 加一条既有的 `.toast`。
- */
+/** 操作期间禁用控件，以及复制文本并报告结果。 */
 
 import type {
   ConsoleCopyOptions,
@@ -20,15 +12,7 @@ import type { OverlayEnv } from './overlay.ts';
 import { drawer } from './overlay.ts';
 import { S } from './strings.ts';
 
-/**
- * 局部禁用。返回的 `Disposable` 把每个控件放回**它自己原本的**状态。
- *
- * 恢复原值而不是一律 `false`：一排控件里本来就有几颗是禁用的（上游没就绪、
- * 权限不足），一律置回可用等于把它们悄悄解禁——用户点下去才发现后端根本不认。
- *
- * 同一个控件传两次只记第一次的原值。不去重的话第二次会把"已经被我们置成 true"
- * 当成原状记下来，恢复时按顺序放回去，最后一手写的是 true——一颗永远灰着的按钮。
- */
+/** 临时禁用控件；dispose 恢复各自原值。重复控件只记录第一次的值。 */
 export function disable(els: readonly ConsoleDisablable[]): Disposable {
   const saved: { el: { disabled: boolean }; was: boolean }[] = [];
   const seen = new Set<object>();
@@ -55,13 +39,7 @@ function navigatorOf(doc: Document): Navigator | null {
   return doc.defaultView?.navigator ?? (globalThis as { navigator?: Navigator }).navigator ?? null;
 }
 
-/**
- * 降级路线：把文本塞进一个离屏 `textarea`，选中，走 `document.execCommand('copy')`。
- *
- * `navigator.clipboard` 只在安全上下文（https / localhost）里有，控制台经常是从
- * 局域网另一台机器上打开的，那边它就是 `undefined`。没有这条降级的话，那台机器上
- * 所有复制按钮都是死的。
- */
+/** Clipboard API 不可用或失败时，使用可聚焦的离屏 textarea 与 execCommand 复制。 */
 function execCopy(env: OverlayEnv, value: string): boolean {
   const doc = env.doc as Document & { execCommand?: (cmd: string) => boolean };
   if (typeof doc.execCommand !== 'function') return false;
@@ -96,16 +74,7 @@ async function writeClipboard(env: OverlayEnv, value: string): Promise<boolean> 
   return execCopy(env, value);
 }
 
-/**
- * 复制按钮。
- *
- * 文本允许给函数：面板上那串值常常是活的（某个实时坐标、某次调用的最新回执），
- * 渲染时抓下来的快照到手就过期了——那正是"复制出来的跟屏幕上写的不一样"这类
- * 假 bug 的来源。
- *
- * `show` 由 `createConsoleUi` 传进来而不是这里自己 `toast(env, …)`：同一个面板只
- * 留一条 toast 的规矩记在那个实例的闭包里，绕过去就会叠成一摞。
- */
+/** 函数形式的文本在点击时读取；show 使用所属 UI 实例的单条 toast。 */
 export function copyButton(
   env: OverlayEnv,
   show: (text: string, tone?: 'ok' | 'bad') => void,
@@ -127,8 +96,7 @@ export function copyButton(
       show(o.okText ?? S.copied, 'ok');
       return;
     }
-    // 两条路都不通:出声 + 把文本摊开让用户自己选取。静默失败的复制按钮比没有
-    // 更糟——用户以为复制成功了,粘出来的是上一次的剪贴板内容。
+    // 两种复制方式均失败时展示文本，供手动选取。
     show(S.copyFailed, 'bad');
     drawer(env, label, value);
   };

@@ -1,22 +1,6 @@
 /**
- * corti-soulmate 的浏览器扩展 —— 七个面板，组成同一个人格页。
- *
- * ```
- * persona:corti-soulmate  (Persona.console())  workspace / memory / history
- *                 (consolePages())        checkpoints / reset / dream
- * ```
- *
- * 两组住在同一个 bundle 里:构建脚本按**目录名**推 asset key,`bots/corti-soulmate/console/`
- * 只出得来一份产物。两条声明接缝在装配时合成同一个 `persona:corti-soulmate`，面板键都在
- * 下面这张 `panels` 表里。
- *
- * 这个文件只做两件事:**装配**与**共享 helper**(取数—渲染骨架、错误措辞、
- * 服务端各方法的返回形状)。面板本体各在自己的文件里。
- *
- * 与外界的依赖只有一条:`client-panel.ts` 里的**类型**。没有 `fetch`、没有
- * `document.body`、没有 `window.__*`、没有裸定时器——数据面一律走 `ctx.invoke`,
- * DOM 一律用 `ctx.ui` 的原语,轮询走 `ctx.interval`,防抖走 `ctx.timeout`,
- * 未保存改动走 `ctx.guardLeave`。
+ * Persona 与 bot 声明的面板合并到同一浏览器产物。
+ * 声明分别位于 ../persona/consoleSurface.ts 与 ../console-page.ts。
  */
 
 import type {
@@ -173,12 +157,10 @@ export interface DreamTriggered {
 // 共享 helper
 // ---------------------------------------------------------------------------
 
-/** 错误 → 一句人话。`ConsoleInvokeError` 带的就是服务端的措辞。 */
 export function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** 改写一条 `msgline` 的正文与配色(那一行是活的,每次操作都改)。 */
 export function setMsg(el: HTMLElement, text: string, bad = false): void {
   el.textContent = text;
   el.classList.toggle('bad', bad);
@@ -188,7 +170,7 @@ export interface AutoloadOptions<T> {
   loading: string;
   failed: string;
   load(): Promise<T>;
-  /** `reload` 重跑一遍取数与渲染——改完自己的状态之后调它,而不是重挂面板。 */
+  /** reload 重新加载数据并渲染。 */
   render(data: T, reload: () => void): Node[];
 }
 
@@ -216,31 +198,21 @@ export function autoload<T>(ctx: ConsolePanelContext, opts: AutoloadOptions<T>):
   run();
 }
 
-/** 一行灰色小注。 */
 export function dimLine(ctx: ConsolePanelContext, text = ''): HTMLElement {
   return ctx.ui.h('div', 'ct-dim', text);
 }
 
-/** ISO 时间戳 → `2026-08-12 18:56`,取不到就原样。 */
 export function stamp(iso: string | null | undefined): string {
   if (!iso) return '—';
   return iso.slice(0, 19).replace('T', ' ');
 }
 
-/**
- * git 状态 → 一行人话。存档点、版本历史、工作区三处都要印同一句,
- * 措辞散在三处迟早各说各的。
- */
 export function gitLine(st: MediumStatus): string {
   if (!st.available) return 'git 不可用';
   if (!st.repo) return 'persona/ 尚未纳入 git(bot 启动后自动建仓并打 checkpoint0)';
   return `git ${st.head ?? '—'} · ${st.dirty ? '有未提交改动' : '干净'} · ${st.tags.length} 个存档点`;
 }
 
-/**
- * 一段 diff → 着色后的 HTML。**只在 `.diffbox` 里用**,那三个 class
- * (`di-add` / `di-del` / `di-hunk`)是控制台既有样式表里的,不是本页自创的。
- */
 export function colorDiff(ctx: ConsolePanelContext, text: string): HTMLElement {
   const box = ctx.ui.h('div', 'diffbox');
   box.innerHTML = String(text || '')
@@ -259,11 +231,6 @@ export function colorDiff(ctx: ConsolePanelContext, text: string): HTMLElement {
 // ---------------------------------------------------------------------------
 
 const bundle: ConsoleClientBundle = {
-  /**
-   * 键是**局部** panel id。前三个对应 `PERSONA_PANELS`(Persona自报),
-   * 后四个对应 `CORTI_OPS_PANELS`(装配层的部署面)。
-   * 声明与扩展同进同退:`tests/web/persona-corti-console.test.ts` 拿两份清单对咬。
-   */
   panels: {
     workspace: workspacePanel,
     memory: memoryPanel,

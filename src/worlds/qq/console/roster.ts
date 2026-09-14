@@ -1,11 +1,3 @@
-/**
- * 面板 `roster` —— 监听名单:监听哪些群、哪些私聊。
- *
- * 每张卡片可单独开关、改号、删除。任何一次改动都把**整份名单**回传服务端
- * (`roster.set`),再重新取一遍回填——服务端是唯一权威,本地这份只是编辑期的副本。
- * 开关变化会让 World 推一条 `qq.watch` 事件,所以"停用"不是静默的。
- */
-
 import type {
   ConsolePanelContext,
   ConsolePanel,
@@ -39,7 +31,6 @@ export const rosterPanel: ConsolePanel = {
       failed: '监听名单不可用(QQ 接入没开启时读不到)',
       load: async () => ({
         roster: await ctx.invoke<QQRoster>('get'),
-        // 名字只是好看,取不到不该让整块名单读不出来
         names: await ctx.invoke<QQConvNames>('names').catch(() => NO_NAMES),
       }),
       render: (view, reload) => [sheet(ctx, view, reload)],
@@ -52,11 +43,9 @@ function sheet(ctx: ConsolePanelContext, view: RosterView, reload: () => void): 
   const card = ui.sheet({
     title: '监听名单',
     en: '群号 + 私聊 QQ 号',
-    desc: '每张卡片可单独开关、改号、删除,改动立即生效并写回 config.json;'
-      + '开关变化会推一条事件,让 bot 知道自己参与的会话变了。',
+    desc: '改动立即生效并写入 config.json。加入或移出监听的会话会通知 bot。',
   });
 
-  /** 把整份名单回传,不论成败都重新取一遍与服务端对齐。 */
   const save = (action: string): void => {
     void ctx
       .invoke('set', [view.roster.groups, view.roster.privates])
@@ -66,7 +55,6 @@ function sheet(ctx: ConsolePanelContext, view: RosterView, reload: () => void): 
       )
       .then(() => {
         reload();
-        // 监听条数变了 → 页头那个"监听 群 N · 私聊 M"徽标当场过期
         void ctx.refresh();
       });
   };
@@ -116,8 +104,6 @@ function card(
   const { ui } = ctx;
   const row = ui.h('div', entry.enabled ? 'qq-rcard' : 'qq-rcard off');
 
-  // `ctx.ui` 没有勾选框原语,用按钮表达同一件事:按钮上写的是**当前状态**,
-  // 点一下切到另一边。
   const toggle = ui.button(entry.enabled ? '监听中' : '已停用', {
     size: 'sm',
     variant: entry.enabled ? 'primary' : 'plain',
@@ -130,8 +116,6 @@ function card(
 
   const idInput = ui.input({ value: String(entry.id), cls: 'mono', placeholder: WORDS[kind].num });
   idInput.inputMode = 'numeric';
-  // `onInput` 是逐次击键触发的,拿它提交等于边打字边存;改号要的是"敲完再说",
-  // 所以这里自己听 change/Enter——监听带 `ctx.signal`,面板一卸就摘。
   idInput.addEventListener('change', () => {
     const n = Number(idInput.value.trim());
     const list = entriesOf(view.roster, kind);

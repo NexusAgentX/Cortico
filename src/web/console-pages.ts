@@ -1,20 +1,4 @@
-/**
- * Console Page Registry —— 服务端把"各方贡献的控制台表面"收成一份 manifest 的地方。
- *
- * 一个贡献方 = 控制台导航上的一页(page)。`Provider` 一词只留给 LLM 供应端点,
- * 见 `shared/console-protocol.ts` 顶注。
- *
- * 这是中央聚合边界，但**它不认识任何具体的一页**：收什么、叫什么、有几个，
- * 全由装配层（`src/bot.ts`）决定并以 `ConsolePageSource` 的形式交进来。
- * 本文件里不允许出现任何 World id 分支——出现了就说明中央知识又长回来了。
- *
- * 三件职责：
- * 1. 收集与隔离：逐个 source 取贡献，**一个炸了不影响其余**。
- * 2. 校验：id 命名空间、panel 唯一性；有问题的一页整个丢掉并记日志，
- *    而不是让半个坏 manifest 上线。
- * 3. 解析：panel 调用面 → 那一页的 `invoke`、panel 流式面 → 那一页的 `stream`；
- *    asset key → 构建产物 URL。
- */
+/** 将 ConsolePageSource 贡献组装为 manifest；逐个隔离异常、校验声明，并解析面板调用、流与资源。 */
 
 import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -55,16 +39,7 @@ export interface ConsolePageSource {
     | Promise<ConsolePageContribution | null>;
 }
 
-/**
- * 一页的浏览器资源表。两个来源:仓库自带的页来自 `dist/web/asset-manifest.json`,
- * 扩展带来的页来自它自己包里的预构建产物。同一个 key 撞上时**仓库内的页赢**——
- * 扩展换不掉自带面板。
- *
- * **这是 asset 安全模型的执行点。** 一页只有一个 key（就是它的 id），两个来源的
- * URL 都要过 `isSafeAssetUrl`:dist 的 manifest 被人手改坏、扩展的包名或版本号带上
- * 奇怪字符,都放不出能跳出 `/assets/` 的路径。扩展那一侧的 URL 由服务端按
- * `extensionAssetUrl` 分配,扩展自己给不出路径。
- */
+/** 资源来自 dist 清单或扩展预构建产物，同 key 时 dist 优先；URL 均经 isSafeAssetUrl 校验，扩展 URL 由服务端分配。 */
 export class ConsoleAssets {
   private readonly distDir: string;
   private readonly log: Logger;
@@ -124,19 +99,16 @@ export class ConsoleAssets {
       return;
     }
 
-    // 产物的协议版本要比对。旧协议的 dist 被静默当成当前产物,表现是一堆
-    // "扩展加载失败"而看不出根因。
+    // 拒绝不匹配的产物协议版本。
     if (parsed.protocolVersion !== CONSOLE_PROTOCOL_VERSION) {
       this.log.error(
         `asset-manifest.json 的协议版本是 ${String(parsed.protocolVersion)},`
-        + `本进程认的是 ${CONSOLE_PROTOCOL_VERSION}——请重跑 pnpm build:web。扩展全部不加载。`,
+        + `本进程要求 ${CONSOLE_PROTOCOL_VERSION}，所有扩展产物已拒绝加载。请先停止 bot，再运行 pnpm build:web。`,
       );
       this.manifest = { protocolVersion: CONSOLE_PROTOCOL_VERSION, core: null, providers: {} };
       return;
     }
 
-    // 无原型对象:page id 虽然过了正则、够不着 `__proto__` 这类键,但查表本身
-    // 不该有"继承来的答案"——那是一类不该存在的可能性,不是一道要靠上游拦的闸。
     const pages: Record<string, ConsoleAssetEntry> = Object.create(null) as Record<string, ConsoleAssetEntry>;
     for (const [key, entry] of Object.entries(parsed.providers ?? {})) {
       if (!isSafeAssetUrl(entry?.js)) {
@@ -169,10 +141,7 @@ export class ConsoleAssets {
     return this.manifest.core;
   }
 
-  /**
-   * 某一页的浏览器资源。**只按 key 查两张表**（dist 先、扩展后），查不到就是没有——
-   * 不拼路径、不回退、不猜。
-   */
+  /** 按 key 依次查询 dist 与扩展资源表，缺失时返回 undefined。 */
   forPage(pageId: string): ConsoleAssetEntry | undefined {
     const key = assetKeyForPage(pageId);
     return this.manifest.providers[key] ?? this.extensionPages[key];
@@ -250,8 +219,7 @@ export class ConsolePageRegistry {
       .filter((c) => !rejected.has(c.id))
       .map((c) => {
         const entry = toPageManifest(c, this.deps.assets.forPage(c.id));
-        // toPageManifest 会丢掉不安全的 href(javascript: 一类)。丢一条就得
-        // 说一声——静默消失的链接是最难查的那种"面板少了个按钮"。
+        // 记录被过滤的链接，保留其余合法成员。
         const dropped = (c.links?.length ?? 0) - (entry.links?.length ?? 0);
         if (dropped > 0) {
           this.deps.log.error(`provider ${c.id} 有 ${dropped} 条链接的 href 不安全,已丢弃`, {
@@ -283,13 +251,7 @@ export class ConsolePageRegistry {
     };
   }
 
-  /**
-   * 只取灯。与 `manifest()` 走同一批 source，但**不校验、不解析 asset、不投影面板**——
-   * 这条路是给秒级轮询用的，跑的每一步都得对得起那个频率。
-   *
-   * 声明不合法的页在这里不会被丢掉（校验属于 manifest 那条路）：id 拼错的
-   * 页本来就没有一行导航能挂灯，多报一颗没人读的灯不构成问题。
-   */
+  /** 获取状态灯，不执行 manifest 的声明校验、资源解析或面板序列化。 */
   async lamps(language: Language = 'zh'): Promise<Record<string, ConsoleLamp[]>> {
     const out: Record<string, ConsoleLamp[]> = {};
     for (const c of await this.collect(language)) {

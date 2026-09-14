@@ -169,7 +169,7 @@ describe('append_file:只往后长的那条路', () => {
 
   const appendTool = (): ToolDef => tool(p, 'append_file');
 
-  it('旧正文一字不动,回执报加了多少、现在多大', async () => {
+  it('追加保留旧正文，回执报告追加量与总大小', async () => {
     await run(writeTool(p), { path: '日志/0828.md', content: '# 0828\n第一条\n' });
     const out = await run(appendTool(), { path: '日志/0828.md', content: '第二条\n' });
     expect(out).toBe('[appended] 日志/0828.md +4 字符,现在 15 字符。');

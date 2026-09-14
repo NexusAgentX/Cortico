@@ -8,7 +8,6 @@ import { withLanguage } from './language.ts';
 import type { Lifecycle } from './lifecycle.ts';
 import { openStream, type SocketLike } from './stream.ts';
 
-/** 环境依赖。全部注入,测试里换成假件即可跑完整条重连逻辑。 */
 export interface SocketEnv {
   /** `/ws/debug` → 绝对地址 */
   wsUrl(path: string): string;
@@ -17,22 +16,18 @@ export interface SocketEnv {
   clearTimer(id: number): void;
 }
 
-/** 只取 `protocol` / `host` 两项:够拼地址,又不必在测试里造一整个 `Location`。 */
 export interface LocationLike {
   protocol: string;
   host: string;
 }
 
-/** 页面是 https 时必须 wss——混合内容会被浏览器直接掐掉,且没有可读的报错。 */
+/** HTTPS 页面使用 WSS。 */
 export function wsUrlOf(loc: LocationLike, path: string): string {
   const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${proto}//${loc.host}${path}`;
 }
 
-/**
- * 浏览器里的那一套。`win` 显式传进来,免得这个模块自己去摸全局;类型带上
- * `typeof globalThis` 是因为 `WebSocket` 构造器挂在全局那一半上,不在 `Window` 接口里。
- */
+/** typeof globalThis 提供 WebSocket 构造器类型。 */
 export function browserSocketEnv(win: Window & typeof globalThis): SocketEnv {
   return {
     wsUrl: (path) => wsUrlOf(win.location, withLanguage(path)),
@@ -45,23 +40,17 @@ export function browserSocketEnv(win: Window & typeof globalThis): SocketEnv {
 export interface FrameworkSocketOptions {
   /** `/ws/debug` / `/ws/sessions` */
   path: string;
-  /** 本次挂载的账本。abort = 连重连一起停;句柄也登记在里面。 */
+  /** abort 停止连接与重连；句柄登记在该 lifecycle。 */
   lifecycle: Lifecycle;
   /** 一帧(已解析)。非对象的帧(数组、裸字符串)不会送到这儿。 */
   onFrame(frame: Readonly<Record<string, unknown>>): void;
-  /**
-   * 连上/掉线。**面板自己卸载导致的关闭不算掉线**——那时候画"接口不可达"是句谎话,
-   * 而且要写的那个节点马上就要被清掉了。
-   */
+  /** 连接和断线通知；主动关闭不报告断线。 */
   onNet?(online: boolean): void;
   onError?(err: unknown): void;
   env: SocketEnv;
 }
 
-/**
- * 开一条框架通道。返回的句柄已登记在 `lifecycle` 上——想提前停就自己 `dispose()`,
- * 忘了也不会漏,页面离开时账本会收。
- */
+/** 返回的通道句柄已登记在 lifecycle，可提前 dispose。 */
 export function openFrameworkSocket(opts: FrameworkSocketOptions): ConsoleStreamHandle {
   const { env } = opts;
   const handle = openStream({
@@ -74,7 +63,6 @@ export function openFrameworkSocket(opts: FrameworkSocketOptions): ConsoleStream
     handlers: {
       open: () => opts.onNet?.(true),
       close: (willRetry) => {
-        // willRetry=false 只在"我们自己收工"时出现,见上面 onNet 的注释。
         if (willRetry) opts.onNet?.(false);
       },
       message: (text) => {

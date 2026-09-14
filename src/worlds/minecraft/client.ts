@@ -1,16 +1,6 @@
 /**
- * 一份真 Minecraft 客户端进程:拉起来、连同一个服务器、盯着它的窗口。
- * 两种用法共用这一份——**观察者摄像机**(附身 bot,窗口即"主视角"画面)与
- * **人类玩家**(自己进服跟她一起玩)。
- *
- * 与 mc-server 同一套 phase 机器(state/start/stop + 健康探测)。
- * 健康判据是"窗口出现了没":客户端没有可探的端口,而画面只在有窗口时存在。
- *
- * 进服之后做什么(附身、传送到 bot 旁边)不在这里下命令:那要么走服务器控制台、
- * 要么走 bot 的聊天权限,两者都是 World 层的东西,由 world.ts 编排。
- *
- * 窗口起来后把标题改成这份客户端的账号名,OBS 按标题就能和另一份分开。
- * 直连进服时游戏会自己 updateTitle 一次,隔一段再写回;之后不再保活。
+ * 管理观察者或玩家客户端进程。Windows 通过 ownerPid 的可见窗口判断就绪，其他平台使用 stdout 标记。
+ * 进服后的附身和传送由 world.ts 编排；窗口标题按账号名设置，并在直连加载后重设一次。
  */
 import { logLines } from '../../core/ipc-logger.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -30,7 +20,7 @@ export interface ClientState {
   enabled: boolean;
   detail: string | null;
   pid: number | null;
-  /** 窗口已出现(画面可抓) */
+  /** 已检测到窗口就绪。 */
   windowReady: boolean;
   /** 当前进程所用目录；停机时为下一次启动的配置目录。 */
   gameDir: string;
@@ -62,33 +52,19 @@ export interface GameClientOptions {
    * 并按 syncGui 写 SpectatorPlus 的同步屏幕开关。
    */
   noPauseOnLostFocus: () => boolean;
-  /**
-   * GUI 演出:开着则 bot 开箱子/合成/熔炉时,SpectatorPlus 把那张界面同步到
-   * 摄像机画面上(配合 show 节拍才像人)。只在启动时写入,客户端重启生效。
-   * 不给按关处理(玩家客户端用不上)。
-   */
+  /** 启动前写入 SpectatorPlus 的 GUI 同步开关；未指定时关闭，重启客户端生效。 */
   syncGui?: () => boolean;
-  /**
-   * 启动前把 chatVisibility 掰回 FULL:与摄像机共用一个游戏目录的那份客户端才要,
-   * 否则摄像机为画面干净关掉的聊天会让人连命令行都打不开。
-   */
+  /** 启动前将 chatVisibility 设为 FULL，用于与观察者共用 gameDir 的玩家客户端。 */
   chatUsable: () => boolean;
-  /**
-   * 启动前按账号名把选中的皮肤铺进这份游戏目录。离线服的玩家档案里没有材质,
-   * 皮肤全靠客户端侧的 CustomSkinLoader 读本地文件,而两份客户端各渲染各的:
-   * 她和玩家两个账号的皮肤在每一份游戏目录里都要有。
-   */
+  /** 启动前将所选账号皮肤写入客户端目录，由 CustomSkinLoader 读取。 */
   skins?: () => Array<{ username: string; bytes: Buffer }>;
   /** 异常退出后的自动重启上限；0 或省略时不重启。人为 stop() 永不重启。 */
   restartMax?: () => number;
   /** 第一次重启前等多久,之后逐次加倍 */
   restartBackoffMs?: number;
-  /**
-   * 崩溃计数的滚动窗口。上一次崩溃过了这么久还没再崩,计数从头起——
-   * 「重启成功后归零」只能这么兑现:窗口起来 5 秒又崩仍是风暴,不算活过来。
-   */
+  /** 相邻异常退出间隔超过此值时，重启计数归零。 */
   restartWindowMs?: number;
-  /** 非人为退出时报一次。attempt=第几次重启,0=不再重启(没开或已到上限) */
+  /** 非预期退出时通知；attempt 为重启序号，0 表示不再重启。 */
   onCrash?: (info: { detail: string; attempt: number; max: number; delayMs: number }) => void;
   /** World 是否正在关闭。关闭期的 Ctrl+C 按正常退出处理，不报故障或安排重启；省略时视为未关闭。 */
   shuttingDown?: () => boolean;
@@ -99,10 +75,7 @@ export interface GameClientOptions {
   commandOverride?: { command: string; args: string[] };
   windowPollMs?: number;
   windowTimeoutMs?: number;
-  /**
-   * 直连进服后游戏会自己 updateTitle 一次,隔这么久再写回账号名。
-   * 之后默认不再换世界,不再保活。
-   */
+  /** 直连加载后延迟重设窗口标题的时间。 */
   titleSettleMs?: number;
   /** 测试注入:窗口是否已出现 */
   findWindow?: (opts: { ownerPid: number }) => Promise<boolean>;
@@ -116,13 +89,9 @@ export function clientWindowTitle(username: string): string | null {
   return title || null;
 }
 
-/**
- * 非正常退出时给一句人话。Windows 的原生崩溃码是 32 位 NTSTATUS,十进制看不出所以然,
- * 而 0xC0000005(真崩)与 0xC000013A(Ctrl+C 关窗)十进制长得几乎一样,曾被当成同一回事。
- */
+/** 将 Windows 32 位 NTSTATUS 退出码格式化为十六进制及已知含义。 */
 const NATIVE_EXIT_REASONS: Record<number, string> = {
-  0xc0000005: '原生访问违例:多数是显卡驱动(看 stdout 尾部有没有 NVIDIA/DxPresent 字样);'
-    + '若尾部没有驱动信息,再查 java 版本与游戏自带的 LWJGL 对不对得上',
+  0xc0000005: '原生访问违例',
   0xc0000017: '内存不足',
   0xc000013a: '控制台 Ctrl+C 或关窗',
   0xc0000409: '栈缓冲区溢出',
@@ -131,25 +100,13 @@ const NATIVE_EXIT_REASONS: Record<number, string> = {
 /** 控制台 Ctrl+C / 关窗的原生退出码。关机流程里收到它不算崩 */
 const CTRL_C_EXIT = 0xc000013a;
 
-/**
- * 非 Windows 上判定"窗口出来了"的日志锚点。原版在 GLFW 建好窗口之后立刻打这一行
- * (`RenderSystem.getBackendDescription()`),一次启动只出现一次,Fabric 与模组不改它。
- *
- * Windows 那条路仍按 ownerPid 找真窗口:同一台机器上还有操作员自己玩的那份客户端时,
- * 除了进程没有第二个凭据分得开两扇窗,日志办不到这件事。
- */
+/** 非 Windows 平台通过 stdout 中的建窗标记判断就绪；Windows 使用 ownerPid 匹配窗口。 */
 const WINDOW_READY_LINE = /Backend library: LWJGL/;
 
-/** 拼回被切断的锚点行需要的接缝长度,取锚点本身的两倍有余。 */
+/** 保存标记两倍长度的尾部，以匹配跨 stdout chunk 的标记。 */
 const WINDOW_SCAN_CARRY = 64;
 
-/**
- * 逐片扫 stdout 找 {@link WINDOW_READY_LINE}。
- *
- * 到达即判,不等轮询时再回头看那 2000 字的日志尾巴:客户端启动期刷屏很快,四秒的
- * 输出装不下,锚点会在两次轮询之间被冲走。`carry` 是上一片的尾巴,负责接住被切成
- * 两段送来的锚点行。
- */
+/** 逐段扫描 stdout，保留上段尾部用于跨段匹配。 */
 export function scanWindowReady(carry: string, chunk: string): { seen: boolean; carry: string } {
   const scanned = carry + chunk;
   if (WINDOW_READY_LINE.test(scanned)) return { seen: true, carry: '' };
@@ -157,7 +114,7 @@ export function scanWindowReady(carry: string, chunk: string): { seen: boolean; 
 }
 
 export function explainExit(code: number | null): string {
-  if (code === null) return '进程被杀掉(没有退出码)';
+  if (code === null) return '进程已退出(没有退出码)';
   if (code <= 0xffff) return `code=${code}`;
   const reason = NATIVE_EXIT_REASONS[code];
   return `code=${code}(0x${code.toString(16).toUpperCase()})${reason ? `,${reason}` : ''}`;
@@ -173,7 +130,7 @@ function prepareNatives(nativeJars: string[], nativesDir: string, log: Logger): 
       const proc = spawn('tar', ['-xf', jar, '-C', nativesDir, '*.dll'], { windowsHide: true });
       proc.on('error', () => undefined);
     } catch {
-      /* 解不出来就交给 LWJGL 自己从 classpath 解,不致命 */
+      /** 解压失败时保留 classpath 加载路径。 */
     }
   }
   // 解出来的 dll 可能带着 windows/x64/... 的路径,摊平到根下
@@ -202,7 +159,7 @@ export class GameClient {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private titleTimer: ReturnType<typeof setTimeout> | null = null;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
-  /** 滚动窗口内的崩溃次数与上一次崩溃时刻(防重启风暴) */
+  /** 相邻异常退出计数及上次时刻。 */
   private crashCount = 0;
   private lastCrashAt = 0;
   private logTail = '';
@@ -215,10 +172,7 @@ export class GameClient {
 
   constructor(private readonly opts: GameClientOptions) {}
 
-  /**
-   * 给帧源的窗口线索:这一份客户端的进程号,没就绪(或进程已走)时 null。
-   * 帧源只认它——同名同标题的第二份客户端(人自己玩的那份)不该被当成她的画面。
-   */
+  /** 当前已就绪进程的 PID，供帧源匹配窗口；未就绪时为 null。 */
   windowHint(): { pid: number } | null {
     const pid = this.proc?.pid;
     return this.windowReady && pid !== undefined ? { pid } : null;
@@ -262,7 +216,6 @@ export class GameClient {
     }
     this.activeGameDir = gameDir;
     if ('nativeJars' in launch) prepareNatives(launch.nativeJars, launch.nativesDir, this.opts.log);
-    // 要在进程起来之前写好:两份配置都只在启动时读一次,退出时还会整份重写
     if (!this.opts.commandOverride) {
       if (this.opts.noPauseOnLostFocus()) {
         applyLaunchOptions(gameDir, this.opts.log);
@@ -283,7 +236,7 @@ export class GameClient {
     this.windowReady = false;
     this.windowLineSeen = false;
     this.windowScanCarry = '';
-    this.detail = '客户端启动中(要加载资源与着色器)';
+    this.detail = '客户端启动中';
     const tail = (chunk: Buffer) => {
       const text = chunk.toString();
       this.logTail = (this.logTail + text).slice(-2000);
@@ -316,8 +269,7 @@ export class GameClient {
       const detail = `客户端退出 ${explainExit(code)};完整日志 ${this.gameLogPath()};stdout 末尾: ${this.logTail.slice(-400)}`;
       this.opts.log.emit('error', `${this.opts.label}进程退出`, { event: 'exit', data: { exitCode: code, gameLog: this.gameLogPath() } });
       this.fail(detail);
-      // 只有「进程自己死了」这一条走自动重启:spawn 失败与等窗口超时都不是崩溃,
-      // 前者是配置坏了、后者进程还活着,重启它们只会撞同一堵墙。
+      /** 仅进程非预期退出触发自动重启；spawn 失败和窗口就绪超时不重启。 */
       this.scheduleRestart(detail);
     });
     this.opts.log.info(`${this.opts.label}启动中 pid=${proc.pid}`);
@@ -406,18 +358,14 @@ export class GameClient {
     }, interval);
   }
 
-  /**
-   * 窗口出来了没有。Windows 问 user32 要 ownerPid 名下的可见窗口;别的平台没有这条路,
-   * 退到"进程还活着 + stdout 打过建窗那行"。后者认不出是谁的窗口,所以只在 user32
-   * 够不着的平台上用。
-   */
+  /** Windows 查询 ownerPid 对应的可见窗口；其他平台要求进程仍运行且已读到建窗标记。 */
   private async windowSeen(pid: number): Promise<boolean> {
     if (this.opts.findWindow) return this.opts.findWindow({ ownerPid: pid });
     if (process.platform === 'win32') return findWindow({ ownerPid: pid, log: this.opts.log });
     return this.proc?.exitCode === null && this.windowLineSeen;
   }
 
-  /** 游戏自己那份日志。原生崩溃一个字都不往 stdout 打,崩因只在这个文件里。 */
+  /** 客户端日志文件路径。 */
   private gameLogPath(): string {
     return join(this.directory(), 'logs', 'latest.log');
   }
@@ -448,7 +396,7 @@ export class GameClient {
     this.opts.log.info(`${this.opts.label}将在 ${Math.round(delayMs / 1000)} 秒后自动重启(第 ${this.crashCount}/${max} 次)`);
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
-      if (this.phase === 'stopped') return; // 等的这段里人自己来关了
+      if (this.phase === 'stopped') return;
       void this.start();
     }, delayMs);
     this.restartTimer.unref?.();

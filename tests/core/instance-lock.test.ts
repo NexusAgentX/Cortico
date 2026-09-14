@@ -49,7 +49,7 @@ describe('acquireInstanceLock', () => {
   it('同一个 dataDir 起第二个:拒绝启动,错误里带第一个的 pid', () => {
     held.push(acquireInstanceLock(tmp.dir));
     expect(() => acquireInstanceLock(tmp.dir)).toThrow(new RegExp(String(process.pid)));
-    expect(() => acquireInstanceLock(tmp.dir)).toThrow(/已经有一个实例在跑/);
+    expect(() => acquireInstanceLock(tmp.dir)).toThrow(/锁记录指向运行中的进程/);
   });
 
   it('陈旧锁(写锁的进程已经不在)自动接管并 warn', () => {
@@ -66,7 +66,7 @@ describe('acquireInstanceLock', () => {
     expect(warns[0].data).toMatchObject({ stalePid: stale });
   });
 
-  it('逃生口:--force-second-instance 放行,但留一条 error', () => {
+  it("--force-second-instance 允许继续启动并记录 error", () => {
     held.push(acquireInstanceLock(tmp.dir));
     const spy = spyLogger();
     const second = acquireInstanceLock(tmp.dir, { force: true, log: spy.log });
@@ -84,11 +84,11 @@ describe('acquireInstanceLock', () => {
       held.push(acquireInstanceLock(tmp.dir, { log: spy.log }));
       // 第二次:文件在、pid 活着 ⇒ 必拒,且不得把锁文件改成自己的
       const before = readFileSync(join(tmp.dir, INSTANCE_LOCK_FILE), 'utf8');
-      expect(() => acquireInstanceLock(tmp.dir)).toThrow(/已经有一个实例在跑/);
+      expect(() => acquireInstanceLock(tmp.dir)).toThrow(/锁记录指向运行中的进程/);
       expect(readFileSync(join(tmp.dir, INSTANCE_LOCK_FILE), 'utf8')).toBe(before);
     });
 
-    it('force 不再改写锁文件:锁仍归第一个实例,第二个退出也不会把它删掉', () => {
+    it("force 不取得锁所有权，释放时保留原锁", () => {
       const first = acquireInstanceLock(tmp.dir);
       held.push(first);
       const forced = acquireInstanceLock(tmp.dir, { force: true, log: nullLogger() });
@@ -98,12 +98,11 @@ describe('acquireInstanceLock', () => {
       forced.release();
       // 活进程持有的锁不能被 force 覆写或在另一个进程退出时删除。
       expect(existsSync(first.file)).toBe(true);
-      expect(() => acquireInstanceLock(tmp.dir)).toThrow(/已经有一个实例在跑/);
+      expect(() => acquireInstanceLock(tmp.dir)).toThrow(/锁记录指向运行中的进程/);
     });
 
     it('陈旧锁的启动时刻早于本机开机时刻:即便 pid 恰好被复用也按陈旧锁接管', () => {
-      // 崩溃后重启的常见形态是整机重启,pid 被别的进程复用。只看 process.kill(pid,0)
-      // 会把它误判成"上一个还活着",于是正常重启被自己的守卫拦在门外。
+      // 即使 PID 存在，早于本机开机时刻的锁记录也已失效。
       writeFileSync(join(tmp.dir, INSTANCE_LOCK_FILE), JSON.stringify({
         pid: process.pid, // 一定活着
         startedAt: '1999-01-01T00:00:00.000Z', // 早于任何一次开机
@@ -139,11 +138,11 @@ describe('acquireInstanceLock', () => {
       const errors = spy.calls.filter((c) => c.level === 'error');
       expect(errors).toHaveLength(1);
       expect(errors[0].data).toMatchObject({ nowPid: other });
-      // 不抢回来:抢锁只会让两个实例互相覆盖,事实报出来即可
+      // 所有权变化只报告，不覆盖锁文件。
       expect(JSON.parse(readFileSync(lock.file, 'utf8')).pid).toBe(other);
     });
 
-    it('自检不刷屏:同一次失守只报一次', () => {
+    it("同一锁异常状态只报告一次", () => {
       const spy = spyLogger();
       const lock = acquireInstanceLock(tmp.dir, { log: spy.log });
       held.push(lock);
@@ -161,7 +160,7 @@ describe('acquireInstanceLock', () => {
     expect(existsSync(join(tmp.dir, INSTANCE_LOCK_FILE))).toBe(false);
     const second = acquireInstanceLock(tmp.dir);
     held.push(second);
-    // 锁已被别人接管时,先退的那个不该把它删掉
+    // 释放时仅删除仍属于当前 PID 的锁。
     writeFileSync(second.file, JSON.stringify({ pid: deadPid(), startedAt: 'x', argv: [] }), 'utf8');
     second.release();
     expect(existsSync(second.file)).toBe(true);

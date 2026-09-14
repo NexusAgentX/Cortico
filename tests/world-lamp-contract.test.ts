@@ -1,13 +1,4 @@
-/**
- * 状态灯的 World 侧契约。
- *
- * 左栏一行放得下的只有那一小排点，所以它们是**唯一**能让人一眼看出"哪条链路
- * 不对劲"的东西。灯由 World 自报——框架既不从徽标反推，也不替谁猜。这份测试钉三件事：
- * 每个真 World 都报、每颗灯说得出自己是哪条链路、报的数目在版面装得下。
- *
- * 覆盖真 World 本身。构造参数只为能站起来，不连任何东西——所以这里读到的都是
- * **未启动**那一刻的灯，正好也是"引擎还没起来"该长什么样的样本。
- */
+/** 验证未启动 World 的状态灯声明:非空、名称唯一、状态合法且数量不超限。 */
 import { describe, expect, it } from 'vitest';
 import { MODULE_LAMP_MAX, type World, type WorldLamp } from '../src/core/types.ts';
 import { BilibiliWorld } from '../src/worlds/bilibili/world.ts';
@@ -33,18 +24,18 @@ const STATES: ReadonlyArray<WorldLamp['state']> = ['online', 'loading', 'error',
 
 describe('状态灯契约', () => {
   it.each(MODULES.map((make) => [make().id, make] as const))(
-    '%s：一条链路一颗，每颗都说得出自己是谁，数目装得下',
+    '%s:状态灯名称唯一、状态合法且数量不超限',
     (_id, make) => {
       const lamps = make().console?.()?.lamps ?? [];
-      expect(lamps.length, '每个 World 都该报灯——不报就是左栏上一行不出声的空位')
+      expect(lamps.length, 'World 必须声明状态灯')
         .toBeGreaterThan(0);
       expect(lamps.length).toBeLessThanOrEqual(MODULE_LAMP_MAX);
       for (const lamp of lamps) {
         expect(STATES).toContain(lamp.state);
-        expect(lamp.label, '一排同样大小的点，颜色说不清是哪条链路').toBeTruthy();
+        expect(lamp.label, '状态灯必须有名称').toBeTruthy();
         if (lamp.hint !== undefined) expect(typeof lamp.hint).toBe('string');
       }
-      // 同一排里链路名不重样,否则悬停读到两句一样的话
+
       expect(new Set(lamps.map((l) => l.label)).size).toBe(lamps.length);
     },
   );
@@ -77,7 +68,7 @@ describe('几个具体判据', () => {
     ]);
   });
 
-  it('未启动的引擎是灰，不是红：还没人指望它在跑', () => {
+  it('未启动的引擎显示 offline', () => {
     expect(find(new MinecraftWorld({ cfg: mcCfg }), '服务器')).toEqual({
       label: '服务器', state: 'offline', hint: '未启动',
     });

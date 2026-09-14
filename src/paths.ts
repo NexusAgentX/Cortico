@@ -1,38 +1,22 @@
 /**
- * 路径解析:把"代码包在哪"与"部署在哪"分成两个独立问题。
- *
- * `bots/<名字>/` 是**代码包**(index.ts / core/ / console/ / vtuber-pack/,全部进版本
- * 控制);`<部署根>/<名字>/` 是**一份部署**(deployment.json / config.json / .env /
- * data/ / persona|workspace/,整片不进版本控制)。一份部署用 `deployment.json` 的
- * `bot` 字段声明它引用哪个包,所以同一个包可以背好几份部署。
- *
- * 三个根的分工:
- *   repoRoot()       这份代码所在的检出。git worktree 里就是这个 worktree 自己。
- *   mainRepoRoot()   主仓库的根。worktree 共享主仓库的 .git,部署数据也该共享一份,
- *                    不该跟着临时 worktree 各起一套。
- *   deploymentRoot() 部署根。CORTICO_HOME 指到哪就是哪,没设就用默认值。
+ * repoRoot() 返回当前代码检出目录，mainRepoRoot() 返回所属主仓库目录。
+ * deploymentRoot() 解析运行数据根；每份部署的 deployment.json 指定 bot 代码包，
+ * 同一代码包可供多个部署使用。
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 
-/** 部署根的默认目录名(相对主仓库根)。整片 gitignore,见 .gitignore 与 release-audit。 */
+/** 默认部署目录，相对主仓库根；该目录不纳入版本控制。 */
 const DEFAULT_DEPLOYMENT_DIRNAME = 'deployments';
 
-/** bot 代码包所在的目录名(相对主仓库根)。包永远在仓库里,不跟着 CORTICO_HOME 走。 */
+/** 仓内 bot 代码包目录名，相对主仓库根；不受 CORTICO_HOME 影响。 */
 const PACKAGES_DIRNAME = 'bots';
 
-/**
- * LLM 端点的部署数据根(相对部署根)。它与各份部署平级但**不是**一份部署:
- * 没有 `deployment.json`,`listBots()` 因此看不见它。
- */
+/** 共享端点目录名，相对部署根；没有 deployment.json，因此不列为部署。 */
 const PROVIDERS_DIRNAME = 'providers';
 
-/**
- * 可执行运行时(llama-server 这类外部二进制)与模型文件的根,都相对部署根。与端点表同一个
- * 理由:装在这台机器上的二进制和权重是机器事实,几份部署共用一份。两者都不是部署,
- * `listBots()` 看不见。
- */
+/** 外部运行程序与模型文件的共享目录名，相对部署根。 */
 const RUNTIMES_DIRNAME = 'runtimes';
 const MODELS_DIRNAME = 'models';
 
@@ -50,14 +34,8 @@ export function repoRoot(): string {
 }
 
 /**
- * 从 `--git-common-dir` 求主仓库根。
- *
- * worktree 里 `.git` 是个文件、指向 `<主仓库>/.git/worktrees/<名字>`,而
- * `--git-common-dir` 给的是共享的那个 `<主仓库>/.git`,取父目录即主仓库根。主仓库里它
- * 回 `.git` 本身,父目录就是检出根,与 `from` 相同。
- *
- * 不在 git 仓里、或 git 不可用(没装/被策略挡住)时回退到 `from`——这条回退是有意的:
- * 打包分发的代码包里根本没有 .git。
+ * 根据 git --git-common-dir 解析主仓库根；worktree 使用共享 .git 的父目录。
+ * Git 不可用或目录不属于仓库时返回 from。
  */
 export function resolveMainRepoRoot(from: string): string {
   try {
@@ -79,12 +57,7 @@ export function mainRepoRoot(): string {
   return mainRepoRootCache;
 }
 
-/**
- * 从一个检出根的 `.env` 里读 `CORTICO_HOME`。
- *
- * 这里只认这一个名字:仓库根 `.env` **不是**密钥文件,密钥归部署单位自己
- * (见 src/deploy.ts 的 `secret()`)。值可以带引号,允许含空格。
- */
+/** 读取当前检出根 .env 中的 CORTICO_HOME，支持引号与包含空格的路径。 */
 function readDeploymentRootFromEnvFile(checkoutRoot: string): string {
   const file = resolve(checkoutRoot, '.env');
   if (!existsSync(file)) return '';
@@ -98,11 +71,8 @@ function readDeploymentRootFromEnvFile(checkoutRoot: string): string {
 }
 
 /**
- * 解析链:`process.env.CORTICO_HOME` > 仓库根 `.env` 里的 `CORTICO_HOME` > 默认值。
- *
- * 写相对路径按**主仓库根**解析(不是当前 worktree),写绝对路径原样采用。
- *
- * 参数摊开是为了可测:`deploymentRoot()` 拿真进程的三样东西调它。
+ * 依次使用进程 CORTICO_HOME、当前检出根 .env、默认目录名。
+ * 相对路径以主仓库根为基准，绝对路径规范化后使用。
  */
 export function resolveDeploymentRoot(
   env: NodeJS.ProcessEnv,
@@ -122,23 +92,19 @@ export function deploymentRoot(): string {
   return deploymentRootCache;
 }
 
-/** 一份部署的目录:config.json / .env / data/ / persona|workspace/ 都在这下面。 */
+/** 部署目录，包含 deployment.json、配置、密钥和运行数据。 */
 export function deploymentDir(name: string): string {
   return resolve(deploymentRoot(), name);
 }
 
-/**
- * LLM 端点表的根:一台机器上有哪些端点是**全局**事实,不该每份部署各存一份
- * (换一次 key 要改三处、同一个订阅端点要各授权一次都是那么来的)。
- */
+/** 同一部署根下共用的 provider 端点目录。 */
 export function providersRoot(): string {
   return resolve(deploymentRoot(), PROVIDERS_DIRNAME);
 }
 
 /**
- * 一个端点自己的目录。目录名是**端点名**(`config.providers` 的键)而不是 kind:
- * 一个 kind 可以背好几个端点(本机那条 `local` 就是 `openai-responses-compat`)。
- * 目录内部结构的解释权全归 provider 包,框架只给它这一个目录。
+ * 端点目录以 config.providers 的键命名；同一 provider 模块可有多个端点。
+ * 目录内部结构由 provider 管理。
  */
 export function providerDir(name: string): string {
   return resolve(providersRoot(), name);
@@ -157,10 +123,7 @@ export function modelsRoot(): string {
   return resolve(deploymentRoot(), MODELS_DIRNAME);
 }
 
-/**
- * 一个 bot 代码包的目录:index.ts / core/ / console/ / vtuber-pack/ 在这下面,全部进版本控制。
- * 一份部署用 `deployment.json` 的 `bot` 字段说它引用哪个包,所以一个包可以有好几份部署。
- */
+/** 仓内 bot 代码包目录；扩展包由扩展装载器另行定位。 */
 export function packageDir(bot: string): string {
   return resolve(mainRepoRoot(), PACKAGES_DIRNAME, bot);
 }

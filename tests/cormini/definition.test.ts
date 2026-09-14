@@ -121,7 +121,7 @@ describe('统一入口:框架派生的控制台', () => {
     ['/api/config', 'groups'],
     ['/api/worlds', 'worlds'],
     ['/api/tool-schemas', 'tools'],
-  ])('%s 开箱可用(Cormini 一行都没写)', async (path, key) => {
+  ])('%s 提供配置与控制台能力', async (path, key) => {
     const { status, body } = await getJ(path);
     expect(status).toBe(200);
     expect(body[key]).toBeDefined();
@@ -187,7 +187,7 @@ describe('统一入口:框架派生的控制台', () => {
 });
 
 describe('bot 声明的固定提示词源文件', () => {
-  it('ORIENTATION 以 core 身份进 /api/prompts,与 World 自报的那些并列', async () => {
+  it('ORIENTATION 以 persona 身份列入提示词源', async () => {
     const { status, body } = await getJ('/api/prompts');
     expect(status).toBe(200);
     const prompts = body.prompts as Array<Record<string, string>>;
@@ -213,7 +213,7 @@ describe('bot 声明的固定提示词源文件', () => {
     expect(readFileSync(orientationFile, 'utf8')).toBe('改过的定向\n');
   });
 
-  it('World 的环境提示词:保存写到 bot 目录 worlds/<id>/ENV_PROMPT.md,World 自带的模板不动;恢复默认删掉它', async () => {
+  it('World 环境模板保存为部署覆盖，移除覆盖后使用后备模板', async () => {
     const list = async () => (await getJ('/api/prompts')).body.prompts as Array<Record<string, string>>;
     const before = (await list()).find((p) => p.key === 'worlds.dormant.envPrompt')!;
     expect(before.origin).toBe('module');
@@ -295,7 +295,7 @@ describe('激活 / 停用 / 重启经 HTTP(热生效)', () => {
   it('激活:写回 config.json、启动、挂进 core、工具立刻进表,不重启进程', async () => {
     const r = await postJ('/api/worlds/activation', { id: 'dormant', enabled: true });
     expect(r.status).toBe(200);
-    expect(String(r.body.result)).toContain('已写回 config.json');
+    expect(String(r.body.result)).toContain('已启用');
     expect(r.body.restarting).toBeUndefined();
     expect(JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')).worlds.dormant.enabled).toBe(true);
     const dormant = (await modulesOf()).find((m) => m.id === 'dormant')!;

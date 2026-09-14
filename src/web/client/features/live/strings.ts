@@ -9,7 +9,7 @@ const zh = {
   netOnline: '已连接',
   netOffline: '接口不可达',
   composerLabel: '终端消息输入',
-  composerPlaceholder: '发消息给她…',
+  composerPlaceholder: "输入消息…",
   composerHint: 'Terminal · Enter 发送 · 可粘贴或拖入图片',
   composerQueued: '终端通道正在重连，消息已排队',
   emptyConnecting: '连接调试通道中…',
@@ -18,7 +18,7 @@ const zh = {
   ctxWaiting: '等待上下文数据',
   sessionResetNote: 'SESSION 已截断重建',
   debugUnavailable: '调试通道不可用',
-  debugNotMounted: '调试通道未挂载——时间线不可用。',
+  debugNotMounted: "调试通道不可用，无法显示时间线。",
 
   // status.ts
   docTitle: (name: string) => `控制台 · ${name}`,
@@ -33,7 +33,7 @@ const zh = {
   chipOnline: '在线 ',
 
   // fork.ts
-  mainLabel: '主意识',
+  mainLabel: "主 session",
   forkViewing: '◉ 正在查看 ',
   forkInfo: (count: number, tok: string, ended: boolean, sec: number) =>
     ` · ${count} 条 · ~${tok} tok · ` + (ended ? '已结束（定格）' : `进行中（${sec} 秒刷新）`),
@@ -42,7 +42,7 @@ const zh = {
   forkFetchFailed: (msg: string) => `(拉取失败: ${msg})`,
 
   // sessions.ts
-  sessionBandTitle: '各 agent session（本次运行 usage 累计；点击查看该 session 的消息流）',
+  sessionBandTitle: "Session 本次运行累计用量",
   sessionCache: (pct: string) => `缓存${pct}`,
   sessionCardTitle: (
     label: string,
@@ -91,7 +91,7 @@ const zh = {
   catReasoning: '思维链',
   catDialogue: '对话往来 · 事件',
   catToolIO: '工具调用与结果',
-  ctxNone: '暂无上下文——终端调试通道连接后会有。',
+  ctxNone: "暂无上下文数据。",
   ctxUsage: '上下文占用',
   ctxSub: (budgetPct: string | null, keepOn: boolean) =>
     `${budgetPct === null ? '预算未知' : `占预算 ${budgetPct}`}　·　保留历史思维链：${keepOn ? '开' : '关'}`,
@@ -102,11 +102,11 @@ const zh = {
   footSchemaB: '工具表 schema',
   footSchemaPost: ' 作为 tools 参数随每次调用发送，与消息分开计。',
   footStrippedPre: '历史思维链已丢弃约 ',
-  footStrippedPost: ' tok，不发送（省 token）。',
+  footStrippedPost: " tok，不发送。",
   footHardPre: '越过 ',
   footHardPost: '（模型物理上限）由 core 强制交接。',
-  footSoftPre: '超过 ',
-  footSoftPost: (max: string) => ` Persona先预警，${max} 交接。`,
+  footSoftPre: 'Persona 软阈值：',
+  footSoftPost: (max: string) => `；阶段预算 ${max}。`,
 };
 
 const en: typeof zh = {
@@ -118,7 +118,7 @@ const en: typeof zh = {
   netOnline: 'Connected',
   netOffline: 'API unreachable',
   composerLabel: 'Terminal message input',
-  composerPlaceholder: 'Message her…',
+  composerPlaceholder: "Enter a message…",
   composerHint: 'Terminal · Enter to send · paste or drop images',
   composerQueued: 'Terminal channel is reconnecting; message queued',
   emptyConnecting: 'Connecting to the debug channel…',
@@ -127,7 +127,7 @@ const en: typeof zh = {
   ctxWaiting: 'Waiting for context data',
   sessionResetNote: 'SESSION truncated and rebuilt',
   debugUnavailable: 'Debug channel unavailable',
-  debugNotMounted: 'Debug channel not mounted — timeline unavailable.',
+  debugNotMounted: "Debug channel unavailable; the timeline cannot be displayed.",
 
   // status.ts
   docTitle: (name: string) => `Console · ${name}`,
@@ -142,7 +142,7 @@ const en: typeof zh = {
   chipOnline: 'online ',
 
   // fork.ts
-  mainLabel: 'Main session',
+  mainLabel: "Main session",
   forkViewing: '◉ Viewing ',
   forkInfo: (count: number, tok: string, ended: boolean, sec: number) =>
     ` · ${count} msgs · ~${tok} tok · ` + (ended ? 'ended (frozen)' : `running (refreshes every ${sec} s)`),
@@ -151,7 +151,7 @@ const en: typeof zh = {
   forkFetchFailed: (msg: string) => `(fetch failed: ${msg})`,
 
   // sessions.ts
-  sessionBandTitle: 'Agent sessions (usage accumulated this run; click to view that session\'s message stream)',
+  sessionBandTitle: "Session usage for this run",
   sessionCache: (pct: string) => `cache ${pct}`,
   sessionCardTitle: (
     label: string,
@@ -200,7 +200,7 @@ const en: typeof zh = {
   catReasoning: 'Reasoning',
   catDialogue: 'Dialogue · events',
   catToolIO: 'Tool calls and results',
-  ctxNone: 'No context yet — it appears once the terminal debug channel connects.',
+  ctxNone: "No context data yet.",
   ctxUsage: 'Context usage',
   ctxSub: (budgetPct: string | null, keepOn: boolean) =>
     `${budgetPct === null ? 'Budget unknown' : `${budgetPct} of budget`} · Keep past reasoning: ${keepOn ? 'on' : 'off'}`,
@@ -211,11 +211,11 @@ const en: typeof zh = {
   footSchemaB: 'Tool schemas',
   footSchemaPost: ' are sent as the tools parameter with every call and counted separately from messages.',
   footStrippedPre: 'About ',
-  footStrippedPost: ' tok of past reasoning is dropped and not sent (saves tokens).',
+  footStrippedPost: " tok of past reasoning is excluded from requests.",
   footHardPre: 'Beyond ',
   footHardPost: ' (the model\'s hard limit) the core forces a handoff.',
-  footSoftPre: 'Above ',
-  footSoftPost: (max: string) => ` the Persona warns first; handoff at ${max}.`,
+  footSoftPre: 'Persona soft threshold: ',
+  footSoftPost: (max: string) => `; stage budget ${max}.`,
 };
 
 export const S = pick({ zh, en });

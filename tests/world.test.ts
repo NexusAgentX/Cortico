@@ -181,12 +181,12 @@ describe('激活 / 停用 / 重启', () => {
     expect(json().worlds.a?.enabled ?? false).toBe(false);
     expect(mounts).toEqual([]);
     allow = true;
-    expect(await assembly.activate('a')).toContain('worlds.a.enabled=true');
+    expect(await assembly.activate('a')).toContain('已启用');
     expect(json().worlds.a.enabled).toBe(true);
     expect(assembly.slot('a').mounted).toBe(true);
     expect(assembly.slot('a').instance).toBe(first);
     expect((first as Probe).started).toBe(1);
-    expect(await assembly.activate('a')).toContain('已在运行');
+    expect(await assembly.activate('a')).toContain('已启用');
   });
 
   it('start 抛错:enabled 回滚成 false,槽位换上全新实例', async () => {
@@ -212,7 +212,7 @@ describe('激活 / 停用 / 重启', () => {
   it('停用:stop 旧实例、出表、写回 false,槽位换上从未 start 的新实例', async () => {
     const { assembly, json, mounts } = assemblyOf([probeDefinition('a')], ['a']);
     const first = assembly.slot('a').instance as Probe;
-    expect(await assembly.deactivate('a')).toContain('worlds.a.enabled=false');
+    expect(await assembly.deactivate('a')).toContain('已停用');
     expect(mounts).toEqual(['-a']);
     expect(first.stopped).toBe(1);
     expect(assembly.mounted).toEqual([]);
@@ -255,14 +255,14 @@ describe('激活 / 停用 / 重启', () => {
     expect(assembly.slot('a').mounted).toBe(true);
   });
 
-  it('预建实例永远挂载,顶掉同 id 的定义槽位,不能经装配层激活', async () => {
+  it('预建实例初始挂载并替换同 id 的定义实例', async () => {
     const { assembly } = assemblyOf([probeDefinition('a')], []);
     const prebuilt: World = { id: 'a', envPromptVars: () => ({}), tools: () => [], start: async () => {}, stop: async () => {} };
     assembly.addPrebuilt([prebuilt], { labels: { a: '预建' }, declared: false });
     expect(assembly.slots).toHaveLength(1);
     expect(assembly.slot('a')).toMatchObject({ mounted: true, declared: false, label: '预建', definition: null });
     expect(assembly.mounted).toEqual([prebuilt]);
-    await expect(assembly.activate('a')).resolves.toContain('已在运行');
+    await expect(assembly.activate('a')).resolves.toContain('已启用');
     expect(existsSync(join(dir, '.env'))).toBe(false);
   });
 });
@@ -340,7 +340,7 @@ describe('工具名全局唯一', () => {
     expect(mounts).toEqual([]);
     expect(json().worlds.b?.enabled ?? false).toBe(false);
     await assembly.deactivate('a');
-    await expect(assembly.activate('b')).resolves.toContain('worlds.b.enabled=true');
+    await expect(assembly.activate('b')).resolves.toContain('已启用');
   });
 
   it('重启查的是重建后的实例:工具名改成撞名的,停下来不再挂', async () => {

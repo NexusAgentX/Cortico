@@ -1,8 +1,4 @@
-/**
- * Cortico bot 的统一装配入口。
- * 可由 core 公开字段机械派生的接线在此生成；具体 bot 内容由调用方增量提供。
- * 本文件不得依赖具体 World ID 或面板语义，`extensions` 原样转交。
- */
+/** 装配 Core、Persona、World 与控制台；具体 bot 的配置和行为由 BotDefinition 提供。 */
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -53,33 +49,19 @@ import {
   type ConsolePageContribution,
 } from './web/shared/console-protocol.ts';
 
-
-/**
- * bot 专属的Persona、 World、层 2 默认值与控制台增量的装配边界。
- * 启动器与框架仅依赖此接口。
- */
+/** 启动器使用的 bot 包装配契约。 */
 export interface BotDefinition<C extends CoreConfig = CoreConfig> {
   /** 目录名以外的稳定标识,用于日志与控制台标题 */
   id: string;
   /** 一句话说明,启动器列表里显示 */
   description?: string;
-  /** 层1+层2:框架默认 ← Persona的建议。World 的默认段不在这里,由 `withWorlds()` 补。 */
+  /** 框架默认值与 Persona 默认值；World 默认段由 withWorlds() 补充。 */
   defaults(): C;
-  /**
-   * 本机有的 World 实现:仓内目录加扩展,由启动器经 `withWorlds()` 填入,bot 包不写。
-   * 按 `worlds.<id>.enabled` 决定哪些挂进 core;控制台可热激活 / 停用 / 重启。
-   */
+  /** 由 withWorlds() 注入的内建及扩展 World 定义；按 worlds.<id>.enabled 挂载。 */
   worlds?: readonly WorldDefinition<WorldSection>[];
-  /**
-   * Persona为之设计的渠道。字符串 = World id:有实现的默认 `enabled: true`,没实现的在
-   * 控制台是灰卡;对象 = 没有实现的占位,控制台展示它的 reason。有实现但没声明的 World
-   * 按部署侧选配显示,默认关。
-   */
+  /** 默认启用的 World id；缺失实现时显示不可用。对象声明可附缺失原因，未声明的 World 默认关闭。 */
   declares?: readonly WorldDeclaration[];
-  /**
-   * 造出Persona。配置此时已经合并完成;`worlds` 是**活的挂载表**(与 core 共用
-   * 同一个数组,激活/停用就地增删),Persona持引用、用时再读。
-   */
+  /** 配置已完成合并；worlds 与 Core 共用数组，激活和停用会就地更新，Persona 应在使用时读取。 */
   build(loaded: LoadedConfig<C>, worlds: World[]): BotParts<C>;
 }
 
@@ -92,10 +74,7 @@ export interface BotStartContext<C extends CoreConfig> {
 
 export interface BotParts<C extends CoreConfig = CoreConfig> {
   persona: Persona;
-  /**
-   * 预建的 World 实例(不经定义装配的那种:测试替身、一次性接线)。永远挂载,
-   * 控制台只能停/起不能重建;同 id 会顶掉定义装出来的槽位。
-   */
+  /** 预建实例替换同 id 的定义实例，初始挂载；重启复用该实例，停用后不能通过 activate 重新挂载。 */
   worlds?: World[];
   llm?: ResponseClient;
   console?: ConsoleContribution;
@@ -103,59 +82,38 @@ export interface BotParts<C extends CoreConfig = CoreConfig> {
   onStop?(): void | Promise<void>;
 }
 
-/**
- * 控制台增量。框架把能派生的都派生好了,这里只补它派生不出来的部分——
- * 也就是需要知道"这个 bot 是怎样的"的那些。
- */
+/** bot 提供的控制台声明，补充 Core 与 World 的通用页面。 */
 export interface ConsoleContribution {
   /** false = 完全不起控制台(无头运行) */
   enabled?: boolean;
-  /** 追加到框架那几条之后的可清除存储部分(如某个 World 自己的缓存) */
+  /** 追加的可清除存储项。 */
   storage?: StoragePart[];
   /** 追加的可调配置组(Persona那组;core 与各 World 的由框架收拢) */
   configGroups?: ConfigGroup[];
-  /** `x-options` 下拉的活选项(如播放设备表),固定项的文案按 `language` 给 */
+  /** 动态下拉选项；固定选项的文案使用请求语言。 */
   configOptions?(kind: string, language: Language): Array<{ value: string; label: string }>;
   /** 合并进状态快照的实现特有字段(框架给的基础字段在前,这里覆盖) */
   status?(): Record<string, unknown>;
-  /**
-   * bot 自有的固定提示词源文件(ORIENTATION 一类),与 World console().promptDocs 同形;
-   * 读写由框架代办,列在 scope=persona 下(core 核心不持有任何提示词模板)。
-   */
+  /** 以 persona 作用域展示的提示词文件，框架负责读写。 */
   promptDocs?: PromptDocDecl[];
   /**
    * 非主循环 session 的额外工具 schema。
    * 每个 session 的声明方负责在此补充其工具。
    */
   extraToolSchemas?(): ToolSchema[];
-  /**
-   * bot 级的控制台页(部署绑定的那些:模型档位、存档点、统一重置)。
-   *
-   * 与 `Persona.console?()` 分工:
-   * Persona出**认知绑定**的(记忆视图、工作区、入梦);这里出**部署绑定**的
-   * ——它们要写 config.json、要跨 owner 编排,不属于Persona的纯认知职责。
-   *
-   * bot 专属控制面只有这一条路:框架不再有任何具名扩展槽位。
-   */
+  /** 需要部署配置或跨模块操作的控制台页；Persona.console() 声明 Persona 自身的操作。 */
   consolePages?(ctx: ConsolePageBuildContext): ConsolePageContribution[];
 }
 
-/**
- * 框架在问 bot 要控制台页时**顺手交给它**的那些事实。
- *
- * 目前只有一样:完整的可清除存储清单。统一重置由 bot 编排、框架不提供通用
- * transaction,但那条只有在 bot 真能拿到**权威清单**时才成立——清单是框架拼的
- * (core 派生 + 各 World console().storage + bot 自己追加),bot 重造一份就是
- * 禁止的"两套实现"。
- */
+/** 装配层向 bot 控制台声明函数提供的共享数据。 */
 export interface ConsolePageBuildContext {
-  /** 权威的可清除存储清单,与 `/api/storage` 看到的是同一批对象(文案已按 `language`)。 */
+  /** 与 /api/storage 共用同一批对象的存储清单，文案使用请求语言。 */
   storage: readonly StoragePart[];
   /** 发起这次请求的浏览器的界面语言。 */
   language: Language;
 }
 
-/** 关机仪式里的一步。`ok=false` 时 `detail` 说的是没走完的原因(超时或异常)。 */
+/** 关机步骤；ok=false 时 detail 说明异常或超时。 */
 export interface ShutdownStep {
   key: string;
   label: string;
@@ -164,7 +122,7 @@ export interface ShutdownStep {
   detail?: string;
 }
 
-/** 一次关机的账。本地步骤与外部状态分开记录，`complete` 同时要求两者通过。 */
+/** complete 要求本地关机步骤完成且外部状态核验通过。 */
 export interface ShutdownReport {
   reason: string;
   localComplete: boolean;
@@ -182,12 +140,7 @@ export interface Bot<C extends CoreConfig = CoreConfig> {
   /** 启动全部;返回控制台端口(未起控制台=null) */
   start(): Promise<{ port: number | null }>;
   stop(): Promise<void>;
-  /**
-   * 规范关机仪式。`stop()` 是"把东西关掉",这是"按顺序、带钟、留账地关掉":
-   * 每一步单独计时,失败或超时都不阻断后面的步骤,最后把逐步结果交给调用方
-   * (控制台显示、启动器决定退出码)。**不负责 `process.exit`** —— 进程什么时候
-   * 走是启动器的事,库不替它决定。
-   */
+  /** 分步关机并返回结果。步骤失败或超时后继续，不调用 process.exit。 */
   shutdown(reason?: string): Promise<ShutdownReport>;
 }
 
@@ -201,66 +154,61 @@ const SHUTDOWN_BUDGET_MS = {
   web: 3_000,
 } as const;
 
-
-/** 控制台看得见的框架级文案:存储页、可见性回执、关机仪式。中文是原文。 */
 const BOT_TEXT = {
   zh: {
     noFile: '(无文件)',
     storage: {
       events: {
         label: '事件库(本次运行的分片)',
-        note: '只抹本次运行落库的经历,更早的 run 目录不动;游标不回退',
+        note: '清除本次运行的事件记录，保留此前运行的记录；游标不回退',
         stat: (count: number, cursor: number, size: string) => `${count}条(游标至 ${cursor}) / ${size}`,
         cleared: (n: number) => `已清除本次运行的${n}条事件`,
       },
       session: {
         label: '主session(当前对话上下文)',
-        note: '当场失忆重开(记忆内容与事件库不动,可经记忆与历史工具找回);最好在空闲时操作',
+        note: '清除对话上下文并重新开场，保留 Memory 和事件库。建议在空闲时操作',
         stat: (records: number, ktok: number, size: string) => `${records}条 / ~${ktok}k tok / ${size}`,
         cleared: 'session已清空重开(system前缀+开场消息)',
       },
       runlog: {
         label: '运行日志(本次运行)',
-        note: '纯观察日志,agent不可见,清除无副作用;更早的 run 目录不动',
+        note: '清除本次运行的日志，保留此前运行的日志。运行日志不进入模型上下文',
         cleared: '运行日志已清空',
       },
       usage: {
         label: 'token用量流水(成本页数据源)',
-        note: '每次LLM调用的历史用量/成本,纯观察,agent不可见,清除后成本页只剩本次运行以后的数据',
+        note: '清除全部模型用量与成本记录，成本页从后续写入的记录重新累计。这些记录不进入模型上下文',
         stat: (n: number, size: string) => `${n}条 / ${size}`,
         cleared: (n: number) => `已清除${n}条用量记录`,
       },
       toolcalls: {
         label: '工具调用流水(工具名/原始参数/回执)',
-        note: '主循环每次模型工具调用一行,纯观察,agent不可见',
+        note: '清除本次运行的工具调用日志，不改变模型上下文中的工具回执',
         cleared: '工具调用流水已清空',
       },
       state: {
-        label: 'core状态(人格状态袋/截断标记)',
-        note: 'Persona存的那袋东西清空,截断状态归零;World 可见性保留',
+        label: 'Core 状态',
+        note: '清除 Persona 状态、交接时间和模型连续失败记录，保留投递游标与 World 可见性',
         stat: (n: number, lastHandoff: string) => `人格状态${n}项 / 上次交接${lastHandoff}`,
         never: '无',
         cleared: 'core状态已重置为默认',
       },
       wakes: {
-        label: '持久定时器(闹钟等)',
+        label: '持久定时器',
         note: '全部定时器取消(不产生通知)',
         stat: (n: number) => `${n}个待触发`,
         cleared: (n: number) => `已取消${n}个定时器`,
       },
       tracker: {
         label: 'session统计(usage/缓存命中)',
-        note: '仪表数据清零(进行中的 session 保留条目);不影响运行',
+        note: '清零统计，保留正在运行的 session 条目',
         stat: (n: number) => `${n}个session`,
         cleared: 'session统计已清零',
       },
       pending: {
-        label: '待投递事件(还没投给 agent 的那批)',
+        label: '待投递事件',
         note:
-          '暂停期间积压的事件与心跳一律丢弃,继续之后不会再涌出来。'
-          + '事件本身已经落库,历史工具照样查得到,丢的只是这一次唤醒。'
-          + 'World 挂的待成文观察(人流读数这类)不在此列:它们的正文在发车刻才现渲染,'
-          + '留着不会变陈旧,丢了反而会让 World 哑掉',
+          '丢弃待投递的事件，保留事件库记录。延迟生成正文的队列项保留；已丢弃项不会在重启后补投',
         stat: (n: number) => `${n}条待投递`,
         cleared: (n: number) => `已丢弃${n}条待投递事件`,
       },
@@ -271,13 +219,13 @@ const BOT_TEXT = {
     },
     prompts: {
       unknown: (key: string) => `未知提示词模板: ${key}`,
-      packageReadOnly: (title: string) => `${title} 住在扩展包里,包内文件只读;要让它可改,bot 包在这份模板的声明里给出 deploymentPath。`,
+      packageReadOnly: (title: string) => `${title} 是只读的扩展包模板`,
       conflict: (title: string) => `${title} 已在别处被修改,请重新载入后再保存`,
       saved: (title: string) => `已保存 ${title}`,
-      savedOverride: (title: string) => `已保存 ${title}(写入本 bot 的覆盖文件,World 自带的模板未动)`,
-      notEnvPrompt: (title: string) => `${title} 不是 World 的环境提示词,没有 World 默认可恢复`,
+      savedOverride: (title: string) => `已保存 ${title} 的部署覆盖文件`,
+      notEnvPrompt: (title: string) => `${title} 没有可恢复的默认模板`,
       alreadyDefault: (title: string) => `${title} 本来就在用 World 默认`,
-      reset: (title: string) => `已删除本 bot 对 ${title} 的覆盖,回到 World 默认`,
+      reset: (title: string) => `已删除 ${title} 的部署覆盖文件`,
     },
     visibility: {
       shown: (id: string) => `${id} 对 agent 重新可见。事件投递已恢复;前缀段与工具要等前缀重载才回来。`,
@@ -285,19 +233,19 @@ const BOT_TEXT = {
       prefixReloaded: (kept: number) => `系统前缀与工具表已重载，保留当前session的${kept}条既有消息`,
     },
     shutdown: {
-      pause: '按住事件投递',
-      worlds: 'World 收尾(托管的外部进程与存档都在这一步)',
-      core: 'Persona收尾',
-      modulesTimedOut: 'World 收尾整体超时',
+      pause: '暂停事件投递',
+      worlds: '停止 World',
+      core: '停止 Persona',
+      modulesTimedOut: 'World 停止超时',
       externalState: (worldId: string) => `${worldId} 外部状态`,
       stopIncomplete: (detail: string) => `World 停止未完成，不能采用外部核验缓存:${detail}`,
       cacheReadFailed: (detail: string) => `读取已缓存的关机验证结果失败:${detail}`,
-      manualCheck: '立即人工检查对应外部系统；在确认前不要假定外部服务已经结束。',
-      llm: 'Provider 实例停机',
-      flush: 'core 状态落盘',
+      manualCheck: '请检查对应外部服务是否已停止。',
+      llm: '停止 Provider 实例',
+      flush: '保存 Core 状态',
       web: '关闭控制台',
-      summarySkipped: '本地关机完成:有步骤被跳过',
-      summaryComplete: '本地关机完成:各步全部走完',
+      summarySkipped: '本地关机步骤未全部完成',
+      summaryComplete: '本地关机步骤全部完成',
       summaryUnverified: (items: string[]) => `本地关机完成,但外部状态未确认结束:${items.join('、')}(需人工确认)`,
     },
   },
@@ -306,58 +254,55 @@ const BOT_TEXT = {
     storage: {
       events: {
         label: "Event store (this run's shard)",
-        note: 'Wipes only what this run stored; earlier run directories are untouched and the cursor does not rewind',
+        note: 'Clears events from this run and keeps earlier runs; the cursor does not rewind',
         stat: (count: number, cursor: number, size: string) => `${count} records (cursor at ${cursor}) / ${size}`,
         cleared: (n: number) => `Cleared ${n} events from this run`,
       },
       session: {
         label: 'Main session (current conversation context)',
-        note: 'Reopens with the context wiped on the spot (memory content and the event store stay, reachable through the memory and history tools); best done while idle',
+        note: 'Clears the conversation and reopens the session, keeping Memory and the event store. Prefer clearing while idle',
         stat: (records: number, ktok: number, size: string) => `${records} records / ~${ktok}k tok / ${size}`,
         cleared: 'Session cleared and reopened (system prefix + opening message)',
       },
       runlog: {
         label: 'Run log (this run)',
-        note: 'Observation-only log, invisible to the agent; clearing has no side effects and earlier run directories are untouched',
+        note: 'Clears logs from this run and keeps earlier runs. Run logs are not included in model context',
         cleared: 'Run log cleared',
       },
       usage: {
         label: 'Token usage ledger (source of the cost page)',
-        note: 'Usage and cost of every LLM call, observation-only and invisible to the agent; after clearing, the cost page only shows data from this run onward',
+        note: 'Clears all model usage and cost records; totals restart with subsequently written records. These records are not included in model context',
         stat: (n: number, size: string) => `${n} records / ${size}`,
         cleared: (n: number) => `Cleared ${n} usage records`,
       },
       toolcalls: {
         label: 'Tool call ledger (tool name / raw arguments / receipt)',
-        note: 'One line per model tool call in the main loop, observation-only and invisible to the agent',
+        note: 'Clears tool call logs from this run without changing tool results in model context',
         cleared: 'Tool call ledger cleared',
       },
       state: {
-        label: 'Core state (persona state bag / truncation marks)',
-        note: 'Empties the bag the Persona stores and resets truncation state; module visibility is kept',
+        label: 'Core state',
+        note: 'Clears Persona state, handoff time and consecutive model failure records; keeps the delivery cursor and World visibility',
         stat: (n: number, lastHandoff: string) => `${n} persona state entries / last handoff ${lastHandoff}`,
         never: 'none',
         cleared: 'Core state reset to defaults',
       },
       wakes: {
-        label: 'Persistent timers (alarms and the like)',
+        label: 'Persistent timers',
         note: 'Cancels every timer (no notifications are produced)',
         stat: (n: number) => `${n} pending`,
         cleared: (n: number) => `Cancelled ${n} timers`,
       },
       tracker: {
         label: 'Session statistics (usage / cache hits)',
-        note: 'Zeroes the gauges (sessions in progress keep their entries); does not affect the run',
+        note: 'Resets statistics and keeps entries for active sessions',
         stat: (n: number) => `${n} sessions`,
         cleared: 'Session statistics zeroed',
       },
       pending: {
-        label: 'Pending events (the batch not yet delivered to the agent)',
+        label: 'Pending events',
         note:
-          'Events and heartbeats that piled up while paused are all discarded and will not pour out after resuming. '
-          + 'The events themselves are already stored and the history tools still find them; only this wake is lost. '
-          + 'Deferred observations hung by worlds (visitor counts and the like) are not included: their text is rendered at delivery time, '
-          + 'keeping them never goes stale, and dropping them would silence the module',
+          'Discards pending events and keeps archived records. Deferred rendering items remain queued; discarded items will not be replayed after restart',
         stat: (n: number) => `${n} pending`,
         cleared: (n: number) => `Discarded ${n} pending events`,
       },
@@ -368,13 +313,13 @@ const BOT_TEXT = {
     },
     prompts: {
       unknown: (key: string) => `Unknown prompt template: ${key}`,
-      packageReadOnly: (title: string) => `${title} lives in an extension package and package files are read-only; to make it editable, the bot package declares a deploymentPath for this template.`,
+      packageReadOnly: (title: string) => `${title} is a read-only extension package template`,
       conflict: (title: string) => `${title} was modified elsewhere; reload before saving`,
       saved: (title: string) => `Saved ${title}`,
-      savedOverride: (title: string) => `Saved ${title} (written to this bot's override file; the World's own template is untouched)`,
-      notEnvPrompt: (title: string) => `${title} is not a World environment prompt, so there is no World default to restore`,
+      savedOverride: (title: string) => `Saved the deployment override for ${title}`,
+      notEnvPrompt: (title: string) => `${title} has no default template to restore`,
       alreadyDefault: (title: string) => `${title} is already using the World default`,
-      reset: (title: string) => `Removed this bot's override of ${title}; back to the World default`,
+      reset: (title: string) => `Removed the deployment override for ${title}`,
     },
     visibility: {
       shown: (id: string) => `${id} is visible to the agent again. Event delivery has resumed; its prefix segment and tools return once the prefix is reloaded.`,
@@ -382,18 +327,18 @@ const BOT_TEXT = {
       prefixReloaded: (kept: number) => `System prefix and tool table reloaded; ${kept} existing messages of the current session kept`,
     },
     shutdown: {
-      pause: 'Hold event delivery',
-      worlds: 'Wind down IO worlds (managed external processes and world saves happen here)',
-      core: 'Wind down the Persona',
-      modulesTimedOut: 'World wind-down timed out as a whole',
+      pause: 'Pause event delivery',
+      worlds: 'Stop Worlds',
+      core: 'Stop Persona',
+      modulesTimedOut: 'World shutdown timed out',
       externalState: (worldId: string) => `${worldId} external state`,
       stopIncomplete: (detail: string) => `World stop incomplete, so the cached external verification cannot be used: ${detail}`,
       cacheReadFailed: (detail: string) => `Failed to read the cached shutdown verification: ${detail}`,
-      manualCheck: 'Check the corresponding external system by hand now; do not assume the external service has ended until confirmed.',
+      manualCheck: 'Check whether the corresponding external service has stopped.',
       llm: 'Stop provider instances',
       flush: 'Persist core state',
       web: 'Close the console',
-      summarySkipped: 'Local shutdown finished: some steps were skipped',
+      summarySkipped: 'Local shutdown steps incomplete',
       summaryComplete: 'Local shutdown finished: every step completed',
       summaryUnverified: (items: string[]) => `Local shutdown finished, but external state is not confirmed ended: ${items.join(', ')} (manual confirmation needed)`,
     },
@@ -412,7 +357,6 @@ const fileSize = (dir: string, rel: string, noFile: string): string => {
   }
 };
 
-/** 框架级可清除存储表面,完全从 core 字段派生。 */
 function deriveStorage<C extends CoreConfig>(core: Core<C>, dataDir: string, language: Language): StoragePart[] {
   const t = botText(language);
   const size = (dir: string, rel: string): string => fileSize(dir, rel, t.noFile);
@@ -434,7 +378,7 @@ function deriveStorage<C extends CoreConfig>(core: Core<C>, dataDir: string, lan
       kind: 'disk',
       location: 'data/session-main.jsonl',
       danger: true,
-      // 一键清空时最后执行:清完即重建前缀+开场,保证"重开"落在全清后的世界上
+      // 最后重建 session 前缀和开场，使其读取清理后的状态。
       order: 10,
       note: s.session.note,
       stat: () =>
@@ -511,33 +455,23 @@ function deriveStorage<C extends CoreConfig>(core: Core<C>, dataDir: string, lan
       },
     },
     {
-      // pending 在 session 之前清理,以缩短运行中 World 重新入队的窗口。
-      // 清理同时复位 bus 的 ready 状态与批次计时器。
+      // 在 session 重建前清除积压事件。
+
       key: 'pending',
       label: s.pending.label,
       kind: 'memory',
       order: 9,
       note: s.pending.note,
       stat: () => s.pending.stat(core.bus.pending()),
-      // 只丢弃已发生的事件与候选票据。待投递成文项在发车时渲染，保留它们以执行 World 的复位逻辑。
+      // 保留延迟渲染项，其回调还负责复位 World 的排队状态。
       clear: () => s.pending.cleared(core.discardPendingEvents()),
     },
   ];
 }
 
 /**
- * 可编辑固定提示词由装配层、Persona与 World 各自声明的 `promptDocs` 组成。
- * 读写在此统一完成:读文件、计算 revision、原子写入。
- * 只上控制台的 World 实例也算:它的环境提示词在激活之前就该能改。
- *
- * World 的环境提示词(`role: 'envPrompt'`)有两层:World 自带的模板是默认,bot 目录下
- * `worlds/<Worldid>/ENV_PROMPT.md` 存在即整份覆盖。保存只写 bot 侧那份(首次保存时建出来),
- * World 自带的模板不经控制台改;`reset` 删掉覆盖文件即回到默认。
- *
- * 框架从不往代码包里写。环境提示词的写侧永远是部署目录;Persona 的模板没给 `deploymentPath`
- * 时读写同一个 `path`,仓内 bot 那是 git 工作树里的模板文件(开发者改它本来就是要进 git 的),
- * 扩展包来源的 bot(`packageReadOnly`)则只读——pnpm 把包文件硬链接进 store,透过链接写会
- * 改坏 store 里那份。
+ * 环境提示词按 World、bot 包、部署的顺序覆盖，控制台只写部署覆盖文件。
+ * Persona 声明 deploymentPath 时写该路径，否则读写 path；扩展包中的模板只读，避免修改 pnpm store 的硬链接。
  */
 function derivePrompts<C extends CoreConfig>(
   parts: BotParts<C>,
@@ -547,15 +481,14 @@ function derivePrompts<C extends CoreConfig>(
   dirs: EnvPromptDirs,
   packageReadOnly: boolean,
 ): WebAppPromptDeps | undefined {
-  // 同 key 先到先得:装配层的声明可以覆盖Persona自报的同名源
-  // (部署把某份文件换成自己的那份时用;测试也靠这个换临时文件)。
-  // 标题与说明按界面语言给,所以每次请求按那种语言重新问一遍声明方;key 与路径不随语言变。
+  // 同 key 采用第一个声明；装配层优先于 Persona。
+  // 标题与说明按请求语言读取；key 与路径必须保持一致。
   const docsOf = (language: Language) => {
     const seen = new Set<string>();
     return [
       ...(contribution.promptDocs ?? []).map((d) => ({ ...d, scope: 'persona' as const })),
       ...(parts.persona.console?.(language)?.promptDocs ?? []).map((d) => ({ ...d, scope: 'persona' as const })),
-      // 未激活槽位的模板也列出来:接入前就要能改。
+
       ...assembly.instances()
         .flatMap((m) => (m.console?.(language)?.promptDocs ?? []).map((d) => ({ ...d, scope: 'world' as const, worldId: m.id }))),
     ].filter((d) => (seen.has(d.key) ? false : (seen.add(d.key), true)));
@@ -569,16 +502,14 @@ function derivePrompts<C extends CoreConfig>(
   };
   const revisionOf = (content: string): string => createHash('sha256').update(content).digest('hex');
 
-  /** 一份模板此刻读哪份文件、存到哪份文件。`origin` 只有 World 的环境提示词才有。 */
   const sourceOf = (d: Doc): { readPath: string; writePath: string; origin?: EnvPromptOrigin } => {
     if (d.scope === 'world' && d.role === 'envPrompt') {
       const { path, origin } = envPromptTemplateSource(d, d.worldId, dirs);
-      // 写永远落在部署层:部署者调出来的提示词是私有资产,不该写进代码包被一起发出去。
+
       const writeDir = dirs.deploymentDir;
       return { readPath: path, writePath: writeDir ? envPromptOverridePath(writeDir, d.worldId) : d.path, origin };
     }
-    // Persona的模板同一条道理:声明方给了部署侧覆盖路径,写就落到那边。
-    // `d.path` 已经是声明方解析过的"此刻该读哪一份"。
+    // path 由声明方解析为当前读取源。
     if (d.deploymentPath) {
       return {
         readPath: d.path,
@@ -589,11 +520,6 @@ function derivePrompts<C extends CoreConfig>(
     return { readPath: d.path, writePath: d.path };
   };
 
-  /**
-   * 每个占位符**此刻**填什么。编辑器把它显示在旁注里——比任何文字描述都直观。
-   * World 的直接问 World;Persona的走可选的 promptVarValues()。取值失败不该拖垮
-   * 整个页面,所以逐个吞掉异常(旁注少一条,总好过编辑器打不开)。
-   */
   const varValues = async (): Promise<Record<string, string>> => {
     const out: Record<string, string> = {};
     try {
@@ -601,16 +527,15 @@ function derivePrompts<C extends CoreConfig>(
         now: new Date(),
         timezone,
       }) ?? {});
-    } catch { /* Persona报不出来就不报 */ }
+    } catch { /* 忽略单个来源的变量读取错误。 */ }
     for (const m of assembly.instances()) {
       try {
         Object.assign(out, (await m.envPromptVars()) ?? {});
-      } catch { /* 单个 World 报不出来不连坐其它 */ }
+      } catch { /* 忽略单个来源的变量读取错误。 */ }
     }
     return out;
   };
 
-  /** 声明的源文件可以尚不存在(部署侧的文本在首次保存前没有那份文件):读作空。 */
   const readSource = (path: string): string => (existsSync(path) ? readFileSync(path, 'utf8') : '');
 
   const readDoc = (d: Doc, values: Record<string, string>): PromptDocument => {
@@ -681,24 +606,14 @@ function derivePrompts<C extends CoreConfig>(
   };
 }
 
-/**
- * 三态清单与控制台页适配只用得到 core 的这一件事实。写成结构类型而不是
- * `Core<C>`,是为了让"这两个函数只依赖可见性"在签名上说得出口。
- */
 type WorldVisibilityFacts = Pick<Core<CoreConfig>, 'worldVisibility'>;
 
-/**
- * 三态清单去掉 `envPrompt` 的那一份。
- *
- * 两条路要的东西不一样:manifest 只要三态事实与声明,`/api/worlds` 还要那段
- * 渲染好的环境提示词。渲染要读模板文件并插值,是这批事实里唯一贵的一步,而灯要
- * 秒级刷新——所以贵的那步单独一层,只有真需要的调用方付。
- */
+/** 控制台状态清单不渲染环境模板；需要环境正文的调用方使用 deriveWorldInfo。 */
 export type WorldFacts =
   | Omit<WorldInfo, 'envPrompt'>
   | Extract<ConsoleWorldInfo, { status: 'inactive' | 'missing' }>;
 
-/** 槽位表 → 控制台那份三态清单(不含 envPrompt):挂载=active,有定义没挂=inactive,声明了没定义=missing。 */
+/** 挂载为 active，有实例但未挂载为 inactive，无法建立可用实例为 missing。 */
 export function deriveWorldFacts(
   core: WorldVisibilityFacts,
   assembly: WorldAssembly,
@@ -707,7 +622,7 @@ export function deriveWorldFacts(
   const { visibility, driftedWorlds } = core.worldVisibility();
   const slots: WorldFacts[] = assembly.slots.map((slot) => {
     const m = slot.instance;
-    // 控制台内容由 World 声明;框架不按 World id 分支。显示名也归它报,不报用定义里的。
+
     let decl;
     try {
       decl = m.console?.(language);
@@ -742,7 +657,6 @@ export function deriveWorldFacts(
   return [...slots, ...missing];
 }
 
-/** 三态清单 + 每个已挂 World 那段渲染好的环境提示词(`/api/worlds` 用)。 */
 async function deriveWorldInfo(
   core: WorldVisibilityFacts,
   assembly: WorldAssembly,
@@ -756,8 +670,7 @@ async function deriveWorldInfo(
 }
 
 /**
- * 全部槽位的可清除存储。槽位实例会在停用/重启时重建,所以 stat/clear 每次都
- * 解析到当前实例上同 key 的那一项;装配期报过的 key 就是清单的全部。
+ * 存储清单在装配期固定；stat/clear 按 key 访问当前实例，以支持定义实例重建。
  */
 function deriveSlotStorage(assembly: WorldAssembly, language: Language): StoragePart[] {
   return assembly.slots.flatMap((slot) =>
@@ -772,25 +685,8 @@ function deriveSlotStorage(assembly: WorldAssembly, language: Language): Storage
   );
 }
 
-
-// World 到控制台页的适配。panel id 在一页内唯一，使用声明方给出的局部 id，不剥除或追加前缀。
-
-/**
- * 把一个 World 这一刻的 `console()` 声明适配成一份控制台页贡献。
- *
- * **对所有 World 一视同仁**:不按 World id 分支,也不重算三态——`availability` /
- * `declared` / `reason` / `agentVisible` / `prefixDrifted` 一律取
- * `deriveWorldInfo` 已经算好的那份事实。没有对应事实条目的(只上控制台、
- * 目录里也没列的实例)按未激活计。
- *
- * `console()` 抛错就让它抛:ConsolePageRegistry 逐 source 隔离,一个坏 World
- * 不会带走别人的页。
- */
-/**
- * 导出是为了让 `scripts/dev-console.ts` 走**同一条**适配路径。开发态自己拼一份
- * contribution 的话,两边的归一化早晚会漂,而漂出来的差异只会在真跑的时候暴露。
- */
-/** 声明侧的 panel 形状 → manifest 形状。id 已经是局部的,不做任何改写。 */
+// 面板 id 在各页内唯一，转发时保持声明方提供的局部 id。
+// 控制台声明异常由 ConsolePageRegistry 按来源隔离。
 function normalizePanelDecls(
   panels: readonly WorldPanelDecl[],
 ): Array<{ id: string; title: string; description?: string; getMethods?: readonly string[] }> {
@@ -835,7 +731,7 @@ export function ioPageContribution(
     out.invoke = (panel, method, args) =>
       invoke(panel, method, args);
   }
-  // 流式面与 invoke 同形转发:框架只做 panel id 的反归一化,连接语义全归 World。
+
   const stream = decl?.stream;
   if (stream) {
     out.stream = (panel, socket) =>
@@ -844,16 +740,6 @@ export function ioPageContribution(
   return out;
 }
 
-/**
- * 每个 World(已挂载的、只上控制台的、目录里未激活/未装上的)各出一个
- * `ConsolePageSource`。装配层决定收什么,`WebApp` 只负责聚合与转交。
- */
-/**
- * Persona自报的控制面 → 一页 `persona:<botId>`。
- *
- * 与 IO 那条走同一套归一化,所以Persona与 World 在控制台眼里是同一种东西——
- * 这正是"换人格 Web Core 零修改"要的形状。
- */
 export function personaPageContribution(
   botId: string,
   label: string,
@@ -882,13 +768,7 @@ export function personaPageContribution(
   return out;
 }
 
-/**
- * 把若干份同 id 的人格侧贡献合成一份。
- *
- * `invoke` 按 **panel 归属**分派:哪一份声明了这个 panel 就转给哪一份。所以两半
- * 各写各的、互不知道对方存在,而面板 id 撞了会被 `validateContributions` 当场
- * 判重复(那是正确的——两个实现抢同一个面板,静默选一个才是灾难)。
- */
+/** 合并同 id 的 Persona 页面，按面板归属分派 invoke 和 stream；重复面板由 validateContributions 拒绝。 */
 export function mergePersonaContributions(
   id: string,
   label: string,
@@ -919,7 +799,6 @@ export function mergePersonaContributions(
   const panels = parts.flatMap((p) => p.panels ?? []);
   if (panels.length) out.panels = panels;
 
-  /** panel id → 声明它的那一份。 */
   const owner = new Map<string, ConsolePageContribution>();
   for (const p of parts) {
     for (const panel of p.panels ?? []) {
@@ -945,28 +824,17 @@ export function mergePersonaContributions(
 
 export function deriveConsolePageSources(
   core: WorldVisibilityFacts,
-  // persona 只在给了 `bot` 时才用得上,所以是可选的——只装 IO 的调用方
-  // (以及测试)不必造一个Persona出来。
+
   parts: { assembly: WorldAssembly; persona?: Persona },
-  /**
-   * bot 自身的标识与显示名;人格那一页用它命名。
-   *
-   * `configGroups` 是 bot 级声明的那批旋钮(`ConsoleContribution.configGroups`)。
-   * 它们要跟着人格那一页走:控制台按**声明的归属**决定一组旋钮画在哪一页,
-   * 不认领就落回框架自己的设置页。Persona自报的那半在 `core.console().config`,
-   * 两半在 `mergePersonaContributions` 里合成同一页。
-   */
+  /** bot 标识与配置组；未指定 settingsPage 的组归入 Persona 页面。 */
   bot?: { id: string; label: string; configGroups?: readonly ConfigGroup[] },
-  /** 装配层追加的 bot 级控制台页(模型档位、存档点、统一重置这些部署绑定的)。 */
+
   extra?: (language: Language) => ConsolePageContribution[],
 ): () => ConsolePageSource[] {
   const { assembly } = parts;
   const labelOf = (id: string): string => assembly.labelOf(id) ?? id;
   return () => {
-    // registry 枚举一轮后会对每个 source 各调一次 contribute();三态事实按轮、按语言共享,
-    // 否则 N 个 World 要各算一遍全量事实。
-    //
-    // 这条路要的是三态与声明,**不是** envPrompt——灯走的就是这条路,而它按秒刷新。
+    // 每次枚举按语言缓存状态，供同一批 contribute() 调用共享。
     const once = new Map<Language, Map<string, WorldFacts>>();
     const infos = (language: Language): Map<string, WorldFacts> => {
       let facts = once.get(language);
@@ -984,10 +852,9 @@ export function deriveConsolePageSources(
         ioPageContribution(id, labelOf(id), infos(language).get(id), instances.get(id), language),
     }));
 
-    // Persona自报的那一个。没实现 console() 就没有,不是错误。
     const persona = parts.persona;
     const selfId = bot ? pageIdFor('persona', bot.id) : null;
-    // bot 级的页按语言现算;一轮里同一语言只算一次。
+
     const extrasByLanguage = new Map<Language, ConsolePageContribution[]>();
     const extrasOf = (language: Language): ConsolePageContribution[] => {
       let list = extrasByLanguage.get(language);
@@ -999,22 +866,11 @@ export function deriveConsolePageSources(
     };
     const extras = extrasOf('zh');
 
-    /**
-     * Persona自报的那半，与装配层贡献的**同 id** 那半，合成一页。
-     *
-     * 两条接缝都以 bot 命名，不合的话就是同 id 重复 → 校验把**两个**一起丢掉。
-     * 而且 asset key 就是 page id、构建按目录只出一份产物，拆成两个 id 的话
-     * 必然有一个找不到自己的扩展。
-     *
-     * 合并之后那条"认知绑定 vs 部署绑定"的线**只决定代码写在哪**，不再是用户
-     * 看得见的边界——同一页、同一个 bundle。这也是它该有的
-     * 分量：那是包的组织问题，不是控制台的概念。
-     */
+    // 同 id 的贡献共用页面与构建产物。
     if (bot && selfId) {
-      // bot 级声明的旋钮也是这一页的:装配层写在别处只是代码组织,
-      // 对控制台来说它们与Persona自报的那批同属一页。
-      // 标了 settingsPage 的组不认领:注册照旧(createBot 已把它收进 /api/config),
-      // 控制台"未认领落回设置页"的规则会把它画到 设置 → 运行参数 的最下面。
+
+      // 指定 settingsPage 的配置组保留在设置页。
+
       const claimedGroups = (bot.configGroups ?? []).filter((g) => g.settingsPage !== true);
       const botConfig: ConsolePageContribution[] = claimedGroups.length
         ? [{ id: selfId, kind: 'persona', label: bot.label, config: claimedGroups }]
@@ -1029,34 +885,30 @@ export function deriveConsolePageSources(
         ),
       });
     }
-    // 其余 bot 级的页各占一个 source,一个炸了不影响其余
-    // (隔离在 registry 里,按 source 逐个 try)。页的集合(id)不随语言变,文案随。
+    // 页面 id 不随语言变化；各来源异常由 registry 分别处理。
+
     for (const c of extras) {
-      if (selfId && c.id === selfId) continue; // 已并入上面那条
+      if (selfId && c.id === selfId) continue;
       sources.push({ id: c.id, contribute: (language) => extrasOf(language).find((x) => x.id === c.id) ?? c });
     }
     return sources;
   };
 }
 
-
 export function createBot<C extends CoreConfig>(
   loaded: LoadedConfig<C>,
   definition: BotDefinition<C>,
-  /**
-   * `extensions`:启动时加载的扩展集,控制台的扩展面由它对账。不给 = 控制台没有那一页。
-   * 它的 `bot` 说明这份部署的 bot 来自扩展包,包内的提示词模板因此只读。
-   */
+  /** 启动时加载的扩展集；未提供时不显示扩展页。扩展 bot 的包内模板只读。 */
   opts: { extensions?: ExtensionSet } = {},
 ): Bot<C> {
   const cfg = loaded.config;
-  // 环境提示词的两个覆盖层:包(层 2,进版本控制)与部署(层 3,不进)。控制台只写层 3。
+  // 环境模板允许包和部署覆盖，控制台仅写部署层。
   const promptDirs: EnvPromptDirs = {
     packageDir: loaded.packageDir ?? loaded.rootDir,
     deploymentDir: loaded.rootDir,
   };
-  // 控制台的默认语言:config.json 的 language 赢,否则按进程读一次系统语言。浏览器可以
-  // 改成另一种,之后每个请求自带语言;这里的值只管 <html lang> 与没带语言的调用方。
+  // 默认语言用于 HTML 和未指定语言的请求。
+
   const language = resolveLanguage(cfg.language);
   const assembly = new WorldAssembly(loaded, definition.worlds ?? [], definition.declares ?? []);
   const parts = definition.build(loaded, assembly.mounted);
@@ -1068,7 +920,7 @@ export function createBot<C extends CoreConfig>(
     worlds: assembly.mounted,
     llm: parts.llm,
   });
-  // World 生命周期是装配层的事实,Persona经时机钩子得知;想告诉 agent 由它自己注入。
+
   const notifyLifecycle = (event: WorldLifecycleEvent): void => {
     parts.persona.onWorldLifecycle?.(event);
   };
@@ -1076,42 +928,33 @@ export function createBot<C extends CoreConfig>(
     mount: (mod) => core.mountWorld(mod),
     unmount: async (id) => { await core.unmountWorld(id); },
     lifecycle: notifyLifecycle,
-    // World 不得占用 Core 的保留帧名与 Persona 自有工具名;绑定时先把启动期已挂载的扫一遍。
+
     reservedToolNames: () => [...RESERVED_FRAME_NAMES, ...(parts.persona.ownToolNames?.() ?? [])],
   });
 
-  // 未激活槽位的配置组也收:参数要在激活前就能改(激活时才构造实例读它们)。
-  // 文案按界面语言现取;组的 id、owner 与键不随语言变。
+  // 未激活实例也提供配置；组 id、owner 和配置键不随语言变化。
+
   const configGroups = (language: Language): ConfigGroup[] => [
     coreConfigGroup(language),
     ...(contribution.configGroups ?? []),
     ...assembly.instances().flatMap((m) => m.console?.(language)?.config ?? []),
   ];
 
-  // 端点表归全局(`<部署根>/providers/`),这份部署的 config.json 只留 activeProvider。
+  // 共享端点配置位于部署根的 providers/；activeProvider 属于当前部署。
   const providerSettings = new ProviderSettings(cfg,core.providers,join(loaded.rootDir,'config.json'),loaded.providersDir ?? join(loaded.rootDir,'providers'));
   const allConfigGroups = (language: Language) => [...configGroups(language),...providerSettings.groups(language)];
   const llmManagers = new Map<string,{stop():Promise<unknown>}>([['providers',{stop:()=>core.providers.stopAll()}]]);
 
   let webApp: WebApp | null = null;
 
-  /**
-   * 关机的**唯一**入口,两条路(控制台按钮、启动器收到信号)共用。
-   *
-   * 只跑一次:第二次进来拿到的是同一个 promise、同一份账。关机途中再点一次按钮
-   * 不该把 World 的 `stop()` 跑第二遍 —— 那些 `stop()` 里有不少不是幂等的
-   * (子进程 RPC、设备句柄、外部进程的 stdin)。
-   */
+  /** 控制台与启动器共用一次关机操作，重复调用返回同一 Promise。 */
   let shutdownOnce: Promise<ShutdownReport> | null = null;
   let coreStopOnce: Promise<void> | null = null;
   const stopCore = (): Promise<void> => {
     coreStopOnce ??= (async () => { await parts.onStop?.(); })();
     return coreStopOnce;
   };
-  /**
-   * 单实例锁。取在 start() 的第一步:控制台端口、托管 server、 World 的外部连接
-   * 全在它后面,拦住的话一个副作用都还没发生。
-   */
+  // start() 在启动控制台、Provider 和 World 之前获取单实例锁。
   let instanceLock: InstanceLock | null = null;
 
   const beginShutdown = (
@@ -1124,7 +967,7 @@ export function createBot<C extends CoreConfig>(
       worlds: [...assembly.mounted],
       stopCore,
       llmManagers,
-      // 控制台那条把控制台留到最后关:这份账还要经它回给正在看页面的人。
+
       webApp: opts.closeWeb ? webApp : null,
       log: core.runlog.logger('shutdown'),
       language: opts.language ?? language,
@@ -1132,11 +975,11 @@ export function createBot<C extends CoreConfig>(
       instanceLock?.release();
       instanceLock = null;
       if (opts.exit) {
-        // 回执先出门,再收控制台与进程。反过来的话操作员只看得到"连接断开",
-        // 而"世界到底存上没有"正是他按这颗按钮想知道的事。
+      // 先发送关机结果，再关闭控制台并退出进程。
+
         setTimeout(() => {
           void Promise.resolve(webApp?.stop()).finally(() => {
-            // 有步骤被跳过就用非零退出码说出来(日志里有逐步明细)。
+
             process.exit(report.complete ? 0 : 1);
           });
         }, 300);
@@ -1177,7 +1020,7 @@ export function createBot<C extends CoreConfig>(
           for (const [path, v] of Object.entries(values)) setConfigPath(root, path, v);
           return botText(language).config.updated(group.schema.title, persistConfig(loaded, values));
         },
-        // 先问 bot(Persona自己那几组),再依次问 World 定义;第一个给出非空表的赢。
+
         options: (kind, language) => {
           const own = contribution.configOptions?.(kind, language);
           if (own?.length) return own;
@@ -1189,15 +1032,14 @@ export function createBot<C extends CoreConfig>(
         },
       },
       worlds: async (language) => deriveWorldInfo(core, assembly, promptDirs, language),
-      // 控制台页的三路来源:World、Persona自报(认知绑定)、
-      // 装配层追加(部署绑定)。三者在控制台眼里是同一种东西。
+
       consolePageSources: () => [...deriveConsolePageSources(
         core,
         { assembly, persona: parts.persona },
         {
           id: definition.id,
           label: cfg.displayName || definition.id,
-          // CORE_CONFIG_GROUP 不在其列:那是框架自己的旋钮,留在设置页。
+
           ...(contribution.configGroups?.length ? { configGroups: contribution.configGroups } : {}),
         },
         contribution.consolePages
@@ -1223,10 +1065,9 @@ export function createBot<C extends CoreConfig>(
         pause: () => core.bus.setPaused(true),
         resume: () => core.bus.setPaused(false),
         isPaused: () => core.bus.isPaused(),
-        // 关机键。仪式在这里跑完并把逐步结果回给页面,**之后**才退进程——
-        // 顺序反了的话操作员只会看到浏览器报"连接断开",不知道世界存没存上。
+
         shutdown: (language) => beginShutdown('控制台关机键', { closeWeb: false, exit: true, language }),
-        // 标志先落盘再关机:关机途中被硬杀,启动器照样能读到标志把进程拉起来。
+    // 重启请求先于关机写入，供监督进程在子进程退出后读取。
         restart: (language) => {
           requestRestart(loaded.dataDir);
           return beginShutdown('控制台重启键', { closeWeb: false, exit: true, language });
@@ -1247,8 +1088,7 @@ export function createBot<C extends CoreConfig>(
       },
       toolSchemas: {
         list: () => {
-          // 归属按声明方算:World 自报的工具名归那个 World,其余都是Persona声明的
-          // (core 自己不声明工具,流程类工具同样归Persona)。
+
           const byWorld = new Map<string, ToolOwner>();
           for (const m of assembly.mounted) {
             const label = assembly.labelOf(m.id);
@@ -1276,7 +1116,7 @@ export function createBot<C extends CoreConfig>(
       }),
       log: core.runlog.logger('console'),
       prompts: derivePrompts(parts, assembly, contribution, cfg.timezone, promptDirs, opts.extensions?.bot !== undefined),
-      // 激活/停用/重启全部热生效:槽位表按定义重建实例,core 连带重建前缀。
+
       worldActivation: {
         set: (id, enabled, language) => (enabled ? assembly.activate(id, language) : assembly.deactivate(id, language)),
         restart: (id, language) => assembly.restart(id, language),
@@ -1295,11 +1135,10 @@ export function createBot<C extends CoreConfig>(
         force: process.argv.includes('--force-second-instance'),
         log: core.runlog.logger('boot'),
       });
-      // 先起控制台:core 启动过程的日志与"启动即暂停"状态,一打开就能看到
+
       const port = app ? await app.start(cfg.web.port) : null;
-      // 活跃 provider 是托管端点时先把 server 拉起来(不等就绪——健康轮询在托管器里,
-      // 控制台可观察;bot 常以"启动即暂停"起,operator 看到 running 再继续)。
-      // 全局端点表里没有模块认领的条目(模块已删、扩展没装):控制台看不见它们,只能在这里出声。
+      // 启动 Provider 不等待健康检查完成；健康轮询由托管器执行。
+
       const orphans = Object.entries(cfg.providers).filter(([, entry]) => !providerModules.some((m) => m.id === entry.kind)).map(([name, entry]) => `${name}(kind=${entry.kind})`);
       if (orphans.length) core.runlog.logger('provider').warn('端点条目没有对应的 Provider 模块,不可用', { orphans });
       void core.providers.start(cfg.activeProvider).catch(error=>core.runlog.logger('provider').error('Provider 启动失败',{error:String(error)}));
@@ -1320,25 +1159,7 @@ export function createBot<C extends CoreConfig>(
   };
 }
 
-/**
- * 关机仪式的编排。**与具体 World 无关**:框架不知道谁在托管一个要存档的游戏世界,
- * 存档发生在那个 World 自己的 `stop()` 里(只有它知道要往哪个子进程的 stdin 写什么)。
- * 这里只保证两件事 —— 顺序对,以及**每一步都有钟**。
- *
- * 顺序的理由,逐条:
- *
- *  1. 先按住总线。收尾途中还在投递唤醒的话,她可能正好下一条指令又去挖方块,
- *     而世界马上就要存盘了。事件照常落库,只是不再叫醒。
- *  2. World 停。托管的外部进程(MC 服务端、观察者客户端)都挂在这一步下面,
- *     存档也在这里发生 —— 所以它拿的预算最大。
- *  3. 托管 LLM server 停。它没有要落盘的东西,纯粹是别留孤儿进程。
- *  4. 落盘。日志(runlog / usage / toolcalls / events / session)全是
- *     `appendFileSync`,写完就在盘上,没有缓冲要冲 —— 真正只存在于内存里的是
- *     core 状态袋,这一步就是把它写下去。
- *  5. 控制台最后关。前面每一步的结果都还要经它报给正在看页面的人。
- *
- * 任何一步超时都只记一笔往下走:关机卡在中途,比少走一步糟得多。
- */
+/** 按序执行关机步骤并记录结果；失败或超时后继续下一步。 */
 async function runShutdown<C extends CoreConfig>(ctx: {
   reason: string;
   core: Core<C>;
@@ -1348,7 +1169,7 @@ async function runShutdown<C extends CoreConfig>(ctx: {
   llmManagers: Map<string, {stop():Promise<unknown>}>;
   webApp: WebApp | null;
   log: Logger;
-  /** 步骤名与总结行回给控制台,按控制台语言;日志行不跟。 */
+  /** 步骤名和总结使用控制台请求语言。 */
   language: Language;
 }): Promise<ShutdownReport> {
   const t = pick(ctx.language, BOT_TEXT).shutdown;
@@ -1370,7 +1191,7 @@ async function runShutdown<C extends CoreConfig>(ctx: {
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       steps.push({ key, label, ok: false, elapsedMs: Date.now() - t0, detail });
-      ctx.log.warn(`关机 ✗ ${label}(跳过,继续下一步)`, { detail });
+      ctx.log.warn(`关机步骤失败: ${label}`, { detail });
     }
   };
 
@@ -1415,7 +1236,6 @@ async function runShutdown<C extends CoreConfig>(ctx: {
   await run('llm', t.llm, SHUTDOWN_BUDGET_MS.llm, () =>
     Promise.all([...ctx.llmManagers.values()].map((m) => m.stop())));
   await run('flush', t.flush, SHUTDOWN_BUDGET_MS.flush, () => {
-    // 日志与 session 是 appendFileSync,写的时候就在盘上;这里只补内存里那一份。
     ctx.core.state.save();
   });
   const app = ctx.webApp;
@@ -1432,7 +1252,7 @@ async function runShutdown<C extends CoreConfig>(ctx: {
       manualAction: check.manualAction,
     });
   }
-  // 总结行使用 complete，涵盖本地步骤与外部状态确认。
+
   const unverified = externalChecks.filter((check) => check.status !== 'verified-ended');
   const summary = !localComplete
     ? t.summarySkipped
@@ -1455,7 +1275,6 @@ async function runShutdown<C extends CoreConfig>(ctx: {
   return { reason: ctx.reason, localComplete, complete, steps, externalChecks };
 }
 
-/** 把一组配置项写回这个 bot 的 config.json(其余段原样保留) */
 function persistConfig<C extends CoreConfig>(loaded: LoadedConfig<C>, values: ConfigValues): string {
   const cfgPath = join(loaded.rootDir, 'config.json');
   updateJsonObject(cfgPath, (raw) => {

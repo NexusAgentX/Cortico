@@ -1,6 +1,6 @@
 /**
- * Download and unpack one release archive. Memory stays bounded: the zip reader waits for the
- * output file to drain after every input chunk, the tarball goes through a stream pipeline.
+ * Download and unpack a release archive. ZIP input waits for pending output writes
+ * after each chunk; tar archives use a stream pipeline.
  */
 import { createReadStream, createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { chmod, open, symlink } from 'node:fs/promises';
@@ -86,9 +86,8 @@ async function extractZip(file: string, destDir: string, stripComponents: number
     entry.start();
   };
   /**
-   * Backpressure is read off the stream at wait time, never from an event queued earlier: a
-   * `drain` listener attached after the buffer already emptied, or after `end()`, would wait
-   * forever.
+   * Check current writableNeedDrain before waiting for drain.
+   * An ended stream is awaited through its completion promise, since drain may no longer fire.
    */
   const settle = async (): Promise<void> => {
     for (const file of [...active]) {

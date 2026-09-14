@@ -1,14 +1,7 @@
 /**
- * World 装配层:World 定义 → 槽位 → 挂载表。
- *
- * 一个 World 以 `WorldDefinition` 的形式进入装配:默认配置段、激活前置检查、
- * 按装配上下文造实例。装配层按 `worlds.<id>.enabled` 决定哪些槽位挂进 core,
- * 并在运行中热激活 / 停用 / 重启,不重启进程。
- *
- * 槽位不变量:`slot.instance` 要么已挂载并已 start,要么是从未 start 的新实例。
- * 停用与重启都会按定义重建一个新实例顶上,旧实例只负责 stop。
- *
- * 这一层不认识任何具体 World:名字、标签、缺失原因全部来自定义与 bot 的声明。
+ * 按 WorldDefinition 构造实例，依据 worlds.<id>.enabled 挂载，并提供运行时激活、停用和重启。
+ * 挂载状态与启动状态分开，实际启动由 Core 管理。定义实例在停用和重启时重新构造；
+ * 预建实例重启时复用原对象。名称、标签与缺失原因来自定义或 bot 声明。
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,10 +17,10 @@ const ASSEMBLY_TEXT = {
     constructFailed: (detail: string) => `构造失败: ${detail}`,
     notImplemented: '本地没有找到这个 World 的实现。',
     unknownWorld: (id: string) => `未知 World: ${id}`,
-    alreadyRunning: (label: string) => `${label} 已在运行`,
+    alreadyRunning: (label: string) => `${label} 已启用`,
     prebuilt: (label: string) => `${label} 是预建实例,不经装配层激活`,
-    activated: (label: string, id: string) => `${label} 已激活并启动;worlds.${id}.enabled=true 已写回 config.json`,
-    deactivated: (label: string, id: string) => `${label} 已停止;worlds.${id}.enabled=false 已写回 config.json`,
+    activated: (label: string, id: string) => `${label}（${id}）已启用`,
+    deactivated: (label: string, id: string) => `${label}（${id}）已停用`,
     notActive: (label: string) => `${label} 未激活,没有可重启的实例`,
     restarted: (label: string) => `${label} 已重启`,
     toolClash: (other: string, names: string[]) => `工具名与 ${other} 撞名,拒绝挂载: ${names.join(', ')}`,
@@ -38,10 +31,10 @@ const ASSEMBLY_TEXT = {
     constructFailed: (detail: string) => `Construction failed: ${detail}`,
     notImplemented: 'No implementation of this World was found locally.',
     unknownWorld: (id: string) => `Unknown World: ${id}`,
-    alreadyRunning: (label: string) => `${label} is already running`,
+    alreadyRunning: (label: string) => `${label} is already enabled`,
     prebuilt: (label: string) => `${label} is a prebuilt instance and is not activated through assembly`,
-    activated: (label: string, id: string) => `${label} activated and started; worlds.${id}.enabled=true written back to config.json`,
-    deactivated: (label: string, id: string) => `${label} stopped; worlds.${id}.enabled=false written back to config.json`,
+    activated: (label: string, id: string) => `${label} (${id}) enabled`,
+    deactivated: (label: string, id: string) => `${label} (${id}) disabled`,
     notActive: (label: string) => `${label} is not active, so there is no instance to restart`,
     restarted: (label: string) => `${label} restarted`,
     toolClash: (other: string, names: string[]) => `Tool names clash with ${other}, refusing to mount: ${names.join(', ')}`,
@@ -62,59 +55,51 @@ export type DeepPartial<T> = T extends readonly unknown[]
     ? { [K in keyof T]?: DeepPartial<T[K]> }
     : T;
 
-/** 造实例时 World 从装配层拿到的全部东西。 */
+/** 装配层提供给 World 构造函数的上下文。 */
 export interface WorldContext<S extends WorldSection = WorldSection> {
   readonly id: string;
-  /** `worlds.<id>` 的活引用。热键现读即生效;构造时读走的静态键在下次 World 重启时更新。 */
+  /** worlds.<id> 的共享引用；每次读取的配置立即生效，构造时保存的值需重启实例。 */
   readonly cfg: S;
   readonly timezone: string;
   readonly botName: string;
-  /** 这份**部署**的目录。本机事实、密钥、部署侧的资产覆盖都在这下面。 */
+  /** 部署目录，保存本机配置、密钥和部署资产覆盖。 */
   readonly botDir: string;
-  /**
-   * 这份部署引用的 **bot 代码包**目录。人格自带的资产(演出包、提示词覆盖)在这下面,
-   * 它们进版本控制。同一个包可以背好几份部署,所以与 `botDir` 是两回事。
-   */
+  /** bot 代码包目录，供包内模板与资产使用，可由多个部署共享。 */
   readonly packageDir: string;
   readonly dataDir: string;
   readonly repoRoot: string;
   secret(name: string): string;
-  /** 写一个密钥到 bot 目录的 `.env`,并让本进程的 `secret()` 立刻读到新值。 */
+  /** 将密钥写入部署 .env，并更新进程环境供 secret() 立即读取。 */
   storeSecret(name: string, value: string): void;
   /** 深合并进 `worlds.<id>` 段:活对象与 config.json 同步。数组整体替换。 */
   persist(patch: DeepPartial<S>): void;
-  /**
-   * 按当前 `cfg.enabled` 对账本 World:已激活则重建实例重启,未激活则停下。
-   * 面板上「改了连接参数要重启」的那颗按钮走这里。
-   */
+  /** 按 cfg.enabled 同步状态：启用时激活或重启，禁用时停止。 */
   restart(): Promise<void>;
 }
 
 export interface WorldDefinition<S extends WorldSection = WorldSection> {
   id: string;
   label: string;
-  /** 层 2 默认值。`enabled` 恒为 false,由 bot 的声明置 true。每次调用返回新对象。 */
+  /** World 配置默认值，每次返回新对象；enabled=false，由 bot 声明或部署配置启用。 */
   defaults(): S;
   /** 激活前置检查。抛错 = 不能激活,错误信息原样给操作者。 */
   preflight?(ctx: WorldContext<S>): void;
   /**
-   * `x-options` 下拉的**整张**选项表(如播放设备表),由声明该 schema 的 World 自己给:
-   * "系统默认 / 静音"这类固定项也在这里按 `language` 给出,控制台不认识任何 kind,
-   * 只把返回的表原样画出来(当前值不在表里时另补一项)。不认识的 kind 返回空数组,
-   * 框架据此继续问下一个 World。bot 级 `ConsoleContribution.configOptions` 只管Persona
-   * 自己那几组。
+   * 返回 x-options 的完整选项表，包含按请求语言生成的固定项。
+   * 未知 kind 返回空数组，框架继续查询其他 World；当前值不在表中时由控制台补入。
+   * Persona 的选项由 Bot ConsoleContribution 提供。
    */
   configOptions?(kind: string, language: Language): Array<{ value: string; label: string }>;
   create(ctx: WorldContext<S>): World;
 }
 
 /**
- * bot 为之设计的渠道。字符串 = 有定义的 World id;对象 = 本地没有实现的占位,
- * 控制台按 `missing` 展示 `reason`。
+ * bot 默认使用的 World 声明。字符串是 World id；对象还可提供标签与缺失原因。
+ * 两种声明均允许本地缺少实现。
  */
 export type WorldDeclaration = string | { id: string; label: string; reason?: string };
 
-/** 层 2 的 `worlds` 段:每个定义的默认值,声明过的渠道 `enabled: true`。 */
+/** 各 World 的默认配置段；已声明的 id 默认启用。 */
 export function worldDefaults(
   definitions: readonly WorldDefinition<WorldSection>[],
   declares: readonly WorldDeclaration[],
@@ -129,9 +114,8 @@ export function worldDefaults(
 }
 
 /**
- * 把本机有的实现交给 bot 定义:仓内目录与扩展装进来的并成一张表。层 1 的 `worlds` 段为
- * 每个实现补默认值,Persona 声明过的渠道 `enabled: true`,其余默认关、由部署侧选配。
- * 定义本身一行不改;`defaults()` 里已有的段不覆盖。
+ * 将可用 World 定义加入 bot。对 defaults() 中缺失的 World 段补充默认值，
+ * 已声明的 id 默认启用，其余默认关闭；已有配置段保持原样。
  */
 export function withWorlds<C extends CoreConfig>(
   definition: BotDefinition<C>,
@@ -177,15 +161,15 @@ export interface PrebuiltOptions {
   declared?: boolean;
 }
 
-/** 装配层对 core 的两个动作;core 造好后绑上。 */
+/** Core 构造后绑定挂载与卸载方法。 */
 export interface WorldMountHost {
   mount(mod: World): Promise<void>;
   unmount(id: string): Promise<void>;
   /** 装配层改了一个槽位的挂载状态(激活 / 停用 / 重启)。启动期的初始挂载不报。 */
   lifecycle?(event: WorldLifecycleEvent): void;
   /**
-   * World 不得占用的工具名(Core 保留帧名、Persona 自有工具)。绑定时把启动期已挂载的
-   * 扫一遍,撞名的出表进 missing;之后激活 / 重启 / 预建也查。
+   * Core 保留帧与 Persona 自有工具的名称。绑定时检查已挂载实例，
+   * 冲突实例移入 missing；后续激活、重启和添加预建实例同样检查。
    */
   reservedToolNames?(): readonly string[];
 }
@@ -236,7 +220,7 @@ export class WorldAssembly {
       try {
         instance = def.create(this.context(def));
       } catch (error) {
-        // 定义可以来自可替换的包;构造失败只废这一格,不让一个 World 否决整个启动。
+        // 单个定义构造失败记入 missing，继续构造其他 World。
         const detail = error instanceof Error ? error.message : String(error);
         this.missing.push({
           id: def.id,
@@ -290,7 +274,7 @@ export class WorldAssembly {
     return assembly;
   }
 
-  /** 预建实例:永远挂载,只能停/起,不能重建。同 id 的定义槽位会被它顶掉。 */
+  /** 预建实例初始挂载，重启复用原对象；同 id 时替换原定义实例。 */
   addPrebuilt(instances: readonly World[], opts: PrebuiltOptions = {}): void {
     for (const mod of instances) {
       const existing = this.slots.findIndex((s) => s.id === mod.id);
@@ -313,7 +297,7 @@ export class WorldAssembly {
     }
   }
 
-  /** 绑上 core;启动期已挂载的 World 此刻才能对照保留名,撞名的出表进 missing。 */
+  /** 绑定 Core 后检查保留名称，冲突的已挂载实例移入 missing。 */
   bind(host: WorldMountHost): void {
     this.host = host;
     for (const slot of [...this.slots]) {
@@ -386,7 +370,7 @@ export class WorldAssembly {
     return text(language).restarted(slot.label);
   }
 
-  /** 按 `worlds.<id>.enabled` 对账(`WorldContext.restart`)。 */
+  /** 按 worlds.<id>.enabled 同步状态，供 WorldContext.restart 调用。 */
   async sync(id: string): Promise<void> {
     const slot = this.slot(id);
     const enabled = (slot.definition ? this.section(slot.definition) : { enabled: true }).enabled;
@@ -405,10 +389,7 @@ export class WorldAssembly {
     if (slot.definition) slot.instance = slot.definition.create(this.context(slot.definition));
   }
 
-  /**
-   * 工具名在一个 bot 内全局唯一:模型按名字调用,Core 按名字归属与隐藏。
-   * 占了保留名或与挂载表里任何 World 撞名的 World 不挂,理由给操作员;约定是用自家短名做前缀。
-   */
+  /** 工具名在 bot 内唯一。与保留名称或已挂载 World 工具冲突时拒绝挂载。 */
   private toolClash(mod: World, mounted: readonly World[]): ((language: Language) => string) | null {
     const names = new Set(mod.tools().map((t) => t.name));
     const reserved = (this.host?.reservedToolNames?.() ?? []).filter((n) => names.has(n));

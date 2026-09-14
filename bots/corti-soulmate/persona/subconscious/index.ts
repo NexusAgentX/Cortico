@@ -1,11 +1,6 @@
 import { message, type ContextRecord } from 'cortico/protocol/open-responses/context.ts';
 import { hasRole, withoutPastReasoning } from 'cortico/protocol/open-responses/context-helpers.ts';
-/**
- * 梦:交接之后从交接前的快照 fork 出同一个她,整理工作区。
- *
- * 策略归Persona;core 只提供 fork 原语。交接立即返回(对话不断流),梦在后台跑,
- * 单实例排队;surface 的文本经 onEmergence 回到主意识(MEMORY 3 + 一条注入)。
- */
+/** 交接快照进入串行后台整理队列；surface 结果通过 onEmergence 写入 MEMORY 3 并投递事件。 */
 import type { ForkOptions, CoreApi, Logger, ToolDef } from 'cortico/core/types.ts';
 import type { BotConfig } from '../../index.ts';
 import { estimateMessagesTokens, nowIso } from 'cortico/core/util.ts';
@@ -41,7 +36,7 @@ export interface DreamStatus {
 export class Dream {
   private readonly d: DreamDeps;
   private dreaming = false;
-  /** 单实例排队链:上一场梦没醒,下一场快照排队等 */
+  /** 串行梦任务队列。 */
   private chain: Promise<void> = Promise.resolve();
 
   constructor(deps: DreamDeps) {
@@ -67,7 +62,7 @@ export class Dream {
     return this.d.core.requestContextHandoff();
   }
 
-  /** 排一场梦。快照不可变,晚点整理不丢东西;单实例防止并发写工作区。 */
+  /** 将不可变快照排入队列，串行执行以避免并发写工作区。 */
   schedule(snapshot: ContextRecord[]): Promise<void> {
     const run = (): Promise<void> => this.run(snapshot);
     this.chain = this.chain.then(run, run);

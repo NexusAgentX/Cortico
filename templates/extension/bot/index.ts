@@ -1,7 +1,4 @@
-/**
- * 包入口:默认导出 `BotDefinition`,加载器按 `cortico.kind === 'bot'` 认它。
- * 一份部署经 `deployment.json` 的 `bot` 字段引用这个包名;同一个包可以背好几份部署。
- */
+/** 默认导出 BotDefinition；deployment.json 的 bot 字段引用包名，多份部署可使用同一个包。 */
 import { resolve } from 'node:path';
 import type { BotDefinition, BotParts } from 'cortico/bot.ts';
 import type { CoreConfig, World } from 'cortico/core/types.ts';

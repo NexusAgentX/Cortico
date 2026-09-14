@@ -1,9 +1,7 @@
 /**
- * 模型工具调用流水:每次调用一行,不分 World。`data/runs/<run>/toolcalls.jsonl`。
- *
- * 与运行日志的分工:运行日志记 core 内部发生了什么,这里记**模型下了什么令、
- * 拿回什么回执**。`args` 是模型给的原文,任何 World 归一之前的样子;回执按 `chars`
- * 记全长、按 `receipt` 记截断摘要,全文在 transcript.jsonl 里按 `call` 找。
+ * 模型工具调用写入 data/runs/<run>/toolcalls.jsonl，每次调用一行。
+ * args 保留模型原始参数；receipt 保存摘要，chars 记录全文长度。
+ * 完整回执可通过 call 在 transcript.jsonl 中查找。
  */
 import { appendFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -17,18 +15,15 @@ export interface ToolCallInput {
   /** 发起调用的 session 声明 id */
   role: string;
   tool: string;
-  /** 工具归属的 World id;Persona自己的工具与 flow 原语不填 */
+  /** 工具所属 World id；Persona 工具不填。 */
   mod?: string;
-  /**
-   * 模型给的参数,归一前的原样。台词正文(vtuber_act 的 script)完整落在这里,
-   * 事后话术分析读的就是它。
-   */
+  /** 模型原始参数，未经 World 归一化。 */
   args: Record<string, unknown> | null;
   durMs: number;
   /** 回执全长(字符);receipt 只留前 RECEIPT_CHARS 个 */
   chars: number;
   receipt: string;
-  /** handler 抛异常转成的回执 */
+  /** handler 抛错或 ToolOutcome.failed 标记的失败。 */
   failed?: true;
   /** 回执带的媒体件数 */
   blobs?: number;

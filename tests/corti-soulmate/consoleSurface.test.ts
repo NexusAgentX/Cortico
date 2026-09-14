@@ -54,7 +54,6 @@ describe('Persona的面板声明', () => {
   it('三个面板都是局部 id + 真标题,不带 bot 名前缀', () => {
     expect(PERSONA_PANELS.map((p) => p.id)).toEqual(['workspace', 'memory', 'history']);
     expect(PERSONA_PANELS.map((p) => p.title)).toEqual(['工作区', 'Memory 分层', '版本历史']);
-    for (const p of PERSONA_PANELS) expect(p.description).toBeTruthy();
     expect(decl.panels).toEqual(PERSONA_PANELS);
   });
 

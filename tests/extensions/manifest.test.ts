@@ -1,9 +1,6 @@
 /**
- * manifest 驱动的装载:包在 package.json 的 `cortico` 块里自报是哪一类,框架照着分派、
- * 校验默认导出的形状、分开两份 id 命名空间、按类给控制台页前缀。
- *
- * 夹具是 tests/fixtures/extensions/ 下的完整小包,复制进临时目录的 extensions/node_modules/
- * 后真 import —— 装载线上没有一处被 mock。
+ * 按 manifest.kind 验证导出结构、id 命名空间和控制台页前缀。
+ * 测试包从 tests/fixtures/extensions 复制到临时依赖目录后导入。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -38,7 +35,6 @@ describe('按 kind 分派', () => {
     expect(set.worlds.map((m) => m.id)).toEqual(['fixture-world']);
     expect(set.providers.map((p) => p.id)).toEqual(['fixture-provider']);
     expect(records['world-ok']).toMatchObject({ kind: 'world', api: 3, loaded: true, worldId: 'fixture-world', label: '夹具 World' });
-    // provider 的显示名取 title,与 World 的 label 同一格。
     expect(records['provider-ok']).toMatchObject({ kind: 'provider', api: 3, loaded: true, worldId: 'fixture-provider', label: '夹具端点' });
   });
 
@@ -167,7 +163,7 @@ describe('id 命名空间', () => {
     expect(clash.records['provider-reserved-id']).toMatchObject({ loaded: false, worldId: 'openai-responses-compat' });
     expect(clash.records['provider-reserved-id'].reason).toContain('provider id「openai-responses-compat」');
 
-    // 同一个包,只把 openai-responses-compat 保留在 worlds 那一侧 → 照装:两个命名空间互不相干。
+    // World 与 provider 的保留名称分别检查。
     const free = await byName({ reserved: ['openai-responses-compat'] });
     expect(free.set.providers.map((p) => p.id)).toEqual(['openai-responses-compat']);
   });
@@ -184,14 +180,14 @@ describe('id 命名空间', () => {
 });
 
 describe('浏览器端产物', () => {
-  it('三态:没声明 none、声明且文件在 served、声明但没 build missing', async () => {
+  it("面板状态：未声明为 none，文件存在为 served，文件缺失为 missing", async () => {
     installFixture(root, 'world-ok');
     installFixture(root, 'world-with-console');
     installFixture(root, 'world-console-missing');
     const { set, records } = await byName();
     expect(records['world-ok']).toMatchObject({ consoleClient: false, console: 'none' });
     expect(records['world-with-console']).toMatchObject({ consoleClient: true, console: 'served' });
-    // 面板缺了不影响 World 本体上线。
+    // 缺少面板文件不影响 World 定义加载。
     expect(records['world-console-missing']).toMatchObject({ consoleClient: true, console: 'missing', loaded: true });
     expect(set.consoleAssets.map((a) => a.pageId)).toEqual(['world:with-console']);
   });
@@ -220,7 +216,7 @@ describe('浏览器端产物', () => {
       .toBe(`${EXTENSION_ASSET_PREFIX}world-with-console/3.1.0/console.js`);
   });
 
-  it('样式文件缺了只是没样式,不算 missing,World 照常上', async () => {
+  it("缺少样式文件不将面板标为 missing，也不影响 World 定义加载", async () => {
     const pkgDir = installFixture(root, 'world-with-console');
     rmSync(join(pkgDir, 'dist/console.css'));
     const { set, records } = await byName();
@@ -236,14 +232,14 @@ describe('浏览器端产物', () => {
   });
 });
 
-describe('ExtensionManager 对账', () => {
+describe("ExtensionManager 安装与加载状态", () => {
   const manager = (booted: Awaited<ReturnType<typeof loadExtensions>>) =>
     new ExtensionManager(root, booted, { run: async () => ({ code: 0, output: '' }), fetchJson: async () => ({}) });
 
   it('consoleAssets() 给出启动时那一份;list() 带上 kind / api / 面板状态', async () => {
     installFixture(root, 'world-with-console');
     const booted = await loadExtensions(root);
-    // 启动之后才装上的包:manifest 读得出类别,面板状态要等重启后真加载过才算数。
+    // 新装包只报告 manifest，产物状态在下一次加载时检查。
     installFixture(root, 'provider-ok');
     const mgr = manager(booted);
     expect(mgr.consoleAssets()).toBe(booted.consoleAssets);

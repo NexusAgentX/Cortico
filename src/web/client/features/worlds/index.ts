@@ -1,24 +1,7 @@
 /**
- * 「World」页 —— 一批 World 的三态清单与每张卡右上角的三颗开关。
- *
- * 这一页是**框架的**。框架知道的只有这么多:
- *
- * ```
- * 有一批 World;每个处于 active / inactive / missing 三态之一;
- * 已挂载的有三个动作——对 agent 是否可见(热)、重启、停用;未激活的只有激活。
- * ```
- *
- * 它**不知道任何一个 World 是什么**。所以这份源码里一个具体 World 名都没有:标签、徽标、
- * 缺失原因、工具名、链接全部原样来自 `/api/worlds`,这一页只负责摆放它们。
- * 明天多一个第三方 World,这里不改一行。
- *
- * | 动作   | 端点                          | 语义                                                   |
- * | ------ | ----------------------------- | ------------------------------------------------------ |
- * | 可见性 | `/api/worlds/visibility`  | 热开关。只撤下 agent 表面的三要素,World 照常运行           |
- * | 重启   | `/api/worlds/restart`     | 停下当前实例、按定义重建、重新启动;构造时读走的参数由此生效 |
- * | 停用/激活 | `/api/worlds/activation` | 写回 config.json 的 `worlds.<id>.enabled` 并立即撤出/挂进 core |
- *
- * 「详情」不在这一页:那归 World 自己那一页(`#/provider/<id>`)。这一页只是入口。
+ * 按 /api/worlds 展示 active、inactive、missing 状态及声明信息。
+ * visibility 改变 agent 可见性，World 继续运行；restart 重建实例以应用构造时参数。
+ * activation 写入 worlds.<id>.enabled 并挂载或卸载。详情由各 World 的控制台页提供。
  */
 
 import { pageIdFor } from '../../../shared/console-protocol.ts';
@@ -32,11 +15,7 @@ import { pageIntro } from '../../ui/page.ts';
 import type { FeatureContext, FrameworkFeature } from '../feature.ts';
 import { S } from './strings.ts';
 
-/**
- * page id 的构造规则:`<kind>:<name>`。 World 这一类的 kind 恒为 `worlds`
- * (`ConsolePageKind`,与 `persona` 对举)。这不是 World 名,是页的类别——
- * 任何一个第三方 World 落在这一页上都拿同一个前缀。
- */
+/** World 控制台页 id 使用 world:<id>。 */
 const WORLD_PAGE_KIND = 'world';
 
 /** 某个 World 那一页的路由:`#/provider/<kind>:<id>`。 */
@@ -90,23 +69,19 @@ export function mountWorlds(ctx: FeatureContext): void {
   const doc = root.ownerDocument;
   /** page id → 这张卡上那排灯的容器。轮询只碰这些节点。 */
   const lampNodes = new Map<string, HTMLSpanElement>();
-  /**
-   * 灯的活数据。整份清单不重取——那要连每个 World 的环境提示词一起渲染,而灯只要
-   * 四个字节;卡上还有按钮,每半秒重画一次会把点到一半的操作抖掉。
-   */
+  /** 灯的轮询只更新灯节点，不重新获取清单或重建卡片。 */
   ctx.lifecycle.own(subscribeLamps(doc, (lamps) => {
     for (const [id, el] of lampNodes) paintLamps(el, lamps[id] ?? []);
   }));
 
-  const intro = pageIntro(ui, S.introTitle, S.introDesc);
-  /** 三个动作各自的服务端表面可能没挂:没挂就不画那颗图标,而不是画出来等 503。 */
+  const intro = pageIntro(ui, S.introTitle);
   const canToggleVisibility = ctx.capabilities.worldVisibility === true;
   const canActivate = ctx.capabilities.worldActivation === true;
 
   const sheet = ui.sheet({
     title: S.sheetTitle,
     en: 'active / inactive / missing',
-    desc: S.sheetDesc,
+
   });
   const sumBar = ui.rowbar();
   const msg = ui.msgline();
@@ -127,10 +102,6 @@ export function mountWorlds(ctx: FeatureContext): void {
   // 动作
   // -------------------------------------------------------------------------
 
-  /**
-   * 重载当前 session 的 system 前缀。每次重载丢一次缓存前缀,所以由操作者点,
-   * 这一页不偷偷替他做。
-   */
   async function reloadPrefix(btn?: HTMLButtonElement): Promise<void> {
     const lock = btn ? ui.disable(btn) : null;
     try {
@@ -188,11 +159,7 @@ export function mountWorlds(ctx: FeatureContext): void {
     await reloadPrefix();
   }
 
-  /**
-   * 激活 / 停用 / 重启都是热动作:服务端写回 `worlds.<id>.enabled`,按定义重建实例,
-   * 挂进或撤出 core,连带重建 system 前缀。请求在途时按钮禁掉——挂载一个 World
-   * 可能要连外部服务,几秒之内点第二下只会排队。
-   */
+  /** 激活、停用与重启请求执行期间禁用相关按钮，完成后刷新清单。 */
   async function activation(m: WorldView, wantEnabled: boolean, btn: HTMLButtonElement): Promise<void> {
     const name = m.label || m.id;
     if (!wantEnabled) {
@@ -271,10 +238,7 @@ export function mountWorlds(ctx: FeatureContext): void {
     return (m.badges ?? []).map((b) => ui.pill(`${b.label} ${b.value}`, b.tone));
   }
 
-  /**
-   * 这张卡的那排灯。挂载着的按 World 自报,其余两态由这一页点一颗灰的——**没装进
-   * core 的 World 报不出灯**,那不是它沉默,是它根本没在跑。
-   */
+  /** active 状态使用 World 自报读数；其余状态显示框架提供的灰灯。 */
   function cardLamps(m: WorldView): HTMLSpanElement {
     const el = lampRow(doc, m.status === 'active'
       ? m.lamps ?? []
@@ -283,7 +247,7 @@ export function mountWorlds(ctx: FeatureContext): void {
     return el;
   }
 
-  /** 由Persona声明,还是部署侧选配。没说就不画(比画一颗"未知"诚实)。 */
+  /** 显示 Persona 声明或部署选配来源；缺失时不显示。 */
   function declaredPills(m: WorldView): HTMLSpanElement[] {
     if (m.declared === undefined) return [];
     return [ui.pill(m.declared ? S.declaredByPersona : S.optionalAddon)];
@@ -325,7 +289,7 @@ export function mountWorlds(ctx: FeatureContext): void {
     return card;
   }
 
-  /** 未安装:声明了却没装上。只有一句原样转述的原因,没有任何可点的开关。 */
+  /** 不可用的 World 显示实际原因。 */
   function missingCard(m: WorldView): HTMLElement {
     const card = cardShell(m, [], []);
     card.el.classList.add('iocard-missing');
@@ -333,9 +297,6 @@ export function mountWorlds(ctx: FeatureContext): void {
     bar.append(cardLamps(m), ui.pill(S.notInstalled, 'off'), ...declaredPills(m));
     card.body.appendChild(bar);
     card.body.appendChild(ui.msgline(m.reason || S.missingReasonDefault, true));
-    card.body.appendChild(ui.msgline(m.declared === false
-      ? S.missingOptionalNote
-      : S.missingDeclaredNote));
     return card.el;
   }
 

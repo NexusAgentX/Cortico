@@ -73,9 +73,9 @@ describe('公开发布审计', () => {
     expect(formatAuditReport(result)).toContain('移到仓库同级 Cortico-Resources');
   });
 
-  it('部署根整片拦住:六条分散规则合成一条之后,一次 git add -f 就是一次全泄', () => {
+  it('部署目录中的全部已跟踪文件均被报告', () => {
     const root = repository({
-      // 一份部署里同时装着真凭证、她的 Memory 与运行状态,所以按整片认,不按文件名逐条认
+
       'deployments/cortiv/config.json': '{"world":{"bilibili":{"sessdata":"real"}}}',
       'deployments/cortiv/workspace/CONSTITUTION.md': '# 私人内容',
       'deployments/cortiv/data/runs/index.jsonl': '{}',

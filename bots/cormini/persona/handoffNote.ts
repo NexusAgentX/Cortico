@@ -1,29 +1,13 @@
 /**
- * 交接笔记:把清空前的一段上下文渲染成一份纯文本记录。纯函数,只读 session 消息,不做 I/O。
- *
- * 这是 Cormini 的记忆选择,不是框架设施:交接后带什么进新 session 由Persona决定,
- * core 只给交接时机与快照。措辞随之归这一层——领域词(观众、台词、方块)不该
- * 出现在这里,要说的变体在 `handoffNoteLines()` 里覆盖。
- *
- * 收录 user 消息、事件帧和工具调用的入参与实际回执。speak 类调用只收最近段,
- * 更早段整条省略;assistant 正文、思维链、flow 类调用和上一份交接笔记均不收录。
- * 调用入参保留拟发内容,播出状态由回执和后续事件说明。
- *
- * 状态类读数只留最后一次:带 snapshot tag 的事件按 source/type 去重,带 snapshot tag
- * 的工具按工具名去重。逐字相同的条目也只留最后一次,并注明重复了几次。
- *
- * 时间来自消息入库时盖的 ts;帧靠 sidecar(FrameEventRef)切回逐条事件,每条带自己的
- * 时间与 tag。时间按分钟分段成小标题,不逐条盖戳(逐条盖在真场那份里占 7.4%)。
- * 没有 ts / 没有 sidecar 的旧记录照常进,只是没有时间、整帧算一条。
- *
- * 两道预算:
- *  - 最近段 speak 按 foldTokens 折叠;其他条目随年龄衰减——最近四分之一按 foldTokens,
- *    再往前四分之一按四分之一,更早的
- *    只留个头。近处要细节,远处只要骨架(真场那份 17.7k 里,越旧越贵的长回执占 17%)。
- *  - 整份从最近一条往前装,装满 budgetTokens 即止,更早的只留一句计数。
- *
- * 出线分两段:软阈值之前的是"更早的历史",之后的是"当前语境"。分成两条投递,各自带
- * 时间范围,免得她把上一窗的事当成此刻要接着做的事。
+ * 将交接前的 session 消息渲染为纯文本笔记，不做 I/O；变体措辞由 handoffNoteLines 提供。
+ * 收录 user 消息、事件帧、工具入参与回执；speak 类调用仅保留最近段，flow 类调用、
+ * assistant 正文、思维链和上一份交接笔记不收录。完成状态以回执和后续事件为准。
+ * snapshot 事件按 source/type、snapshot 工具按名称保留最后一次；相同条目合并并计数。
+ * FrameEventRef 将帧拆为事件，时间取入库 ts 并按分钟分组；旧记录缺 ts 时不标时间，
+ * 缺 sidecar 时整帧作为一条。
+ * 最近段 speak 使用 foldTokens；其他条目按年龄折叠：最近四分之一给满预算，
+ * 再往前四分之一给四分之一预算，更早条目只留开头。由近到远装入 budgetTokens，
+ * 超出的早期条目只记录数量。按软阈值分成历史与最近两段，分别投递并标明时间范围。
  */
 import { RESERVED_FRAME_NAMES } from 'cortico/core/loop.ts';
 import { EVENT_FRAME_HEADER_RE } from 'cortico/core/markers.ts';
@@ -234,7 +218,7 @@ export function renderHandoffNote(snapshot: readonly ContextRecord[], opts: Hand
     ? fold
     : capFor(entries.length - i, entries.length, fold));
   const sizes = entries.map((e, i) => estimateTokens(renderEntry(e, caps[i])) + 4);
-  const overhead = 160; // 两段抬头的固定开销(实测 116,留出时间范围与省略计数变长的余量)
+  const overhead = 160; // 为两段标题、时间范围及省略计数预留预算。
   let used = overhead;
   let start = entries.length;
   for (let i = entries.length - 1; i >= 0; i--) {
@@ -264,9 +248,7 @@ export function renderHandoffNote(snapshot: readonly ContextRecord[], opts: Hand
   const lastClock = [...current].reverse().map((e) => minuteOf(e.ts)).find((m) => m !== null) ?? null;
   const common = '同一项状态读数只留了最后一次,更早的长回执只留了个头。';
   const omitted = dropped > 0 ? `更早的 ${dropped} 条没进这份笔记。` : '';
-  // 抬头只说这一段独有的事实(时间范围、这一段收了什么、省略了什么)。交接刻的写作纪律
-  // ——怎么接续、旧发言不作范本、别发空——由醒来那句话统一说一次(Cormini.handoffNoteLines),
-  // 两处都说等于同一批里重复一遍,且措辞按领域变化时只有那一处能被变体覆盖。
+  // 衔接规则由 handoffNoteLines 提供；段标题只描述时间、收录内容和省略项。
   const parts: HandoffNotePart[] = [];
   if (history.length > 0) {
     const range = rangeOf(history);

@@ -188,17 +188,8 @@ describe('asset-manifest 被改坏时的拒绝面', () => {
     expect(assets.forPage('other')).toBeUndefined();
   });
 
-  /**
-   * **行为记录，不是背书**（见回报）：`providers` 是一个普通对象字面量，查表用的是
-   * `providers[key]`，所以 `constructor` / `__proto__` / `toString` 这些原型链上的键
-   * 会答出非 undefined 的东西。
-   *
-   * 现实里够不着：page id 必须过 `PAGE_ID_RE`（`world:` / `persona:` 前缀），
-   * 那几个名字一个都不合法；而且答出来的东西也没有合法的 `js`，加载器那道闸照样拦。
-   * 实现已改用 `Object.create(null)`,所以这里钉两条:合法 id 拿不到表外条目,
-   * 且原型链上的名字一个都答不出来。
-   */
-  it('原型链上的键：合法 provider id 拿不到表外条目（原型键的现状一并记录）', () => {
+  /** 资源表仅返回自有条目，原型键返回 undefined。 */
+  it('资源查询仅返回自有条目，原型键返回 undefined', () => {
     const { assets } = assetsWith({
       protocolVersion: 1,
       core: null,
@@ -208,9 +199,6 @@ describe('asset-manifest 被改坏时的拒绝面', () => {
     for (const id of ['world:demo', 'world:constructor', 'persona:tostring', 'world:proto']) {
       expect([id, assets.forPage(id)]).toEqual([id, undefined]);
     }
-    // 表本身是无原型对象:原型链上的键一个都答不出来。
-    // (合法 id 根本够不着这些名字,所以这不是一道要靠上游拦的闸——
-    //  而是让"继承来的答案"这种可能性压根不存在。)
     for (const key of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
       expect([key, assets.forPage(key)]).toEqual([key, undefined]);
     }

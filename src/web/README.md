@@ -1,67 +1,76 @@
+<!-- Owner: src/web/server.ts, src/web/shared/console-protocol.ts, src/web/shared/client-panel.ts -->
+
 # src/web
 
-Owner: `src/web/server.ts`, `src/web/shared/console-protocol.ts`, `src/web/shared/client-panel.ts`
-
-控制台的服务端、线协议与浏览器内核。它不持有任何一页的内容:页由 Core 派生(框架页)或由
-World / Persona / provider 贡献,服务端只做聚合、校验与分发。
+控制台服务端、共享协议和浏览器代码。框架页面由控制台实现；World、Persona 与 Provider 通过声明贡献页面。
+服务端聚合、校验并分发声明。
 
 ## 目录
 
-| 路径 | 管什么 |
+| 路径 | 职责 |
 |---|---|
-| `server.ts` | `WebApp`:Express + WebSocket,`/api/*` 路由,静态产物,首页注入 |
-| `console-pages.ts` | `ConsolePageRegistry` / `ConsoleAssets`:页与产物的聚合,读 `dist/web/asset-manifest.json` |
-| `path-picker.ts` | 本机路径选择器(按平台分派) |
-| `shared/console-protocol.ts` | 线协议:页 id、manifest 形状、路由常量、安全闸。服务端与浏览器都 import |
-| `shared/client-panel.ts` | 面板契约:`ConsolePanelContext`、`ConsoleUi`、`ConsolePanel`。只有浏览器 import |
-| `client/core/` | 内核:`api`、`router`、`lifecycle`、`stream`、`websocket`、`language` |
-| `client/console-pages/` | 贡献页的宿主:`host`(渲染 chrome、挂面板)、`loader`(加载面板 bundle)、`context`(造 `ctx`)、`builtins`(框架提供的内建面板,如 `llm-settings`) |
-| `client/features/` | 框架自己的页,每页一个 `FrameworkFeature` |
-| `client/ui/` | `ConsoleUi` 原语的实现与图标 |
-| `client/shell/`、`client/theme/` | 外壳与主题 |
-| `public/` | `index.html` 与 Tailwind 入口 |
+| `server.ts` | `WebApp`：Express、WebSocket、API 路由、静态资源和首页入口注入。 |
+| `console-pages.ts` | `ConsolePageRegistry`、`ConsoleAssets`：聚合页面与资源，读取 `dist/web/asset-manifest.json`。 |
+| `path-picker.ts` | 按平台调用本机路径选择器。 |
+| `shared/console-protocol.ts` | 页面 id、manifest、路由常量与校验规则，供服务端和浏览器共用。 |
+| `shared/client-panel.ts` | 浏览器面板接口：`ConsolePanelContext`、`ConsoleUi`、`ConsolePanel`。 |
+| `client/core/` | API、路由、生命周期、流连接、WebSocket 与语言设置。 |
+| `client/console-pages/` | 页面宿主、面板加载器、上下文与内置面板，如 `llm-settings`。 |
+| `client/features/` | 框架页面，每页实现 `FrameworkFeature`。 |
+| `client/ui/` | `ConsoleUi` 组件与图标。 |
+| `client/shell/`、`client/theme/` | 页面框架与主题。 |
+| `public/` | `index.html` 与 Tailwind 入口。 |
 
 ## 协议
 
-`ConsolePageKind = 'framework' | 'world' | 'persona' | 'llm'`;页 id `world:<id>` /
-`persona:<id>` / `llm:<id>`,`pageIdFor()` 是唯一的构造口,构建脚本与服务端共用。面板 id 只在页内
-唯一。`CONSOLE_PROTOCOL_VERSION` 守源码与 `dist/` 产物的错位:manifest 版本不符则一页都不加载。
+`ConsolePageKind` 包含 `framework`、`world`、`persona`、`llm`。贡献页 id 使用 `world:<id>`、
+`persona:<id>` 或 `llm:<id>`；构建脚本与服务端共用 `pageIdFor()`。面板 id 在所属页内唯一。
+manifest 的 `CONSOLE_PROTOCOL_VERSION` 不匹配时，浏览器拒绝加载。
 
-贡献方的 `ConsolePageContribution` 经 `toPageManifest()` 降维成线上的 `ConsolePageManifest`:
-`invoke`、`promptDocs.path`、`config.schema`、`storage` 不出线,`links` 与 `builtin` 消毒。
-资产 URL 只放行白名单字符集;`links` 拦 `javascript:` 与 `data:`。灯最多 7 颗。
+`toPageManifest()` 将服务端的 `ConsolePageContribution` 转换为 `ConsolePageManifest`。
+`invoke`、`promptDocs.path`、`config.schema` 和 `storage` 不发送给浏览器；`links`、`builtin` 与资源 URL 按协议规则校验。
+链接拒绝 `javascript:`、`data:`，一页最多七盏状态灯。
 
-路由常量:`/api/console/manifest`、`/api/console/lamps`、面板数据面
-`/api/console/providers/<page>/panels/<panel>/<method>`(GET 走 query JSON 数组,POST 64 MiB),
-面板流 `/ws/providers/<page>/panels/<panel>`。历史原因线协议里贡献页仍叫 `providers`。
+| 路由 | 用途 |
+|---|---|
+| `/api/console/manifest` | 页面声明。 |
+| `/api/console/lamps` | 状态灯。 |
+| `/api/console/providers/<page>/panels/<panel>/<method>` | 面板调用；GET 参数使用 query 中的 JSON 数组，POST JSON 上限为 64 MiB。 |
+| `/ws/providers/<page>/panels/<panel>` | 面板流。 |
 
 ## 服务端
 
-`WebApp` 只绑 `127.0.0.1`,端口被占顺延最多五次。WebSocket 用 `noServer` 手工分派,只认
-`/ws/debug`、`/ws/sessions` 与面板流路径,跨站 Origin 在 upgrade 时断开。静态产物只暴露
-`dist/web` 一条(`/assets`),首页认最后一个 `</body>` 注入带 hash 的内核入口。扩展的面板 bundle
-另走 `/assets/extensions/<包>/<版本>/<文件>`,只发 manifest 声明的两个文件。
+`WebApp` 默认监听 `127.0.0.1`，支持由依赖配置指定监听地址。从首选端口起最多尝试五个端口；
+端口为 0 时仅申请一次系统分配。WebSocket 使用 `noServer` 分派 `/ws/debug`、`/ws/sessions` 和面板流。
+upgrade 按请求 Host 校验 Origin，拒绝不匹配或无效的 Origin；缺少 Origin 时放行。
 
-依赖倒置:`WebAppDeps` 由 `createBot()` 组装(事件库、session、run 控制、配置、存储、
-`consolePageSources`、`extensions`),服务端不 import Core。
+`/assets` 提供 `dist/web` 资源。首页在最后一个 `</body>` 前注入带 hash 的入口。
+扩展面板通过 `/assets/extensions/<包>/<版本>/<文件>` 提供，仅允许 manifest 声明的脚本与样式文件。
 
-## 浏览器内核
+`createBot()` 通过 `WebAppDeps` 注入事件库、session、运行控制、配置、存储、`consolePageSources` 和扩展信息。
 
-`main.ts` 持有框架页表 `FEATURES`(`live`、`core`、`usage`、`provider`、`world`、
-`extensions`、`prompts`、`config`、`storage`、`appearance`、`settings`);这张表不违反「内核不持
-贡献方清单」:贡献页由 manifest 驱动。`provider` 是保留路由段,归 `ConsolePageHost`。
+## 浏览器
 
-`ConsolePageHost` 渲染页的 chrome(徽标、灯、配置组、提示词文档)并挂面板;
-`ConsolePageLoader` 按页 id 从 `asset-manifest` 找 bundle,`import()` 一次缓存,校验默认导出是
-`{ panels }`,面板缺 `mount` 就给错误卡。卸载顺序:abort → dispose → 清空 root;之后轮询、RAF、
-observer、监听、挂起的 fetch 与音频都停。
+`main.ts` 的 `FEATURES` 包含 `live`、`core`、`usage`、`provider`、`world`、`extensions`、`prompts`、
+`config`、`storage`、`appearance`、`settings`。贡献页由 manifest 加载，保留路由段 `provider` 交由 `ConsolePageHost` 处理。
 
-`ConsoleUi` 返回真实 DOM,不收 HTML 字符串;绑定面板 `signal`,abort 时关 toast /
-confirm / drawer,待决 confirm 回 `false`。
+`ConsolePageHost` 渲染页面声明中的徽标、状态灯、配置组、提示词文档与面板。
+`ConsolePageLoader` 按页 id 查找 bundle，缓存成功的导入，校验默认导出的 `{ panels }`；缺少 `mount` 的面板显示错误。
+卸载依次执行 abort、dispose、清空 root，并释放上下文登记的轮询、RAF、observer、监听器、请求和音频资源。
+
+`ConsoleUi` 返回 DOM 节点，文本参数不作为 HTML 解析。面板通过 `signal` 管理资源。abort 会关闭关联的 toast、confirm 和 drawer，
+待决 confirm 返回 `false`。
 
 ## 构建
 
-`scripts/build-web.ts` 发现入口:`src/web/client/main.ts`、`src/worlds/*/console/client.ts`
-→ `world:<name>`、`src/providers/*/console/client.ts` → `llm:<name>`、`bots/*/console/client.ts`
-→ `persona:<name>`;esbuild 分包、esm、`[dir]/[name]-[hash]`,写 `asset-manifest.json`。
-Tailwind 单独出 `styles.css`。浏览器代码由 `tsconfig.web.json` 检查(`pnpm typecheck:web`)。
+`scripts/build-web.ts` 使用以下入口：
+
+| 入口 | 资源键 |
+|---|---|
+| `src/web/client/main.ts` | 控制台主入口。 |
+| `src/worlds/*/console/client.ts` | `world:<name>` |
+| `src/providers/*/console/client.ts` | `llm:<name>` |
+| `bots/*/console/client.ts` | `persona:<name>` |
+
+esbuild 输出分包 ESM 和带 hash 的文件名，写入 `asset-manifest.json`；Tailwind 输出 `styles.css`。
+浏览器代码使用 `tsconfig.web.json` 检查：`pnpm typecheck:web`。

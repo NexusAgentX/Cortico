@@ -117,10 +117,7 @@ interface ActiveLease {
   score: number;
 }
 
-/**
- * 单一全身租约仲裁器：纯观测器。它只比较 controller 提交的效用并记录本该由谁持有身体,
- * 不拦截任何执行,也不认识 Minecraft 动作名或战术。
- */
+/** 比较控制器提交的效用并记录建议的身体控制者；当前仅记录，不拦截执行。 */
 export class BodyLeaseArbiter {
   private generation: number;
   private readonly emit: (event: BodyLeaseEvent) => void;
@@ -252,13 +249,7 @@ export class BodyLeaseArbiter {
     this.invalidated = true;
   }
 
-  /**
-   * 重生:同一条连接里死亡把租约作废了,重生开的是新一期身体。
-   *
-   * 只解除作废态,不动代次——代次的语义是"一条连接",而重生不是新连接;代次一动,
-   * 以连接为准的消费者(搜索缓存、迟到 proposal 的 wrong-generation 判据)会跟着误判。
-   * 没在作废态时是 no-op:非死亡路径重复调用不产生观测噪声。
-   */
+  /** 重生解除作废状态并创建新的身体租约，保留当前连接代次。未作废时不产生事件。 */
   revive(now: number): void {
     if (!this.invalidated) return;
     this.invalidated = false;

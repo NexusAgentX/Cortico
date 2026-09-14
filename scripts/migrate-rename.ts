@@ -1,16 +1,16 @@
 /**
- * 部署目录迁移:把 rename(A/B/C) 改掉的磁盘形状搬到新名字上。
+ * 迁移部署中的 World、Memory、Core 名称及端点类型。
  *
  *   tsx scripts/migrate-rename.ts            # 只列出要做什么
- *   tsx scripts/migrate-rename.ts --apply    # 真做:每份 config.json 先备份,再原子替换
+ *   tsx scripts/migrate-rename.ts --apply    # 执行:每份 config.json 先备份,再原子替换
  *
- * 逐个部署(部署根下含 deployment.json 的目录)做五件事:
+ * 逐个部署(部署根下含 deployment.json 的目录)执行以下迁移:
  *   1. config.json:顶层 `io` → `worlds`;`paths.persona` → `paths.memory`
  *   2. `io/` → `worlds/`(部署侧的环境提示词覆盖)
  *   3. `persona/` → `memory/`(仅当 Memory 目录按默认名解析且 `memory/` 不存在)
  *   4. `data/harness-state.json` → `data/core-state.json`
  *   5. `prompts/HARNESS.md` → `prompts/CORE.md`
- *   6. Memory 目录里 World 的抽屉 `io/` → `external/`
+ *   6. Memory 中的 World 记录目录 `io/` → `external/`
  * 端点表(`<部署根>/providers/<端点名>/config.json`)只改一处:`kind` `openai-compat` →
  * `openai-responses-compat`。事件库、session 与游标一律不碰。
  */
@@ -72,7 +72,7 @@ for (const name of readdirSync(root)) {
   const { memoryDefault, memoryDir } = migrateConfig(dir);
   moveIf(join(dir, 'io'), join(dir, 'worlds'), `${name}: 环境提示词覆盖目录`);
   if (memoryDefault) moveIf(join(dir, 'persona'), join(dir, 'memory'), `${name}: Memory 目录`);
-  moveIf(join(memoryDir, 'io'), join(memoryDir, 'external'), `${name}: Memory 里 World 的抽屉`);
+  moveIf(join(memoryDir, 'io'), join(memoryDir, 'external'), `${name}: Memory 中的 World 记录目录`);
   moveIf(join(dir, 'data', 'harness-state.json'), join(dir, 'data', 'core-state.json'), `${name}: Core 状态文件`);
   moveIf(join(dir, 'prompts', 'HARNESS.md'), join(dir, 'prompts', 'CORE.md'), `${name}: 提示词覆盖`);
 }
@@ -100,7 +100,7 @@ if (existsSync(providersDir)) {
 }
 
 if (steps.length === 0) {
-  console.log(`没有要迁移的东西(部署根 ${root})`);
+  console.log(`没有待迁移项(部署根 ${root})`);
 } else {
   for (const s of steps) {
     console.log(`${apply ? '做' : '将'}: ${s.what}`);

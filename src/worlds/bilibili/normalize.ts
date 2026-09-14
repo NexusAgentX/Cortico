@@ -1,19 +1,10 @@
-/**
- * 原始 cmd → 归一化产物。三种去向,对应投递分档:
- *
- * - `event`:成一条即时事件,自带 trigger(flush / debounce)。
- * - `count` / `gauge`:只进聚合读数,由 World 按 `piggyback` + 投递成文一起带出。
- *   计数是"这段时间发生了几次",读数是"现在是多少"——后者只留最新值。
- * - `null`:不推。运营挂件、连麦玩法、她自己的语音转写这类,与她的世界无关。
- *
- * 这一层不碰网络也不碰 host,纯函数,便于按真实 jsonl 回归。
- */
+/** 将原始 cmd 转换为事件、累加计数或最新读数；不处理的命令返回 null。计数与读数由 World 聚合后随批次投递。 */
 import type { TriggerMode } from '../../core/types.ts';
 import { giftFrameData } from './gift-frame.ts';
 
 export interface LiveEvent {
   kind: 'event';
-  /** 事件词表 type */
+
   type: string;
   trigger: TriggerMode;
   text: string;
@@ -24,7 +15,7 @@ export interface LiveEvent {
 
 type LiveEventCoalescing =
   | { kind: 'danmaku'; key: string; body: string }
-  /** `yuan: null` = 这一笔的金额读不出来(见 SEND_GIFT 分支),合并正文里不写 ¥ */
+  /** yuan 为 null 时金额未知，合并正文省略金额。 */
   | { kind: 'gift'; key: string; gift: string; num: number; yuan: number | null };
 
 /** 期间累加的次数 */
@@ -49,7 +40,6 @@ export type Normalized = LiveEvent | LiveCount | LiveGauge;
 /** 1 元 = 1000 金瓜子 */
 const COIN_PER_YUAN = 1000;
 
-/** 明确不推的 cmd:列出来是为了让"没见过的 cmd"能在控制台里被认出来 */
 const IGNORED = new Set([
   'COMBO_SEND',
   'COMBO_END',
@@ -72,7 +62,7 @@ const IGNORED = new Set([
 export interface NormalizeOptions {
   /** 礼物提到 flush 的门槛(元) */
   giftFlushYuan: number;
-  /** 换算越界等「宁缺毋假」场合的告警口;纯函数不落日志,由调用方接 host.log.warn */
+  /** 解析或金额换算告警，由调用方记录日志。 */
   warn?: (message: string, data?: Record<string, unknown>) => void;
 }
 
@@ -83,7 +73,7 @@ const GUARD_YUAN_MIN = 1;
 const GUARD_YUAN_MAX = 30000;
 
 export function normalize(msg: Record<string, unknown>, opts: NormalizeOptions): Normalized | null {
-  // DANMU_MSG:4:0:2:2:2:0 这种带后缀,取冒号前那截
+
   const cmd = String(msg.cmd ?? '').split(':')[0];
   if (IGNORED.has(cmd)) return null;
   const data = obj(msg.data);
@@ -130,8 +120,7 @@ export function normalize(msg: Record<string, unknown>, opts: NormalizeOptions):
       const uname = str(data.username) || '某位观众';
       const gift = str(data.gift_name) || '大航海';
       const n = num(data.num) || 1;
-      // 对照 SUPER_CHAT 分支:price 是本代码库已知的字段名,这里只是历史上漏读。
-      // 先按金瓜子口径 /1000 换算;单位未实证,越界即不填(见 GUARD_YUAN_MIN 注释)。
+
       const price = num(data.price);
       const yuan = price / COIN_PER_YUAN;
       const yuanKnown = price > 0 && yuan >= GUARD_YUAN_MIN && yuan <= GUARD_YUAN_MAX;
@@ -158,7 +147,7 @@ export function normalize(msg: Record<string, unknown>, opts: NormalizeOptions):
       };
     }
 
-    // V1/V2 按各自已知字段布局读取；缺失时省略，不使用角色或等级兜底值。仅在帧明确写明续费时断言续费。
+    // 仅在帧明确表示续费时使用续费文案；缺失角色或等级时省略对应元数据。
     case 'USER_TOAST_MSG': {
       const sender = obj(data.sender_uinfo);
       const base = obj(sender.base);
@@ -171,7 +160,7 @@ export function normalize(msg: Record<string, unknown>, opts: NormalizeOptions):
     }
 
     case 'USER_TOAST_MSG_V2': {
-      // V2 把 V1 的顶层字段拆进 sender_uinfo / guard_info，顶层同名字段不再下发。
+
       const sender = obj(data.sender_uinfo);
       const base = obj(sender.base);
       const guard = obj(data.guard_info);
@@ -185,7 +174,7 @@ export function normalize(msg: Record<string, unknown>, opts: NormalizeOptions):
 
     case 'SEND_GIFT':
     case 'SEND_GIFT_V2': {
-      // V2 的字段全在 data.pb 的 protobuf 里,先摆回 V1 的名字(见 gift-frame.ts)
+
       const frame = giftFrameData(data, opts.warn);
       const sender = obj(frame.sender_uinfo);
       const base = obj(sender.base);
@@ -194,10 +183,10 @@ export function normalize(msg: Record<string, unknown>, opts: NormalizeOptions):
       const gift = str(frame.giftName) || str(frame.gift_name) || '礼物';
       const n = num(frame.num) || 1;
       const coinType = str(frame.coin_type);
-      // 明确读到银瓜子类型时才计入免费礼物聚合。coin_type 读取失败仍生成事件并告警，不能按非 gold 值将未知金额归为免费。
+
       if (coinType && coinType !== 'gold') return { kind: 'count', field: 'freeGift', by: n };
       const totalCoin = num(frame.total_coin);
-      // 金额读不出就整项省略,正文也不写 ¥(与 GUARD_BUY 的 yuanKnown 同一口径)
+
       const yuanKnown = coinType === 'gold' && totalCoin > 0;
       const yuan = totalCoin / COIN_PER_YUAN;
       if (!yuanKnown) {
@@ -208,8 +197,7 @@ export function normalize(msg: Record<string, unknown>, opts: NormalizeOptions):
       return {
         kind: 'event',
         type: 'bilibili.gift',
-        // 金额未知时不插队:插队是给"确实是大额"留的,拿读不出来的东西打断她
-        // 只会把一次读失败放大成一次打断。照样成事件,下一批就到。
+
         trigger: yuanKnown && yuan >= opts.giftFlushYuan ? 'flush' : 'debounce',
         text: yuanKnown
           ? `[礼物 ¥${trim(yuan)}|${uname}] ${gift}×${n}`
@@ -228,7 +216,7 @@ export function normalize(msg: Record<string, unknown>, opts: NormalizeOptions):
         },
         coalesce: {
           kind: 'gift',
-          // 金额未知的与已知的不并成一条:并了就没法说清这笔总额是多少
+          // 未知金额与已知金额分别归并。
           key: JSON.stringify([gift, yuanKnown ? unitCoinKey(totalCoin, n) : '金额未知']),
           gift,
           num: n,
@@ -274,7 +262,6 @@ export function normalize(msg: Record<string, unknown>, opts: NormalizeOptions):
     case 'ROOM_REAL_TIME_MESSAGE_UPDATE':
       return { kind: 'gauge', field: 'fans', value: num(data.fans) };
 
-    // LIVE/PREPARING 明确陈述平台状态及其后果，区分直播状态与留场聊天；不添加行为指令。
     case 'LIVE':
       return {
         kind: 'event',
@@ -339,11 +326,7 @@ export function normalize(msg: Record<string, unknown>, opts: NormalizeOptions):
   }
 }
 
-/**
- * 弹幕的字段位置(实测):正文 `info[1]`,发言人 `info[2][0..1]`,
- * 粉丝牌 `info[3]`(等级、名字),大航海等级 `info[7]`。
- * 匿名连接下服务端会把 uid 抹成 0 并给昵称打码,此时没有稳定的人身份键。
- */
+/** 弹幕字段：正文 info[1]，发言人 info[2][0..1]，粉丝牌 info[3]，大航海等级 info[7]。uid 为 0 时不提供稳定身份键。 */
 function danmaku(msg: Record<string, unknown>): LiveEvent | null {
   const info = Array.isArray(msg.info) ? (msg.info as unknown[]) : null;
   if (!info) return null;
@@ -391,11 +374,6 @@ function danmaku(msg: Record<string, unknown>): LiveEvent | null {
   };
 }
 
-/**
- * 大航海 TOAST 的成品事件。字段读取按 V1/V2 各自的 case 做,这里只负责组装:
- * `role`/`guardLevel` 读不到就整项省略;`renew` 只有帧里明说续费才为 true,
- * 判不了就用中性措辞——没有证据不断言续费。
- */
 function guardToast(fields: {
   uid: number;
   uname: string;
@@ -423,7 +401,6 @@ function guardToast(fields: {
   };
 }
 
-/** uid 为 0 = 服务端脱敏,没有可用的身份键;宁可缺这一项,也不要拿打码昵称冒充稳定键 */
 function senderKeyOf(uid: number): string | undefined {
   return uid > 0 ? String(uid) : undefined;
 }
@@ -470,7 +447,6 @@ function unitCoinKey(totalCoin: number, count: number): string {
   return `${numerator / divisor}/${denominator / divisor}`;
 }
 
-/** ¥ 显示:整数不带小数点,小数留两位 */
 function trim(yuan: number): string {
   return Number.isInteger(yuan) ? String(yuan) : yuan.toFixed(2);
 }

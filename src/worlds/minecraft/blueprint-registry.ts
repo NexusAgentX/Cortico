@@ -1,16 +1,7 @@
 /**
- * 蓝图的 Minecraft 侧校验:Java 1.20.6 registry 认不认这个方块、这套属性齐不齐、
- * 执行器能否通过放置或使用物品得到这一格，以及施工要哪个物品。
- *
- * registry 数据从 mineflayer 自带的 minecraft-data 里取(与执行器同一份,不另钉版本),
- * 首次用到时才载入并缓存——纯查表,不起进程不落盘。
- *
- * 直接放置按 registry 的方块—物品对应关系受理；原版功能结构使用执行器有明确
- * 验收口径的动作，包括锄地、铲土径、放液源、播种、点火和切换常见红石状态。
- * `wall_` 变体使用去掉 `wall_` 后的物品名。
- *
- * 支撑与附着(门要完整顶面、作物要耕地、火把要贴得住)的规则表也在这里,一处维护;
- * 按位置核对由 `compileBlueprint` 拿着规则表跑。
+ * 用 Minecraft 1.20.6 注册表校验蓝图状态，并映射施工物品、功能动作与支撑规则。
+ * 数据通过 Mineflayer 依赖的 minecraft-data 和 prismarine-block 加载并缓存。
+ * wall_ 变体映射到去掉 wall_ 后的物品名；位置相关支撑由 compileBlueprint 核验。
  */
 
 import { createRequire } from 'node:module';
@@ -56,7 +47,7 @@ interface PrismarineBlock {
 let cachedRegistry: MinecraftRegistry | null = null;
 let cachedBlockFactory: PrismarineBlock | null = null;
 
-/** minecraft-data / prismarine-block 都挂在 mineflayer 下,顺着它解析,版本永远一致 */
+/** 从 Mineflayer 的依赖目录解析 minecraft-data 和 prismarine-block。 */
 function fromMineflayer<T>(moduleName: string): T {
   const localRequire = createRequire(import.meta.url);
   const mineflayerRequire = createRequire(localRequire.resolve('mineflayer'));
@@ -93,11 +84,7 @@ interface DefaultStateCompletion {
   added: Record<string, string>;
 }
 
-/**
- * 漏写的属性用 registry 注册的默认状态补齐。
- * 实测这是宽容层里最大的一个动作(benchmark 50 发共补 1141 次)——模型写楼梯
- * 记得写 facing,十有八九忘了 shape。
- */
+/** 以注册表的默认状态补齐未指定属性。 */
 export function completeBlockStateDefaults(
   state: string,
   path = 'block state',
@@ -231,21 +218,14 @@ export function validateBlueprintRegistry(blueprint: NormalizedBlueprint): Regis
 
 // ── 状态 → 物品 ───────────────────────────────────────────────────────────────
 
-/**
- * 有同名物品、但那个物品放不出这个方块的几处。逐条写明理由,不靠模式猜。
- * 名单短是有意的:靠"registry 里有没有同名物品"这一条机械事实就能挡掉九成,
- * 剩下的例外只有这几个,一个个说清楚比编一条规则可靠。
- */
+/** 同名物品不能直接放出目标方块的例外。 */
 const ITEM_EXISTS_BUT_UNPLACEABLE: Record<string, string> = {
   farmland: '耕地是拿锄头锄出来的,不是放出来的',
   dirt_path: '土径是拿锹铲出来的,不是放出来的',
   wheat: '小麦方块是种子长出来的(wheat 物品是食材)',
 };
 
-/**
- * 没有同名物品、但确实有一个物品能放出来的几处。原版规则,写死无妨。
- * `wall_` 变体走通用规则(去掉 `wall_` 就是它的物品),不列在这里。
- */
+/** 目标方块与放置物品的名称映射；wall_ 变体由通用规则处理。 */
 const ITEM_ALIAS: Record<string, string> = {
   redstone_wire: 'redstone',
   tripwire: 'string',
@@ -269,10 +249,7 @@ export type BlueprintPlacementMethod =
       target: 'self' | 'below';
       /** 该动作要求保持的功能属性；其余属性仍按 state 尽力口径。 */
       verify?: { property: string; value: string };
-      /**
-       * 能就地加工成目标的全部源方块；`[0]` 是账单与补基材时用的那一样。
-       * 已经是其中任何一样就不必补 —— 锄头对它们产出的目标完全相同。
-       */
+      /** 可加工成目标的源方块；首项用于材料统计和补充基材。 */
       baseItem?: readonly string[];
       /** 工具不会按施工格数消耗，整段只要求一件。 */
       reusable?: true;
@@ -282,19 +259,10 @@ type BlueprintPlacementResult =
   | BlueprintPlacementMethod
   | { item: null; reason: string };
 
-/**
- * 施工方式里用族名点到的工具:'hoe' 是随便哪把锄。库存对账时只有这两个名字
- * 按 `_hoe`/`_shovel` 后缀认;耗材(dirt、carrot……)必须按原名精确对——
- * 后缀模糊会把 golden_carrot 记成能种的胡萝卜、dirt_path 记成基材泥土。
- */
+/** hoe 和 shovel 按物品后缀匹配；耗材要求精确物品名。 */
 export const BLUEPRINT_TOOL_FAMILIES: ReadonlySet<string> = new Set(['hoe', 'shovel']);
 
-/**
- * 锄头翻出来是什么。粗泥/根泥翻成普通泥土,草方块与泥土翻成耕地;本来就是耕地的
- * 再翻一次原版什么都不发生,那一格已经是她要的样子。
- * (把握:grass_block/dirt 确定;dirt_path/coarse_dirt/rooted_dirt 比较确定。
- * 灰化土与菌丝记不真切,不入表 —— 犹豫本身就是"这一格该退回现状"的证据。)
- */
+/** 锄头加工的目标状态映射；仅包含此处支持的源方块。 */
 export const HOE_TILLED: Readonly<Record<string, string>> = {
   grass_block: 'farmland',
   dirt: 'farmland',
@@ -334,9 +302,7 @@ const CROP_ITEM: Record<string, string> = {
   nether_wart: 'nether_wart',
 };
 
-/**
- * 目标状态的施工方式。直接放置之外只收执行器已有明确验收口径的原版动作。
- */
+/** 将目标状态映射到执行器支持的施工动作。 */
 export function blueprintPlacementMethod(state: string): BlueprintPlacementResult {
   const parsed = parseBlockState(state);
   const name = vanillaName(parsed.id);
@@ -396,12 +362,7 @@ export function blueprintPlacementMethod(state: string): BlueprintPlacementResul
   return { kind: 'place', item: direct.item, ...(postUse ? { postUse } : {}) };
 }
 
-/**
- * 放出这一格要哪个物品。空气族返回 null 且理由是"不用放"——调用方应当先过滤掉。
- *
- * 只认"直接放这个物品就得到这个方块"。属性能不能一模一样不在这里管:
- * 放置保真度的口径是 type 忠实、state 尽力、drift 如实报。
- */
+/** 映射直接放置目标所需的物品；空气返回 null。属性核验由施工步骤处理。 */
 export function blockStateItem(state: string): BlockItemLookup {
   if (isAirState(state)) return { item: null, reason: '空气格不用放东西' };
 
@@ -426,11 +387,7 @@ export function blockStateItem(state: string): BlockItemLookup {
 
 // ── 支撑与附着 ────────────────────────────────────────────────────────────────
 
-/**
- * 支撑格要满足的条件。`block` 是"只长得住在某个方块上"(作物与耕地);
- * `sturdy` 要一整格完整顶面(门);`attach` 只要求那一格不是空气、也不是本身
- * 托不住东西的那一类(火把、床)。
- */
+/** 支撑要求：block 匹配指定方块，sturdy 要求完整顶面，attach 排除空气及已列出的无支撑方块。 */
 type BlueprintSupportRequirement =
   | { kind: 'block'; id: string }
   | { kind: 'sturdy' }
@@ -440,7 +397,7 @@ interface BlueprintSupportRule {
   /** 支撑格相对这一格的位移(蓝图局部坐标:X 西→东、Y 下→上、Z 北→南) */
   offset: readonly [number, number, number];
   requirement: BlueprintSupportRequirement;
-  /** 对支撑格的要求,一句人话;失败与"这一格靠图外现场"两种回执都拿它开头 */
+  /** 支撑要求的说明，用于校验失败和图外条件提示。 */
   demand: string;
 }
 
@@ -448,7 +405,7 @@ const BELOW = [0, -1, 0] as const;
 
 const FARMLAND_ID = 'minecraft:farmland';
 
-/** 作物长在什么上面。地狱疣是灵魂沙,其余都是耕地。 */
+/** 已支持作物的支撑方块。 */
 const CROP_SOIL: Record<string, { id: string; label: string }> = {
   wheat: { id: FARMLAND_ID, label: '耕地' },
   beetroots: { id: FARMLAND_ID, label: '耕地' },
@@ -466,10 +423,8 @@ const WALL_TORCHES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * 这一格要靠哪一格撑住。从部件(门的上半格、床头)不出施工步,也就不在这里要支撑。
- *
- * 只覆盖门、作物、火把、床这几族——不复刻原版整套 canSurvive:点不到的一律放行,
- * 漏报一处,好过挡下一张本来盖得起来的图。
+ * 仅校验门、作物、火把和床的支撑；未列出的方块不在此校验。
+ * 从部件由主步骤处理。
  */
 export function blueprintSupportRules(state: string): BlueprintSupportRule[] {
   const parsed = parseBlockState(state);
@@ -516,9 +471,7 @@ export function blueprintNeedsTilledSoil(state: string): boolean {
   );
 }
 
-/**
- * 顶上托不住东西的方块。原版判据是上表面完整不完整,这里只列确定托不住的这些族。
- */
+/** 本实现排除的无支撑顶面方块。 */
 const NO_TOP_SUPPORT_EXACT: Record<string, string> = {
   farmland: '耕地只种得住作物',
   dirt_path: '土径的上表面不完整',
@@ -549,7 +502,7 @@ const NO_TOP_SUPPORT_SUFFIX: ReadonlyArray<readonly [string, string]> = [
   ['_rail', '铁轨顶上托不住东西'],
 ];
 
-/** 顶面撑得住火把、床,却撑不住门的那几族 */
+/** 可支撑火把或床、但不满足门完整顶面要求的方块。 */
 const NO_STURDY_TOP_SUFFIX: ReadonlyArray<readonly [string, string]> = [
   ['_fence', '栅栏的顶面不是完整一格'],
   ['_wall', '墙的顶面不是完整一格'],
@@ -585,9 +538,6 @@ export function blueprintSupportViolation(
   return why === null ? null : `图里那一格是 ${id},${why}`;
 }
 
-/**
- * 画图时那几条撑与贴的规矩。跟上面的规则表放在一处,校验与提示词不会各说各的。
- */
 export const BLUEPRINT_SUPPORT_DOC = [
   '· 作物图自带耕地层:melon_stem/pumpkin_stem/小麦/胡萝卜这些的正下方要画'
     + ' minecraft:farmland(它会自动垫泥土再锄出来);图里没有那一层,种子就一直放不下去;',
@@ -602,11 +552,7 @@ interface PlaceabilityValidation {
   failures: BlueprintStateFailure[];
 }
 
-/**
- * 逐个去重状态核对"这一格放得出来吗";放不出来的点名报,理由带上。
- * 多部件的从部件(门的上半格、床头)在这里照样过——它们的物品就是主部件那一个;
- * 从部件孤立无主的情形由 IR 编译按位置查(`compileBlueprint`)。
- */
+/** 按去重后的状态校验施工方式；孤立从部件由 compileBlueprint 按位置校验。 */
 export function validateBlueprintPlaceability(
   blueprint: NormalizedBlueprint,
 ): PlaceabilityValidation {

@@ -10,11 +10,7 @@ const meters: TokenMeters = { input: 200000, output: 1000, total: 201000, cached
 const entry = { kind: 'openai-responses-compat', baseUrl: 'https://example.test' };
 const MODEL = 'sub-4.6';
 
-/**
- * 订阅制端点的那一类报价表(一份包月额度 + 一份 API 等价口径),按 `PriceDefinition`
- * 的每一格都用上写:两种计费基准、长上下文分档、服务档倍率。真表归各自的 provider 包,
- * 这里只要一份形状完整的样本把定价引擎压住。
- */
+/** 测试价目同时包含边际/等价计费基础、输入长度分档和服务档倍率。 */
 function subscriptionPrices(): PriceDefinition[] {
   const rules = (multiplier: number): PriceRule[] => [
     { meter: 'cachedInput', perMillion: 0.5 * multiplier }, { meter: 'uncachedInput', perMillion: 2 * multiplier }, { meter: 'output', perMillion: 6 * multiplier },

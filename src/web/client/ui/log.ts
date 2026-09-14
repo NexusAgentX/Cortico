@@ -1,21 +1,4 @@
-/**
- * 滚动日志 `log`：一个限高的框，里面一串只往末尾长的 `.logline`。
- *
- * 这个原语真正的内容只有两条，其余都是包装：
- *
- * 1. **环形裁剪**。超过上限就从头摘。没有上限的流式面板是一颗定时炸弹——一条
- *    长驻的流开一晚上能堆出几十万个节点，而这类面板恰恰是开着不管的那种。
- *
- * 2. **尾部粘滞**。贴着底就跟着新行走；用户一往上翻就停住；翻回底部再恢复。
- *    每个接流的面板都会自己写一遍，也都会以同一种方式写错：无条件
- *    `scrollTop = scrollHeight`，于是用户永远读不完一段往上翻的历史。
- *
- * 判定单独抽成纯函数 `shouldStick` 并对外导出，是因为它是这里唯一容易算错的一步，
- * 而它又恰恰最难在 DOM 上测——真实布局给的三个数在测试里全是 0。函数拿出来，
- * 边界（正好在底 / 差一像素 / 用户上翻）就能直接钉住，DOM 那层只剩接线。
- *
- * 视觉靠文件末尾追加的 `.logview` / `.logline` 两档；空态复用既有的 `.placeholder`。
- */
+/** 有行数上限的滚动日志；超出时删除最早行。仅在贴底时随新增内容滚动，上翻后暂停，返回底部后恢复。 */
 
 import type {
   ConsoleLog,
@@ -33,20 +16,7 @@ export const LOG_STICK_PX = 24;
 /** 缺省高度。给了限高才会滚，粘滞也才有意义。 */
 const LOG_MAX_HEIGHT = '240px';
 
-/**
- * 此刻算不算"贴着底"。
- *
- * 判据是 **`scrollHeight - clientHeight - scrollTop <= threshold`**：等号左边就是
- * 底下还剩多少没滚出来，滚到最底时为 0。三处细节：
- *
- * - **容差不能取 0**。浏览器报的 `scrollHeight` / `clientHeight` 带小数（缩放、
- *   边框、亚像素行高都会让它们凑不整），滚到底时这三个数几乎从不严格相等；
- *   取 0 等于粘滞永远不成立，日志看着就是"不自动滚"。
- * - **内容还没撑满框**（`scrollHeight <= clientHeight`）时左边是负数，照样 `true`——
- *   刚开始铺日志、一行都没溢出的时候本来就该跟着长。
- * - **拿不到数**（三个都是 0 的未布局节点、NaN）时返回 `true`。默认粘住是安全的
- *   那一边：猜错顶多多滚一次，猜成不粘的话新行会一直落在视野外面。
- */
+/** scrollTop 可能含小数，使用容差判断是否贴底。未溢出或缺少有效读数时返回 true；负容差按 0 处理。 */
 export function shouldStick(
   scrollTop: number,
   scrollHeight: number,
@@ -106,7 +76,6 @@ export function log(doc: Document, signal: AbortSignal, opts?: ConsoleLogOptions
       hideEmpty();
       const row = h(doc, 'div', lineClass(tone), line);
       el.appendChild(row);
-      // 逐个摘而不是重建:这个模块一处 innerHTML 都没有
       while (el.children.length > max) el.children[0].remove();
       if (stuck) scrollToEnd();
       return row;

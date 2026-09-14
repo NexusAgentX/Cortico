@@ -1,34 +1,9 @@
 /**
- * 可调参数的共享视图 —— 框架设置页与各 provider 归属页复用同一实现。
- *
- * 这个视图**只是消费者**。每一组旋钮都由**拥有那些参数的人自己声明**（JSON Schema，
- * `src/core/config-schema.ts`），声明方是 core / Persona / 各 World 三方；
- * 控制台按声明通用渲染，所以装上新 World，它的旋钮会自己出现——出现在**它自己那一页**，
- * 而不是堆进一张把三方混在一起的总表（`filter` 就是这件事的执行点）。
- *
- * **不做前端代码扩展**。控制台不规定语言，只说明自己认识哪个子集：
- *
- * ```
- * integer / number / boolean / string（含 enum / x-options）/ 2 元数组
- * ```
- *
- * 其余一律降级成**只读文本**并且不参与提交——永远不阻塞任何人。降级而不是报错，
- * 是因为声明方比控制台先演进：它加了一个控制台还不认识的形状，那一项该照样看得见，
- * 只是暂时改不了。
- *
- * 六个 `x-` 扩展（标准 JSON Schema 没有位置放）：
- *
- * | 扩展         | 含义                                                       |
- * | ------------ | ---------------------------------------------------------- |
- * | `x-scale`    | 显示换算：显示 = 存储 / scale，回传 = 输入 × scale          |
- * | `x-suffix`   | 单位后缀                                                    |
- * | `x-hot`      | `false` = 这一项构造时读走： World 参数重启 World 生效，其余重启进程   |
- * | `x-options`  | 动态下拉：页加载与打开前向 `/api/config/options/:kind` 探测 |
- * | `x-path`     | 打开 WebApp 主机上的本机文件或目录选择器                   |
- * | `x-download` | 与路径字段配套的浏览器下载链接                              |
- *
- * `x-scale` 只是显示换算，**存储单位与校验都由后端定**：这里不做任何取整、不做范围
- * 裁剪，只把数字乘回去。整数由后端 coerce，前端取整会毁掉比例类小数。
+ * 按 ConfigGroup JSON Schema 渲染参数，供框架设置与贡献页使用。
+ * 可编辑 integer、number、boolean、string（enum / x-options）和双数值数组；其余只读且不提交。
+ * x-scale：显示值 = 存储值 / scale，提交时乘回；取整与范围校验由后端完成。
+ * x-suffix 提供单位；x-hot=false 的 World 参数需重启 World，其余需重启进程。
+ * x-options 动态获取候选；x-path 选择服务器本机路径；x-download 提供浏览器下载链接。
  */
 
 import type { ConsoleUi, Disposable } from '../../../shared/client-panel.ts';
@@ -37,7 +12,7 @@ import type { Lifecycle } from '../../core/lifecycle.ts';
 import { icon } from '../../ui/icons.ts';
 import { S } from './strings.ts';
 
-/** 连打字合并成一次请求的窗口。够短，手停下来就落盘；够长，不会一个字一次。 */
+/** 连续输入的请求去抖间隔。 */
 const SAVE_DEBOUNCE_MS = 400;
 
 /** 一条属性的声明。字段与 `src/core/config-schema.ts` 的 `ConfigProperty` 同形。 */
@@ -240,15 +215,7 @@ function pathField(
   return { node: field, read: () => input.value };
 }
 
-/**
- * 属性 → 行内控件 + 取值器。
- *
- * `read()` 给的一律是**存储单位**（已经乘回 `x-scale`），所以调用方拿到什么就提交
- * 什么，不必在提交处再想一遍换算——那正是换算这类逻辑最容易漏掉一处的地方。
- *
- * `onChange` 是**立刻落盘**那条路的触发点：控件一变就报上去，没有"改完再点应用"
- * 这一步（见 `createConfigView` 的说明）。
- */
+/** 渲染属性并返回存储单位的取值器；值变化经 onChange 提交。 */
 export function configField(
   ui: ConsoleUi,
   prop: ConfigProperty,
@@ -288,8 +255,7 @@ export function configField(
     if (prop.maximum != null) inp.max = String(prop.maximum / scale);
     if (prop.multipleOf != null) inp.step = String(prop.multipleOf / scale);
     if (prop.nullable) {
-      // nullable 的项：null ↔ 输入框留空。声明说"留空＝关掉"，就得真能留空——
-      // 不能拿 0 当 null 的代号，那会让 0 和「不设」永远撞在一起。
+      // nullable 字段以空输入表示 null，0 保持为数值。
       inp.value = val == null ? '' : String(Number(val) / scale);
       inp.placeholder = S.leaveBlank;
       return {
@@ -301,9 +267,7 @@ export function configField(
     return { node: inp, read: () => Number(inp.value) * scale };
   }
 
-  // 数组只认一种可编辑形态:两个数的区间(items 是 number/integer)。别的数组
-  // (World id 列表一类)只读展示——曾经把一份字符串名单画成一对数字框,
-  // 一保存就写回 [0,0],把部署里的名单静默毁掉。
+  // 仅两个 number/integer 的数组可编辑，其余数组只读。
   const itemType = prop.items?.type;
   if (prop.type === 'array' && (itemType === 'integer' || itemType === 'number')) {
     const scale = prop['x-scale'] || 1;
@@ -342,7 +306,7 @@ export interface ConfigViewDeps {
   filter?(group: ConfigGroup): boolean;
   /** 一条也不剩时说什么。默认那句是给设置页的措辞。 */
   emptyText?: string;
-  /** 组标题旁的 owner 小标要不要印。归属页上它是废话（整页都是同一个 owner）。 */
+  /** 是否显示组的 owner 标签。 */
   showOwner?: boolean;
 }
 
@@ -353,13 +317,7 @@ export interface ConfigView {
   load(): Promise<void>;
 }
 
-/**
- * 参数视图。**改一下存一下**：没有"应用"按钮，也没有"要不要写回 config.json"的勾选——
- * 一次改动落两处（运行态热生效 + 写回 config.json）是同一件事的两半，拆成两步
- * 只会让人对着一个已经改了的输入框猜"这到底生效了没有"。
- *
- * 连打字合并成一次请求：输入框每敲一下都发，既吵又会把中间态写进文件。
- */
+/** 修改自动保存到 config.json；热配置同时更新运行态。连续输入合并请求。 */
 export function createConfigView(deps: ConfigViewDeps): ConfigView {
   const { ui, lifecycle, signal } = deps;
   const showOwner = deps.showOwner !== false;
@@ -371,10 +329,7 @@ export function createConfigView(deps: ConfigViewDeps): ConfigView {
   bar.append(msg, ui.h('span', 'grow'));
   el.append(body, bar);
 
-  /**
-   * 提交面：`[{ groupId, path, read }]`。每次 `load` **整份重建**——
-   * 让它跨页常驻的话，离开这一页之后还留着一批指向已消失 DOM 的闭包。
-   */
+  /** 每次 load 重建本次页面的组、路径与取值器列表。 */
   let readers: Array<{ groupId: string; path: string; read: () => ConfigValue }> = [];
 
   function setMsg(text: string, bad?: boolean): void {

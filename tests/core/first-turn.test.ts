@@ -1,13 +1,9 @@
 import { messages as legacyMessages } from './fixture-protocol.ts';
 import { FixtureHandoffResult as ContextHandoffResult } from './fixture-protocol.ts';
 /**
- * 合成首轮对话(风格锚)——注入机制与出线取舍。
- *
- * 三条不变量:
- *  1. 出线态在 system 头之后插入,落盘 session 一个字不沾(handoff/reset 也漏不进去);
- *  2. 首轮 assistant 的思维链无条件出线:不被 keepPastThinking 丢弃,thinking 关闭也照发
- *     (Responses 传输只有签名载荷有线上形态;明文思维链不出线);
- *  3. firstTurn 内部标记字段绝不进请求体。
+ * 首轮对话在请求的 system 前缀之后插入，不写入持久 session。
+ * dropPastThinking 保留 firstTurn 项；Responses 仅回传来源兼容的 encrypted_content，
+ * 不回传明文推理或内部 firstTurn 标记。
  */
 import { describe, expect, it } from 'vitest';
 import { MainLoop } from '../../src/core/loop.ts';
@@ -60,7 +56,7 @@ function makeRig(opts: RigOptions = {}) {
   const tmp = makeTmpDir();
   const cfg = makeCfg();
   cfg.batching = { quietGapMs: 20, minBatchAgeMs: 0, maxBatchAgeMs: 200, maxBatchSize: 100 };
-  // 开关默认关(内容归部署,发货态没有);这里验的是注入机制本身,先打开,单个用例再关。
+  // 默认关闭；此测试启用，个别用例另行覆盖。
   cfg.context.firstTurn = true;
   opts.cfgPatch?.(cfg);
   const bus = new WakeBus(cfg.batching);
@@ -125,7 +121,7 @@ function makeRig(opts: RigOptions = {}) {
 const markedOf = (msgs: ChatMessage[]) => msgs.filter((m) => m.firstTurn);
 
 describe('合成首轮对话:注入位置与落盘边界', () => {
-  it('出线态在 system 头之后插一轮 user/assistant;落盘 session 一个字不沾', async () => {
+  it("请求在 system 后插入 user/assistant，持久 session 不包含合成消息", async () => {
     const rig = makeRig({ firstTurn: () => [ROUND] });
     rig.llm.script(textReply('好'));
     rig.start();
@@ -145,7 +141,7 @@ describe('合成首轮对话:注入位置与落盘边界', () => {
     expect(sent[3].role).toBe('user');
     expect(sent[3].firstTurn).toBeUndefined();
 
-    // 落盘态没有它——包括标记字段
+    // 持久记录不包含合成消息或内部标记。
     await until(() => rig.session.messages.some((m) => m.role === 'assistant'));
     expect(markedOf(rig.session.messages)).toEqual([]);
     expect(rig.session.messages.some((m) => m.content === ROUND.user)).toBe(false);
@@ -173,7 +169,7 @@ describe('合成首轮对话:注入位置与落盘边界', () => {
     await none.cleanup();
   });
 
-  it('user 或 reply 为空白的轮次机械跳过(发货态空文件=不注入)', async () => {
+  it("跳过 user 或 reply 为空白的合成对话", async () => {
     const rig = makeRig({ firstTurn: () => [{ user: '  ', reply: '有回复' }, ROUND] });
     rig.llm.script(textReply(''));
     rig.start();
@@ -204,13 +200,13 @@ describe('合成首轮对话:注入位置与落盘边界', () => {
     await rig.cleanup();
   });
 
-  it('交接:策略拿到出线态快照;它就算把首轮原样还给 tail,落盘也被过滤', async () => {
+  it("交接策略收到请求快照，返回的首轮对话在持久化前过滤", async () => {
     let sawSnapshot: ChatMessage[] = [];
     const rig = makeRig({
       firstTurn: () => [ROUND],
       onHandoff: async (snapshot) => {
         sawSnapshot = snapshot;
-        // 故意把整个动态尾(含首轮合成消息)交回去,考验落盘防线
+        // 策略返回含合成消息的完整快照，验证持久化前的过滤。
         let head = 0;
         while (head < snapshot.length && snapshot[head].role === 'system') head++;
         return { tail: snapshot.slice(head) };
@@ -223,14 +219,14 @@ describe('合成首轮对话:注入位置与落盘边界', () => {
     await until(() => rig.session.messages.some((m) => m.role === 'assistant'));
 
     await rig.loop.handoffContext();
-    // 策略看到的是出线态(含合成首轮)
+    // 交接策略收到包含合成首轮的请求快照。
     expect(markedOf(sawSnapshot).length).toBe(2);
-    // 落盘防线:重建后的 session 没有任何合成消息
+    // 重建后的持久记录排除合成消息。
     expect(markedOf(rig.session.messages)).toEqual([]);
     expect(rig.session.messages.some((m) => m.content === ROUND.user)).toBe(false);
     assertPairing(rig.session.messages);
 
-    // 交接后出线态依然注入(风格锚跨交接在场)
+    // 交接后的请求仍包含首轮对话。
     rig.llm.script(textReply(''));
     rig.pushEvent('又来消息');
     await until(() => rig.llm.calls.length >= 2);
@@ -251,7 +247,7 @@ describe('合成首轮对话:注入位置与落盘边界', () => {
   });
 });
 
-describe('合成首轮对话:出线取舍(各方言)', () => {
+describe("合成首轮对话:不同传输的请求内容", () => {
   const spec = { model: 'm', thinking: true } as const;
   const history: ChatMessage[] = [
     { role: 'system', content: 'sys' },

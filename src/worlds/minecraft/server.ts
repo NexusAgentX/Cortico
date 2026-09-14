@@ -1,12 +1,4 @@
-/**
- * 本地 Minecraft 服务器托管(java -jar server.jar nogui)。
- *
- * 与 client.ts 同一套 phase 机器(state/start/stop + 健康探测),差别在:
- *  - 路径来自配置项(worlds.minecraft.local.serverDir/javaPath),服务器世界放哪
- *    属于部署选择;没配路径时按钮回执提示去配置。
- *  - 健康探测是 TCP 连接(MC 协议无 HTTP)。
- *  - 停止走 stdin "stop"(存档落盘),超时才杀进程。
- */
+/** 管理本地 Minecraft 服务器进程、stdin 指令及 TCP 连通性检测。停止时先发送 save-all flush 和 stop，超时后强制终止。 */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -21,13 +13,12 @@ import { readLevelDat } from './level-dat.ts';
 export type MinecraftServerPhase = 'stopped' | 'starting' | 'running' | 'error';
 
 export interface MinecraftServerState {
-  /** 受管本地服务器的目标开关；未配置本地服务时为 true。 */
   enabled: boolean;
   phase: MinecraftServerPhase;
   address: string;
   detail: string | null;
   pid: number | null;
-  /** 端口当下是否可连(外部自行起的服务器也算) */
+  /** TCP 检测只确认端口可连接。 */
   reachable: boolean;
   /** 当前托管进程所用目录；停机时为下一次启动的配置目录。 */
   serverDir: string;
@@ -36,7 +27,6 @@ export interface MinecraftServerState {
 }
 
 interface MinecraftServerOptions {
-  /** 受管服务器是否允许启动；未提供时沿用旧行为。 */
   enabled?: () => boolean;
   /** 含 server.jar 的目录(启动前读取配置;'' = 未配置) */
   serverDir: () => string;
@@ -54,7 +44,6 @@ interface MinecraftServerOptions {
   healthTimeoutMs?: number;
   /** 测试注入:低频存档周期 */
   autoSaveMs?: number;
-  /** 相位跃迁回调(starting/running/error/stopped)。世界的生死她必须听得见,不能只进日志。 */
   onPhase?: (phase: MinecraftServerPhase, detail: string | null) => void;
   /**
    * 就绪之后回读一次实际难度的结果(每次 running 一次)。见 `queryDifficulty`。
@@ -75,7 +64,6 @@ export interface MinecraftDifficultyFact {
   properties: string | null;
 }
 
-/** 世界生成进度行:命中就把就绪期限往后推,原版每加载一段起始区都会打一行 */
 const PROGRESS_RE = /Preparing (start region|spawn area)/;
 /** 原版启动完成行:「Done (12.345s)! For help, type "help"」 */
 const READY_RE = /\bDone \([\d.]+s\)!/;
@@ -94,12 +82,8 @@ const PROGRESS_GRACE_MS = 60_000;
  */
 const DIFFICULTY_REPLY_RE =
   /(?:The difficulty (?:is|has been set to)|(?:游戏)?难度(?:为|已设(?:置|定)为|已设为))\s*([A-Za-z_]+|和平|简单|普通|困难)/;
-/** 回读的等待上限:过了还没回话就按「问了没问出来」报,不静默 */
 const DIFFICULTY_TIMEOUT_MS = 10_000;
 
-/**
- * 难度名归一。英文与中文译名各一套;认不出来返回 null(不猜)。
- */
 function normalizeDifficulty(raw: string): MinecraftDifficultyFact['difficulty'] {
   const zh: Record<string, MinecraftDifficultyFact['difficulty']> = {
     和平: 'peaceful', 简单: 'easy', 普通: 'normal', 困难: 'hard',
@@ -125,16 +109,10 @@ const WORLD_WIDE_GAME_RULES = ['keepInventory'] as const;
 interface DimensionRules {
   id: 'minecraft:the_nether' | 'minecraft:the_end';
   dir: string;
-  /** 该维度 level.dat 里的 GameRules;null = 读不到(维度没开、或存档还没落盘) */
   rules: Record<string, string> | null;
 }
 
-/**
- * 按主世界对齐副维度的 gamerule:出什么指令、哪几条对不上。纯函数,不碰进程。
- *
- * - 主世界那条没写 = 没有"要传播的意图",什么都不做(不拿原版默认值去覆盖别人)。
- * - 副维度读不到 = 说不清,只记一句,不猜也不发指令。
- */
+/** 以主世界保存的 GameRules 为目标，为其他维度生成修改指令。 */
 export function planGameRuleAlignment(
   overworld: Record<string, string> | null,
   others: readonly DimensionRules[],
@@ -146,7 +124,7 @@ export function planGameRuleAlignment(
     if (want === undefined) continue;
     for (const other of others) {
       if (other.rules === null) {
-        drift.push(`${other.dir} 的 ${rule} 读不到(那份 level.dat 还没落盘或维度没开)`);
+        drift.push(`${other.dir} 的 ${rule} 读不到`);
         continue;
       }
       const has = other.rules[rule];
@@ -158,21 +136,10 @@ export function planGameRuleAlignment(
   return { commands, drift };
 }
 
-/** 定期发送 save-all，缩短异常退出时未保存的世界状态窗口。 */
+/** 定期发送 save-all flush。 */
 const AUTO_SAVE_MS = 90_000;
-/** stop 指令后等它自己存完的上限,超时才 SIGKILL */
+/** 停止指令后等待的毫秒数；超时强制终止进程。 */
 const GRACEFUL_EXIT_MS = 15_000;
-/**
- * 硬信号兜底要监听的那几个。**这不是正门** —— 正门是控制台的关机键(走 stop()
- * 那条完整路径)。这里管的是"操作员还是手滑关了窗"那一下:
- *
- *   Windows 关命令行窗口 = CTRL_CLOSE_EVENT,Node 映射成 SIGHUP,而系统只给
- *   大约 5 秒就强杀整个控制台进程组。Ctrl+Break 映射成 SIGBREAK(仅 Windows)。
- *
- * 5 秒里能做的只有一件事:立刻把 save-all + stop 写进 java 的 stdin,让它在被杀
- * 之前尽量把区块落盘。所以这里既不清定时器也不改相位 —— 正常收尾路径若还跑得动,
- * 它照常跑完。
- */
 const HARD_SIGNALS: NodeJS.Signals[] = process.platform === 'win32'
   ? ['SIGHUP', 'SIGBREAK']
   : ['SIGHUP'];
@@ -195,43 +162,20 @@ function findAdjacentJava(serverDir: string): string | null {
 // 世界身份(realm):存档目录里的 cortico-realm.json
 // ---------------------------------------------------------------------------
 
-/**
- * 身份标记的文件名。它落在**存档目录**里,不在服务器目录里 —— 于是身份随目录走:
- *
- *  - 目录改名:marker 跟着搬,uuid 不变(同一个世界换了个名字);
- *  - 目录复制:两份同 uuid,即"同一个世界的两个副本"。**不做防重** —— 复制出来的
- *    存档确实继承了原世界的地形、锚点、进度,当作同一个 realm 是对的;
- *  - 同名新建:新目录里没有 marker,于是新发一个 uuid,与旧世界干净地分开。
- *
- * 这三条正是"换世界自动失效"要的语义:缓存按 {realm, key} 键控,旧世界的数据漏不进
- * 新世界(地标泄露那一类 bug 从机制上封死)。
- */
+/** 存档身份写入存档目录的标记文件；目录改名或复制保留该身份。 */
 export const REALM_MARKER_FILE = 'cortico-realm.json';
 
 /** 落在存档目录里的那份 JSON。 */
 interface RealmMarker {
   /** 机器层的稳定键:首次纳管时随机发一次,之后只读不改 */
   uuid: string;
-  /** **首次纳管那一刻**的存档目录名。目录后来改了名,这里就是旧名 —— 只作留痕,
-   *  当下的存档名一律以 server.properties 的 level-name 为准(见 `MinecraftRealm.levelName`) */
+  /** 首次纳管时的目录名；当前存档名取自 server.properties 的 level-name。 */
   levelName: string;
   /** 首次纳管时刻(ISO) */
   createdAt: string;
 }
 
-/**
- * 受管世界的身份。
- *
- * **uuid 是机器层的键,任何面向她的文本都不出现 uuid** —— 缓存命名空间、
- * {realm,key} 键控、笔记分目录的机械匹配用它;公告、回执、事件里只出现
- * `levelName`(存档名,人话)。消费方照这条办。
- *
- * `uuid` 为 null = 拿不到强身份(marker 写不进去,例如只读盘)。此时消费方按弱身份
- * 兜底即可,别把 null 当成"同一个 realm"。
- *
- * 远程服务器(mc-server 根本不受管、bridge 直连外部)拿不到这个对象——`realm()`
- * 返回 null,弱身份 `host:port + 存档名` 由消费方自己拼。
- */
+/** 本地存档优先使用标记文件中的 UUID；无法读取或写入时使用地址和 level-name 生成临时键。外部服务器不在此推断存档身份。 */
 interface MinecraftRealm {
   /** 受管世界的稳定 uuid;marker 读写不成时为 null */
   uuid: string | null;
@@ -243,7 +187,6 @@ function realmMarkerPath(worldDir: string): string {
   return join(worldDir, REALM_MARKER_FILE);
 }
 
-/** 读存档目录里的身份标记;没有、或人手改坏了都返回 null(调用方当作没纳管过)。 */
 export function readRealmMarker(worldDir: string): RealmMarker | null {
   const file = realmMarkerPath(worldDir);
   if (!existsSync(file)) return null;
@@ -262,15 +205,7 @@ export function readRealmMarker(worldDir: string): RealmMarker | null {
   }
 }
 
-/**
- * 纳管一份存档:有 marker 就原样沿用(**不重写**,改名后那份旧名照留,它记的是
- * "第一次见到这个世界"那一刻),没有就发一个新 uuid 写进去。
- *
- * 存档目录还不存在时会先建出来 —— 第一次启动的世界要到服务端跑起来才有 level.dat,
- * 而身份得在那之前就定下。空目录对原版无害(listWorlds 也只认有 level.dat 的)。
- *
- * 写不进去(只读盘等)会**抛**;调用方自己决定降级成什么。
- */
+/** 目录中已有标记时复用；否则创建标记。写入失败返回临时身份。 */
 function ensureRealmMarker(worldDir: string, levelName: string): RealmMarker {
   const existing = readRealmMarker(worldDir);
   if (existing) return existing;
@@ -288,20 +223,16 @@ export class MinecraftServerManager {
   private logTail = '';
 
   private saveTimer: ReturnType<typeof setInterval> | null = null;
-  /** 就绪期限:世界生成有进度就往后推,不让固定闸门杀掉正在干活的服务端 */
   private healthDeadline = 0;
   /** 已装上的硬信号兜底监听;没有托管进程时为 null(不占监听位) */
   private hardSignalHook: (() => void) | null = null;
-  /** 世界身份缓存,按存档目录键控:换存档自然重算 */
   private realmCache: { worldDir: string; realm: MinecraftRealm } | null = null;
   /** 托管进程使用的目录；运行期间配置改动留到下次启动。 */
   private activeServerDir: string | null = null;
-  /** marker 写不进去只报一次,别让每次查身份都刷一行 */
   private realmWarned = false;
   /** 正在穿过启动探针的生命周期代次；stop 会使该代次立即失效。 */
   private startingGeneration: number | null = null;
   private lifecycleGeneration = 0;
-  /** 难度回读在途:等着 stdout 里那一行(见 queryDifficulty);null = 没在等 */
   private difficultyWait: { proc: ChildProcess; timer: ReturnType<typeof setTimeout> } | null = null;
 
   constructor(private readonly opts: MinecraftServerOptions) {}
@@ -329,14 +260,7 @@ export class MinecraftServerManager {
     };
   }
 
-  /**
-   * 当前受管世界的身份 `{uuid, levelName}`;没配服务器目录(或目录不在)= 不受管,
-   * 返回 null,消费方拿 `host:port + 存档名` 拼弱身份。
-   *
-   * 查身份即纳管:存档目录里没有 `cortico-realm.json` 就在这里补上(幂等),所以
-   * 换存档之后第一次调用就把新世界认下来了。**uuid 只进机器层**,对她的文本只用
-   * `levelName`(见 `MinecraftRealm` 的说明)。
-   */
+  /** 首次查询本地存档身份时可能创建标记文件。 */
   realm(): MinecraftRealm | null {
     const serverDir = this.directory();
     if (!serverDir || !existsSync(serverDir)) return null;
@@ -349,7 +273,6 @@ export class MinecraftServerManager {
     }
     const worldDir = join(serverDir, levelName);
     const hit = this.realmCache;
-    // marker 还在才认缓存:存档被删掉重开(同名新世界)时,这里要重新发 uuid
     if (hit && hit.worldDir === worldDir && existsSync(realmMarkerPath(worldDir))) return hit.realm;
     let uuid: string | null = null;
     try {
@@ -358,7 +281,6 @@ export class MinecraftServerManager {
       this.warnRealmOnce(`写不进 ${join(levelName, REALM_MARKER_FILE)}(${String(err)});这个世界只能按弱身份算`);
     }
     const realm: MinecraftRealm = { uuid, levelName };
-    // 只缓存拿到 uuid 的那次:写失败多半是盘只读一类外部状况,人修好了下次要能捡起来
     this.realmCache = uuid ? { worldDir, realm } : null;
     return realm;
   }
@@ -386,7 +308,7 @@ export class MinecraftServerManager {
   private async spawnServer(generation: number): Promise<MinecraftServerState> {
     if (await this.probe()) {
       if (generation !== this.lifecycleGeneration || !(this.opts.enabled?.() ?? true)) return this.state();
-      this.detail = '端口已有服务器在跑(外部启动),无需托管';
+      this.detail = '端口已可连接，未启动托管进程';
       return this.state();
     }
     if (generation !== this.lifecycleGeneration || !(this.opts.enabled?.() ?? true)) return this.state();
@@ -398,7 +320,6 @@ export class MinecraftServerManager {
     this.activeServerDir = launch.cwd ?? this.opts.serverDir();
     const portFix = this.opts.commandOverride ? null : this.alignServerPort();
     if (portFix) this.opts.log.warn(`MC 服务器端口纠偏: ${portFix}`);
-    // 纳管这份存档:身份 marker 首次写、之后沿用。写不进去不挡启动(降级弱身份)
     const realm = this.realm();
     if (realm) {
       this.opts.log.info(`MC 世界纳管: 存档「${realm.levelName}」${realm.uuid ? '' : '(无身份标记,按弱身份算)'}`);
@@ -414,12 +335,9 @@ export class MinecraftServerManager {
     const tail = (chunk: Buffer) => {
       const text = chunk.toString();
       this.logTail = (this.logTail + text).slice(-2000);
-      // 难度回读在就绪**之后**才发问,所以这一段要排在 starting 闸门前面
       this.consumeDifficultyReply(proc, text);
       if (this.proc !== proc || this.phase !== 'starting') return;
-      // 生成维度期间持续输出进度可延长启动期限。
       if (PROGRESS_RE.test(text)) this.healthDeadline = Date.now() + PROGRESS_GRACE_MS;
-      // 原版打完这行才算真就绪(监听端口已绑),比裸 TCP 探测准
       if (READY_RE.test(text)) {
         this.setPhase('running', null);
         this.clearHealthTimer();
@@ -440,7 +358,7 @@ export class MinecraftServerManager {
       this.proc = null;
       this.clearDifficultyWait();
       this.removeHardSignalHook();
-      if (this.phase === 'stopped') return; // 人为停止或 code=0 的正常退出不报告故障。
+      if (this.phase === 'stopped') return;
       const detail = `进程退出 code=${code};日志尾部: ${this.logTail.slice(-400)}`;
       this.finish(code === 0 ? 'stopped' : 'error', detail);
     });
@@ -462,17 +380,13 @@ export class MinecraftServerManager {
     this.proc = null;
     if (proc && proc.exitCode === null) {
       await this.gracefulKill(proc);
-      this.opts.log.info('MC 服务器已停止(已存档)');
+      this.opts.log.info('MC 服务器已停止');
     }
     this.activeServerDir = null;
     return this.state();
   }
 
-  /**
-   * 硬信号兜底:窗口被直接关掉时,抢在系统强杀之前把 save-all + stop 写进 stdin。
-   * 装在**有托管进程的时候**,进程一没就摘掉 —— 常驻监听会在反复起停后攒成
-   * 一堆指向已退出进程的死回调(测试里还会撞 MaxListeners 警告)。
-   */
+  /** 仅在托管进程存在时监听终止信号，收到信号后尝试向 stdin 写入存档和停止指令。 */
   private installHardSignalHook(): void {
     if (this.hardSignalHook) return;
     const hook = (): void => this.saveOnHardSignal();
@@ -487,10 +401,7 @@ export class MinecraftServerManager {
     for (const sig of HARD_SIGNALS) process.removeListener(sig, hook);
   }
 
-  /**
-   * 只做一件事:把两条指令塞进 java 的 stdin。不等它退出(等不到 —— 系统给的
-   * 是 5 秒量级的窗口),也不动相位与定时器,让正常收尾路径若还活着就照常跑完。
-   */
+  /** 信号回调只写入指令，不等待退出。 */
   private saveOnHardSignal(): void {
     const proc = this.proc;
     if (!proc || proc.exitCode !== null) return;
@@ -499,10 +410,7 @@ export class MinecraftServerManager {
     this.command('stop');
   }
 
-  /**
-   * 先发送 save-all flush 和 stop，等待服务端存档退出；超时后才 SIGKILL。
-   * 提前 flush 为无法正常收尾的路径提供一次存盘机会。
-   */
+  /** 发送 save-all flush 和 stop 后等待进程退出，超时强制终止；未核验存档结果。 */
   private async gracefulKill(proc: ChildProcess): Promise<void> {
     try {
       proc.stdin?.write('save-all flush\n');
@@ -555,7 +463,6 @@ export class MinecraftServerManager {
     this.difficultyWait = { proc, timer };
   }
 
-  /** stdout 里有没有那一行难度回话;有就结掉这一次回读 */
   private consumeDifficultyReply(proc: ChildProcess, text: string): void {
     if (this.difficultyWait?.proc !== proc) return;
     const hit = parseDifficultyReply(text);
@@ -582,7 +489,7 @@ export class MinecraftServerManager {
     this.difficultyWait = null;
   }
 
-  /** 同一刻 server.properties 里的 difficulty=;读不到返回 null(不猜) */
+  /** 读取配置中的难度；无法读取返回 null。 */
   private propertiesDifficulty(): string | null {
     const dir = this.directory();
     if (!dir) return null;
@@ -594,17 +501,7 @@ export class MinecraftServerManager {
     }
   }
 
-  /**
-   * 就绪之后把跨维度该一致的 gamerule 按主世界对齐一次(见 `WORLD_WIDE_GAME_RULES`)。
-   *
-   * 读的是三份 level.dat(主世界/下界/末地),那是各维度 gamerule 的落盘处 —— 比去
-   * stdout 里认 `gamerule` 查询的回话稳:不吃语言包、不用等回话、三个维度一次读完。
-   * 代价是读到的是**上次存档那一刻**的值,而这里只在启动时问一次"这次起来是什么",
-   * 与难度回读同一口径。
-   *
-   * 对不上就发 `execute in <维度> run gamerule <规则> <主世界的值>`。指令写不进去
-   * (外部启动的服务器没有 stdin)就只报事实,让人自己敲 —— 不假装对齐过。
-   */
+  /** 使用 level.dat 中最近保存的主世界 GameRules；运行中尚未保存的更改不在此快照中。 */
   private alignGameRules(): void {
     const serverDir = this.directory();
     if (!serverDir || !existsSync(serverDir)) return;
@@ -612,7 +509,7 @@ export class MinecraftServerManager {
     try {
       levelName = settingsFrom(loadProperties(serverDir)).levelName;
     } catch {
-      return; // 存档名都读不出来,别猜目录
+      return;
     }
     const rulesOf = (dir: string): Record<string, string> | null =>
       readLevelDat(join(serverDir, dir, 'level.dat'))?.gameRules ?? null;
@@ -627,8 +524,8 @@ export class MinecraftServerManager {
       + (plan.commands.length === 0
         ? ''
         : sent
-          ? ` —— 已按主世界对齐(${plan.commands.length} 条 execute in … run gamerule)`
-          : ` —— 指令写不进去(外部启动的服务器没有 stdin),要人工敲:${plan.commands.join(' / ')}`),
+          ? `；已发送 ${plan.commands.length} 条 gamerule 修改指令`
+          : `；无法写入 stdin，请手动执行:${plan.commands.join(' / ')}`),
     );
   }
 
@@ -682,12 +579,7 @@ export class MinecraftServerManager {
     };
   }
 
-  /**
-   * server.properties 的 server-port 只在**启动时**读一次,而它是整个目录共享的:
-   * 台架(scratch/mc-bench)或另一个会话拿 --port/--world 起过一次,服务端会把覆盖值
-   * 写回文件。于是托管服务器听在别的端口上,健康探测怎么都探不到,前端只看得见
-   * 「启动中」一直挂到超时。启动前对齐一次,改动只报事实。
-   */
+  /** 启动前将 server.properties 的 server-port 写为配置端口。 */
   private alignServerPort(): string | null {
     const serverDir = this.directory();
     if (!serverDir) return null;
@@ -716,7 +608,6 @@ export class MinecraftServerManager {
         return;
       }
       const reachable = await this.probe();
-      // stop 或下一次启动可能在探针在途时接管生命周期；旧结果不得复活旧进程。
       if (this.phase !== 'starting' || this.proc !== proc) return;
       if (reachable) {
         this.setPhase('running', null);
@@ -731,7 +622,6 @@ export class MinecraftServerManager {
         const orphan = this.proc;
         this.proc = null;
         this.fail('启动超时(世界生成过久或端口不对)');
-        // 先请求服务端存档退出，超时后才强制终止。
         if (orphan) void this.gracefulKill(orphan);
       }
     }, interval);
@@ -746,23 +636,17 @@ export class MinecraftServerManager {
     this.finish('error', detail);
   }
 
-  /**
-   * 托管进程的终局收尾:定时器、兜底监听、活动目录一并落定,再翻相位。
-   * `error` 与 `stopped` 两条出口的清理必须同一份 —— 干净退出(exit code 0)走 stopped。
-   */
+  /** 清理进程引用、定时器及待处理的难度查询。 */
   private finish(phase: 'error' | 'stopped', detail: string): void {
     this.clearHealthTimer();
     this.clearSaveTimer();
-    // 走到这里托管进程要么已经死了、要么已被摘成孤儿:兜底监听没有对象了,摘掉。
     this.removeHardSignalHook();
     if (this.proc === null) this.activeServerDir = null;
     this.setPhase(phase, detail);
-    // 游戏服务器中断影响整个会话，按 error 记录。
     if (phase === 'error') this.opts.log.error(`MC 服务器异常: ${detail}`);
     else this.opts.log.info(`MC 服务器已退出: ${detail}`);
   }
 
-  /** 相位的唯一写入口:变了才回调,原地重置(stopped→stopped)不吵。 */
   private setPhase(next: MinecraftServerPhase, detail: string | null): void {
     const changed = this.phase !== next;
     this.phase = next;

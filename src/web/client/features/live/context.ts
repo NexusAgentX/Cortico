@@ -1,4 +1,4 @@
-/** Standard Items use the runtime token estimator; categories are a display projection. */
+/** 使用运行时 token 估算口径，将标准 Item 按显示类别汇总。 */
 
 import { itemText, type ContextRecord } from '../../../../protocol/open-responses/context.ts';
 import type { ConsoleUi } from '../../../shared/client-panel.ts';
@@ -58,16 +58,7 @@ const CTX_CATS: readonly ContextCategoryDef[] = [
 
 const CTX_GROUPS: readonly string[] = [S.groupPrefix, S.groupTools, S.groupDialogue];
 
-/**
- * 系统前缀按 `━━━ 段名 ━━━` 反解成段。
- *
- * 这是**前端对拼装格式的反向依赖**:段名是Persona与 World 写进去的,
- * 分隔线一改这边就全归到"(前言)"里。搬迁不改它,但把它做成纯函数——至少现在
- * 可以拿一段前缀直接钉住行为,而不必先起一个 bot。
- *
- * 上下文页与「前缀源」页(features/prompts)两处都用它,所以住在这儿(计算侧),
- * 不住在渲染侧。
- */
+/** 按 ━━━ 段名 ━━━ 拆分前缀；未匹配的文本归入前言。上下文与提示词页共用。 */
 export function parsePrefixSegments(systemText: string): Record<string, string> {
   const map: Record<string, string> = {};
   if (!systemText) return map;
@@ -109,7 +100,7 @@ export interface ContextBreakdown {
 
 export interface ContextInput {
   messages: readonly ContextRecord[];
-  /** 合成首轮对话(出线态注入,不在 messages 里;思维链无条件出线,不参与摘除) */
+  /** messages 之外的合成首轮；估算包含其 reasoning，不应用历史思维链摘除规则。 */
   firstTurn?: readonly ContextRecord[];
   toolSchemas: readonly ToolSchemaDoc[];
   status: StatusSnapshot | null;
@@ -145,7 +136,7 @@ export function computeCtx(input: ContextInput): ContextBreakdown | null {
     );
   }
 
-  // 1.5) 合成首轮对话:出线态插在 system 之后,思维链恒定出线(不参与摘除)。
+  // 合成首轮单独计入估算，包含其中的 reasoning。
   for (const m of input.firstTurn ?? []) {
     tok.firstTurn += estimateMessagesTokens([m]);
   }

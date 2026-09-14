@@ -19,7 +19,7 @@ export interface UsageTypeSpec {
   color: string;
 }
 
-/** 自下而上堆叠：命中（绿·便宜）→ 未命中（琥珀）→ 输出（赭石）。顺序即堆叠序。 */
+/** 自下而上堆叠：缓存命中 → 未缓存输入 → 输出。 */
 export const U_TYPES: readonly UsageTypeSpec[] = [
   { key: 'cacheHit', label: S.typeCacheHit, color: 'chart-hit' },
   { key: 'cacheMiss', label: S.typeCacheMiss, color: 'chart-miss' },

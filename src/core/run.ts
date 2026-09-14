@@ -1,6 +1,6 @@
 /**
- * run:一次进程存活。`data/runs/<run>/` 装这次运行的全部记录;`data/runs/index.jsonl`
- * 每次开机与关机各一行。暂停不切 run,重启切。
+ * 一次进程运行对应一个 run，运行日志保存在 data/runs/<run>/。
+ * index.jsonl 在启动与正常关机时各追加一行；暂停沿用 run，重启创建新 run。
  */
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -24,7 +24,7 @@ export interface RunOpenMeta {
 export interface RunCloseSummary {
   endedAt: string;
   lastCursor: number;
-  /** 关机仪式是否各步走完 */
+  /** 关机步骤是否全部完成。 */
   complete: boolean | null;
   reason: string;
 }
@@ -84,12 +84,12 @@ export function openRun(dataDir: string, meta: RunOpenMeta): RunInfo {
   return { id, dir, runsDir, startedAt, previousRun };
 }
 
-/** 关机时补一行;崩溃的 run 没有这一行,读者按 events.jsonl 末行自己算区间。 */
+/** 追加关机记录；进程异常结束时可能没有该行，查询方需从已有记录推算结束时间。 */
 export function closeRun(run: RunInfo, summary: RunCloseSummary): void {
   appendFileSync(join(run.runsDir, 'index.jsonl'), JSON.stringify({ run: run.id, ...summary }) + '\n', 'utf8');
 }
 
-/** run.json:World 清单与配置指纹这类整场不变的事实。 */
+/** run.json 保存本次运行的 World 清单与配置指纹。 */
 export function writeRunJson(run: RunInfo, data: Record<string, unknown>): void {
   writeFileSync(join(run.dir, 'run.json'), JSON.stringify({ run: run.id, startedAt: run.startedAt, previousRun: run.previousRun, ...data }, null, 2), 'utf8');
 }

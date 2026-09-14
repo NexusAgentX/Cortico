@@ -1,9 +1,4 @@
-/**
- * 从实体元数据里读得出来的几件事实。与 `piglin.ts` 同一条路子:元数据的下标随协议
- * 版本走 `registry.entitiesByName[..].metadataKeys`,不把 1.20.6 的数值写死。
- *
- * 这里只回答"现在是什么样",不回答"该不该做"——判断留给她。
- */
+/** 实体元数据字段位置取自 registry.entitiesByName 的 metadataKeys。 */
 
 interface NamedStack { name?: string }
 
@@ -14,7 +9,7 @@ interface FactEntity {
 
 interface FactBot {
   entity?: { uuid?: string } | null;
-  /** 自己的 UUID 的可靠来源:mineflayer 从不给自己的 entity 设 uuid,login 时只设 bot.player/_client */
+  /** 登录时玩家 UUID 优先取 bot.player，其次取实体或协议客户端。 */
   player?: { uuid?: string } | null;
   _client?: { uuid?: string } | null;
   inventory?: { slots?: Array<NamedStack | null | undefined> };
@@ -39,12 +34,7 @@ export const TAME_ITEMS: Readonly<Record<string, readonly string[]>> = {
   parrot: ['wheat_seeds', 'beetroot_seeds', 'melon_seeds', 'pumpkin_seeds', 'torchflower_seeds', 'pitcher_pod'],
 };
 
-/**
- * 喂得进去的那几种×食物。原版的规矩是**喂不进去就不消耗**(未成年、刚繁殖过冷却中、
- * 或者根本不吃这个),所以"手上少没少"是一个精确信号——它只说"这一口被接受了",
- * 不说"生出小的了":繁殖要两只都进入求偶状态。
- * (把握:牛羊猪鸡兔确定;哞菇同牛,山羊同牛。)
- */
+/** 繁殖交互使用的实体与食物表；物品消耗不作为幼体出生的证明。 */
 export const FEED_ITEMS: Readonly<Record<string, readonly string[]>> = {
   cow: ['wheat'],
   mooshroom: ['wheat'],
@@ -95,20 +85,14 @@ export function tamedByMe(bot: FactBot, entity: FactEntity): boolean {
   return owner !== null && typeof me === 'string' && me !== '' && owner === me;
 }
 
-/**
- * 驯服族的坐/立:`flags` 元数据(TamableAnimal 的共享位)的 0x01 位是 sitting。
- * 读不到(不是驯服族、元数据缺席)返回 null —— 这一层不猜。
- */
+/** TamableAnimal flags 的 0x01 位表示坐下；缺少该字段时返回 null。 */
 export function readSitting(bot: FactBot, entity: FactEntity): boolean | null {
   const raw = metaOf(bot, entity, 'flags');
   if (typeof raw !== 'number') return null;
   return (raw & 0x01) !== 0;
 }
 
-/**
- * 身上有没有鞍。猪/炽足兽在元数据 'saddle'(布尔);马科(horse/donkey/mule)在
- * 'flags' 的 0x04 位(0x02 是驯服)。读不到返回 null —— 这一层不猜。
- */
+/** 猪和炽足兽读取 saddle；马科读取 flags 的 0x04 位。字段不可用时返回 null。 */
 export function readSaddled(bot: FactBot, entity: FactEntity): boolean | null {
   const direct = metaOf(bot, entity, 'saddle');
   if (typeof direct === 'boolean') return direct;

@@ -1,12 +1,4 @@
-/**
- * 终端对话的**整条链路**:真 WebApp + 真 TerminalWorld + fake host,
- * 客户端走通用 provider 流式通道 `/ws/providers/worlds:terminal/panels/chat`。
- *
- * 这一份只留一条端到端:框架把 WS 升级、解析 provider/panel、包成 `ConsoleStream`、
- * 交给 World,一路到工具发言与事件落库都真的接上了。协议分支覆盖在
- * `worlds-terminal-console.test.ts`(不起服务器),框架侧的流式行为在
- * `provider-stream.test.ts`(假 provider);这里只钉"两半真的连得上"。
- */
+/** WebApp 与 TerminalWorld 的端到端流式通信，经 /ws/providers/world:terminal/panels/chat 验证发言、回执与事件存储。协议分支见 io-terminal-console.test.ts，框架通道见 provider-stream.test.ts。 */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

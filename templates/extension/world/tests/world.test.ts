@@ -27,7 +27,7 @@ describe('Example World', () => {
     await world.stop();
   });
 
-  it('example_echo 以配置的开头回执;旋钮热改后回执随之变', async () => {
+  it('example_echo 使用配置的回执开头，配置修改立即生效', async () => {
     const ctx = fakeWorldContext(EXAMPLE, { scratchDir });
     const world = EXAMPLE.create(ctx);
     const echo = world.tools().find((t) => t.name === 'example_echo')!;

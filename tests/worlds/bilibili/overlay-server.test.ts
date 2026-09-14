@@ -203,7 +203,7 @@ describe('Bilibili Overlay 服务', () => {
     }
   });
 
-  it('偏好端口被占时顺延并报 warn(不是 info)——那是"上一次没退干净"最早的旁证', async () => {
+  it('偏好端口被占时顺延并记录 warn', async () => {
     const root = tempRoot();
     const assets = new OverlayAssetStore(join(root, 'assets'));
     const blocker = new BilibiliOverlayServer({
@@ -232,7 +232,7 @@ describe('Bilibili Overlay 服务', () => {
       expect(Number(new URL(server.baseUrl).port)).toBeGreaterThan(busy);
       const hit = warns.find((msg) => msg.includes('被占用'));
       expect(hit).toBeDefined();
-      expect(hit).toContain('上一次没退干净');
+      expect(hit).toContain(`改用 ${new URL(server.baseUrl).port}`);
     } finally {
       await server.stop();
       await blocker.stop();

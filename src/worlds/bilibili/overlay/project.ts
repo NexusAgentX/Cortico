@@ -67,8 +67,7 @@ function projectGift(
   cmd: string,
   normalized: Normalized | null,
 ): OverlayAudienceEvent | null {
-  // SEND_GIFT_V2 的字段在 data.pb 里,先摆回 V1 的名字;其余 cmd 原样穿过。
-  // 不传 warn:同一帧 normalize 已经告过一次警,这里再来一遍就是重复刷屏。
+  // 解析告警由 normalize 负责。
   const data = giftFrameData(object(msg.data));
   const sender = firstObject(data.sender_uinfo, data.user_info);
   const base = firstObject(sender.base, sender);

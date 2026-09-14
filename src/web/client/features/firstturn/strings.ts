@@ -2,16 +2,13 @@ import { pick } from '../../core/language.ts';
 
 const zh = {
   title: '首轮对话',
-  desc: '预写的第一轮 user / assistant 来回(含思维链),发请求时插在系统前缀之后、真实历史之前,'
-    + '用来锚定语言风格。**只进请求,不落盘**——落盘历史与记忆里没有它;'
-    + '任一空着(用户输入或回复)整轮就不注入。写作提醒:它在每次交接后仍然在场,'
-    + '别写"这是我们第一次说话"这类会随时间穿帮的句子。',
+  desc: "预写的 user / assistant 示例对话，可含思维链，用于设定语言风格。启用后每次请求都插入系统前缀之后、实际历史之前，不写入 session 历史或 Memory。用户输入或回复为空时不注入。",
   loading: '加载中…',
   loadFailed: (msg: string) => `加载失败: ${msg}`,
   noSources: '这个Persona没有提供首轮对话源。',
-  enable: '启用注入(内容为空时开着也不注入)',
-  enabledNote: '已开启——下一次请求生效',
-  disabledNote: '已关闭——下一次请求即不再注入',
+  enable: "启用首轮对话",
+  enabledNote: "已开启，下一次请求生效",
+  disabledNote: "已关闭，下一次请求不再注入",
   toggleFailed: (msg: string) => `开关保存失败: ${msg}`,
   noChanges: '没有改动。',
   saving: '保存中…',
@@ -27,16 +24,13 @@ const zh = {
 
 const en: typeof zh = {
   title: 'First turn',
-  desc: 'A pre-written first user / assistant exchange (with reasoning), inserted after the system prefix and before the real history on every request'
-    + ' to anchor the language style. **Request-only, never persisted to disk** — persisted history and memory do not contain it;'
-    + ' if either side (user input or reply) is empty the whole turn is not injected. Writing note: it stays present after every handoff,'
-    + ' so avoid sentences like "this is the first time we talk" that stop being true over time.',
+  desc: "A prewritten user/assistant example, with optional reasoning, that sets the language style. When enabled, each request includes it after the system prefix and before actual history. It is excluded from session history and Memory. Empty user input or reply disables injection.",
   loading: 'Loading…',
   loadFailed: (msg: string) => `Load failed: ${msg}`,
   noSources: 'This Persona provides no first-turn sources.',
-  enable: 'Enable injection (nothing is injected while the content is empty, even when on)',
-  enabledNote: 'Enabled — takes effect on the next request',
-  disabledNote: 'Disabled — no longer injected from the next request',
+  enable: "Enable first turn",
+  enabledNote: "Enabled; applies to the next request",
+  disabledNote: "Disabled; excluded from the next request",
   toggleFailed: (msg: string) => `Failed to save the switch: ${msg}`,
   noChanges: 'No changes.',
   saving: 'Saving…',

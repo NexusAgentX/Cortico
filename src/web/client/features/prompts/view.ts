@@ -23,7 +23,7 @@ export interface PromptDoc {
   content: string;
   revision?: string;
   role?: 'envPrompt' | 'prefix';
-  /** World 环境提示词此刻读的是哪份:bot 侧覆盖文件,还是 World 自带的默认。其它模板没有。 */
+  /** 当前模板来源：部署覆盖、bot 包覆盖或 World 默认。 */
   origin?: EnvPromptOrigin;
   vars?: PromptVar[];
 }
@@ -143,7 +143,6 @@ export function createPromptsView(deps: PromptsViewDeps): PromptsView {
     });
     const saveBtn = ui.button(S.saveToFile, { variant: 'primary', onClick: () => void save() });
     const resetBtn = ui.button(S.resetToWorld, { onClick: () => void reset() });
-    // 「恢复默认」只对部署层的覆盖有事可做:删掉它就回落人格包那份,没有包覆盖就回 World 自带的。
     resetBtn.hidden = doc.origin !== 'deployment';
 
     function refreshWarn(): void {

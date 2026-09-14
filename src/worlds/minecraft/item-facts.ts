@@ -3,7 +3,7 @@
  * 当前 1.20.6 注册表的 maxDurability 数据不完整，耐久上限使用下方原版公式表。
  */
 
-/** 一条附魔:`name` 是原版 id(去掉 minecraft: 前缀),`level` 是她看见的那个罗马数字的值 */
+/** 附魔 ID 去掉 minecraft: 前缀；level 为数值等级。 */
 export interface ItemEnchant {
   name: string;
   level: number;
@@ -15,7 +15,6 @@ export interface Durability {
   max: number;
 }
 
-/** 读得到组件/NBT 的最小物品形状;真件是 prismarine-item,台架给同形 POJO */
 export interface ItemLike {
   name: string;
   count?: number;
@@ -23,7 +22,6 @@ export interface ItemLike {
   nbt?: unknown;
 }
 
-/** 按 id 查名字的注册表口;`bot.registry` 就是这个形状 */
 export interface EnchantRegistry {
   enchantments?: Record<number, { name?: string } | undefined>;
 }
@@ -46,7 +44,6 @@ const WHOLE_MAX: Record<string, number> = {
   shield: 336, bow: 384, crossbow: 465, trident: 250, elytra: 432,
   fishing_rod: 64, flint_and_steel: 64, shears: 238, brush: 64,
   carrot_on_a_stick: 25, warped_fungus_on_a_stick: 100,
-  // 海龟壳只有头盔一件,套不进材质×部位那张表
   turtle_helmet: 275,
 };
 
@@ -84,21 +81,14 @@ export function readDamage(item: ItemLike): number | null {
   return typeof raw === 'number' ? raw : null;
 }
 
-/**
- * 剩余耐久;这件东西不带耐久时返回 null。
- * 没损耗过的物品身上没有 damage 组件(NBT 时代同理没有 Damage 键),这是原版的
- * 「零损耗」写法,不是读不到。
- */
+/** 剩余耐久；不带耐久的物品返回 null。缺失 damage 组件或 NBT Damage 字段按零损耗处理。 */
 export function readDurability(item: ItemLike): Durability | null {
   const max = maxDurabilityOf(item.name);
   if (max === null) return null;
   return { left: Math.max(0, max - (readDamage(item) ?? 0)), max };
 }
 
-/**
- * 这件东西身上的附魔。附魔书走 stored_enchantments,别的走 enchantments;
- * 两处形状一样,合起来报。
- */
+/** 从 stored_enchantments 和 enchantments 读取附魔。 */
 export function readEnchants(item: ItemLike, registry?: EnchantRegistry | null): ItemEnchant[] {
   const out: ItemEnchant[] = [];
   for (const type of ['enchantments', 'stored_enchantments']) {
@@ -128,10 +118,8 @@ function enchantName(id: unknown, registry?: EnchantRegistry | null): string | n
 }
 
 /**
- * 药水内容的注册表序号;不是药水、或读不到时 null。
- *
- * 1.20.6 里水瓶与全部药水的物品 id 都是 `potion`,名字上分不出来,只有这个序号能分。
- * minecraft-data 不带药水注册表,所以只报序号不译名 —— 编一个名字比给个数字更坏。
+ * 读取药水内容的注册表序号；缺失时返回 null。
+ * 当前 minecraft-data 不含药水注册表，此处不翻译序号。
  */
 export function readPotionId(item: ItemLike): number | null {
   const data = componentData(item, 'potion_contents') as { potionId?: unknown } | undefined;
@@ -144,19 +132,11 @@ interface Drinkable {
   label: string;
   /** 喝完剩在包里的空容器物品 id */
   empty: string;
-  /** 这一口真正发生的事 —— 不是饱食度,回执不能拿 food 读数当结果 */
+  /** 消耗后的效果说明。 */
   effect: string;
 }
 
-/**
- * 能喝、但 minecraft-data 的 foods 表里没有的东西。
- *
- * 那张表只收「给饱食度」的物品,牛奶桶一点饱食度都不给,于是它整个不在表里:
- * `eat` 的前置判据是 `foodsByName[item]`,点名牛奶桶当场被判「不是可进食物品」;
- * 手持它走 `use` 也没用 —— 落进通用兜底(按一下 1.2 秒就松手),而喝完一桶奶要
- * 1.61 秒,那个动作从来没跑完过。两条路都不通,所以奶在这个世界里喝不掉。
- * Mineflayer 的 `consume()` 本身认它(ALWAYS_CONSUMABLES),缺的只是这张表。
- */
+/** 补充 foods 表未包含、但 Mineflayer consume() 支持的无饱食度饮品。 */
 export const DRINKABLES: Readonly<Record<string, Drinkable>> = {
   milk_bucket: {
     label: '一桶奶',

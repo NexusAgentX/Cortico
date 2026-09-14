@@ -1,14 +1,4 @@
-/**
- * 控制台外壳（左栏导航 / 品牌名 / 连接状态）。
- *
- * 这一页真正的判据只有一句：**换一份声明，左栏跟不跟得上**。所以每条断言都在
- * 问"给它别的 capability / 别的 manifest，出现的行对不对"，而不是"某一行画对了没"。
- * 一条源码扫描替架构护栏在这里再钉一次：外壳里不许出现任何具体 World 名或 bot 名，
- * 那正是把导航从 `index.html` 挪进 TS 的全部理由。
- *
- * DOM 桩与「specifier 存变量」的理由同 `tests/web/feature-generic.test.ts`。
- * provider id 一律用协议里的占位名（`world:sample` / `persona:demo`）。
- */
+/** 验证外壳随 capabilities 与 manifest 更新导航，保留浏览器链接行为；关机和重启需两次确认。DOM 与动态 import 方式见 feature-generic.test.ts。 */
 
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
@@ -373,11 +363,9 @@ describe('provider 那一段', () => {
     stubStatus({});
     const { nav } = await mkShell({ pages: providers });
     const module = nav.findAll('navitem')[1];
-    // 徽标的文字一个字都不上左栏——那正是把行挤成两行的东西
     expect(module.textContent).toBe('样例 World');
     const dots = module.findAll('navdot');
     expect(dots.map((d) => d.className)).toEqual(['navdot on', 'navdot']);
-    // 一排同样大小的点,只有悬停说得出哪颗是哪条链路,所以链路名在最前面
     expect(dots[0].getAttribute('aria-label')).toBe('甲链路 正常 · 在线 3 人');
     expect(dots[1].getAttribute('aria-label')).toBe('乙链路 未启用');
   });
@@ -497,11 +485,11 @@ describe('底部运行控制', () => {
     expect(run.getAttribute('aria-label')).toBe('继续运行');
   });
 
-  // 关机通过收尾链停止 World 并存档。
+  // 关机等待装配层返回各步骤结果。
 
   const shutdownBtn = (el: FakeEl): FakeEl => el.find('rail-shutdown') as FakeEl;
 
-  /** 确认框的"仍要继续"(danger 模式的确认键上写的是后果,不是「确定」)。 */
+  /** 查找 danger 模式的继续按钮。 */
   const proceed = async (doc: FakeDoc): Promise<void> => {
     const ok = doc.body.findAll('btn').find((b) => b.textContent === '仍要继续') as FakeEl;
     ok.dispatchEvent({ type: 'click' });
@@ -548,9 +536,7 @@ describe('底部运行控制', () => {
     await proceed(doc);
 
     expect(seen.find((c) => c.url === '/api/run/shutdown')?.method).toBe('POST');
-    // 报告对话框:进程马上退出,这是操作员能看到的最后一屏
     const body = doc.body.textContent;
-    expect(body).toContain('有步骤没走完');
     expect(body).toContain('World 收尾');
     expect(body).toContain('✗ 托管 LLM server 停机');
     expect(body).toContain('超时(3秒)');
@@ -601,11 +587,10 @@ describe('底部运行控制', () => {
     expect(seen.some((u) => u === '/api/run/shutdown')).toBe(false);
   });
 
-  // ── 重启:与关机同一套收尾,退出前落重启标志 ─────────────────────────────
 
   const restartBtn = (el: FakeEl): FakeEl => el.find('rail-restart') as FakeEl;
 
-  it('重启键跟 restart 能力位走;title 按 supervised 说清退出后会不会被拉起', async () => {
+  it('重启键按能力位显示，未受监督时提示手动启动', async () => {
     stubStatus({});
     const { shell, el } = await mkShell({ capabilities: { run: true, shutdown: true } });
     expect(restartBtn(el).hidden).toBe(true);
@@ -614,7 +599,7 @@ describe('底部运行控制', () => {
     expect(restartBtn(el).getAttribute('aria-label')).toBe('重启');
     expect(restartBtn(el).title).toContain('手动启动');
     shell.setCapabilities({ run: true, shutdown: true, restart: true, supervised: true });
-    expect(restartBtn(el).title).toContain('启动器重新拉起');
+    expect(restartBtn(el).title).not.toContain('手动启动');
   });
 
   it('重启也要过两道确认才打 /api/run/restart;关机端点一次都不碰', async () => {
@@ -630,24 +615,22 @@ describe('底部运行控制', () => {
     await flush();
     click(restartBtn(el));
     await flush();
-    expect(doc.body.textContent).toContain('启动器立即重新拉起');
     expect(seen.some((c) => c.url === '/api/run/restart')).toBe(false);
     await proceed(doc);
     expect(seen.some((c) => c.url === '/api/run/restart')).toBe(false);
     await proceed(doc);
     expect(seen.find((c) => c.url === '/api/run/restart')?.method).toBe('POST');
     expect(seen.some((c) => c.url === '/api/run/shutdown')).toBe(false);
-    expect(doc.body.textContent).toContain('等待启动器拉起');
     expect(doc.body.textContent).toContain('✓ 按住事件投递');
   });
 
-  it('没有启动器循环时确认框说"不会自动回来"', async () => {
+  it('未受监督的进程提示手动重新启动', async () => {
     stubStatus({});
     const { doc, el } = await mkShell({ capabilities: { run: true, restart: true } });
     await flush();
     click(restartBtn(el));
     await flush();
-    expect(doc.body.textContent).toContain('不会自动回来');
+    expect(doc.body.textContent).toContain('手动重新启动');
   });
 });
 

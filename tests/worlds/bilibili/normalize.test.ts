@@ -241,7 +241,6 @@ describe('归一化', () => {
     expect(text).toContain('看不到直播画面');
     // 反向证据要提前说破:留场弹幕不代表还在播
     expect(text).toContain('不代表直播还在');
-    // 只说事实,不夹行为指令
     expect(text).not.toMatch(/收尾|告别|停止|快去/);
   });
 });

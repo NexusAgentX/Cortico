@@ -88,11 +88,7 @@ class FakeEl {
   listeners = new Listeners();
   ownText = '';
   focused = false;
-  /**
-   * 布局三件。桩里没有真实布局，这三个只是可读可写的普通字段——测试自己写死它们
-   * 来摆出"贴着底"或"用户往上翻了"的局面，`log` 的接线是否照着算就验得出来。
-   * 真正的判据（三个数怎么凑成"贴底"）在纯函数 `shouldStick` 那组里单独钉。
-   */
+  /** 无真实布局；测试赋值模拟滚动位置和尺寸。 */
   scrollTop = 0;
   scrollHeight = 0;
   clientHeight = 0;
@@ -180,10 +176,7 @@ class FakeEl {
 class FakeDoc {
   listeners = new Listeners();
   body: FakeEl;
-  /**
-   * 复制按钮从 `doc.defaultView.navigator` 取剪贴板（不摸全局 `window`）。
-   * 缺省不给 = 非安全上下文，那边压根没有 `navigator.clipboard`。
-   */
+  /** 默认不提供 Clipboard API；可注入文档所属窗口的剪贴板。 */
   defaultView: Any = undefined;
   /** 降级路线用的 `execCommand`。缺省没有 = 连降级也不通。 */
   execCommand?: (cmd: string) => boolean;
@@ -577,8 +570,6 @@ describe('input / select / textarea', () => {
 // ---------------------------------------------------------------------------
 // 提交时机：onInput（逐次击键）/ onChange（敲完）/ onCommit（回车）
 //
-// 这三条是三个**不同的时刻**。"改完就存"的场景拿 onInput 提交等于边打字边存：
-// 输 10086 会先存出一个 1、再存一个 10——所以后两条不是锦上添花。
 // ---------------------------------------------------------------------------
 
 describe('onChange / onCommit', () => {
@@ -916,7 +907,6 @@ describe('kv', () => {
     ]);
     expect(t.tagName).toBe('table');
     expect(t.className).toBe('kvtable');
-    // `.kvtable tr:first-child td { border-top: none }` 靠的就是这个层级
     expect((t.children as FakeEl[]).map((r) => r.tagName)).toEqual(['tr', 'tr']);
     const first = t.children[0] as FakeEl;
     expect((first.children as FakeEl[]).map((d) => [d.tagName, d.textContent])).toEqual([
@@ -1117,8 +1107,6 @@ describe('drawer', () => {
     d.dispose();
   });
 
-  // 第二参放宽成 `string | HTMLElement`：日志视图与图片预览都会先撞上这一处，
-  // 而它们彼此只差一个内容节点——放宽入参好过各自新增一个 viewer 原语。
   it('第二参给节点就原样放进 .modalbody（不再包一层 pre.mono）', async () => {
     const { ui, host } = await mkUi();
     const view = ui.log();
@@ -1147,10 +1135,7 @@ describe('drawer', () => {
 });
 
 // ---------------------------------------------------------------------------
-// busy —— 唯一关不掉的一层
 //
-// 它与 drawer 只差"能不能被用户关掉"，而那件事正是全部的意义：等重启期间按一下 Esc
-// 就把遮罩关了，用户会以为操作取消了，其实进程照样在重启。
 // ---------------------------------------------------------------------------
 
 describe('busy', () => {
@@ -1201,9 +1186,6 @@ describe('busy', () => {
 // ---------------------------------------------------------------------------
 // 生命周期：面板 unmount（signal abort）
 //
-// 这一组是这套原语最要紧的地方。浮层是唯一活得比"那一次渲染"更久的东西，
-// 也就唯一会在面板卸载后留下活物：赖着不走的抽屉，和——更要命的——永远不 resolve
-// 的 confirm，它会把扩展卡在 `await` 那一行，连带它自己的清理一起吊死。
 // ---------------------------------------------------------------------------
 
 describe('面板 unmount 的收尾', () => {
@@ -1260,7 +1242,6 @@ describe('面板 unmount 的收尾', () => {
 
   it('abort 撤掉 busy：面板都卸了还盖着一层，就是把控制台锁死了', async () => {
     const { ui, host, ac } = await mkUi();
-    // 用户关不掉它,所以"面板卸载时自动撤"是它唯一的退路
     ui.busy('重启中', '正在重启……');
     expect(host.children).toHaveLength(1);
 
@@ -1288,8 +1269,6 @@ describe('面板 unmount 的收尾', () => {
     vi.useFakeTimers();
     try {
       const { ui, host, ac } = await mkUi();
-      // 一个面板弹一百次 toast:每次都往 ctx.signal 上挂一条"abort 就关我"的话,
-      // 攒下来就是一百个闭包各钉住一个早已消失的节点。
       for (let i = 0; i < 100; i++) ui.toast('第 ' + i + ' 条');
       expect(getEventListeners(ac.signal, 'abort')).toHaveLength(1);
       vi.advanceTimersByTime(2100);
@@ -1307,9 +1286,6 @@ describe('面板 unmount 的收尾', () => {
 // ---------------------------------------------------------------------------
 // 尾部粘滞的判据 —— 纯函数
 //
-// 这一步是整个 log 里唯一容易算错的地方，而它又恰恰最难在 DOM 上验：迷你桩没有
-// 布局，真浏览器里那三个数还带小数。所以判据单独抽成函数直接钉边界，DOM 那层
-// 只验接线（"贴着底就追、翻上去就停"）。
 // ---------------------------------------------------------------------------
 
 describe('shouldStick', () => {
@@ -1318,7 +1294,7 @@ describe('shouldStick', () => {
     expect(LOG_STICK_PX).toBe(24);
     // scrollHeight 1000、可视 200 ⇒ 滚到最底时 scrollTop = 800
     expect(shouldStick(800, 1000, 200)).toBe(true);
-    // 差 1px：浏览器报的三个数带小数，滚到底时几乎从不严格相等——这一格必须仍算贴底
+    // scrollTop 可能含小数，容差内仍判为贴底。
     expect(shouldStick(799, 1000, 200)).toBe(true);
     expect(shouldStick(776, 1000, 200)).toBe(true);
   });
@@ -1497,9 +1473,6 @@ describe('log', () => {
 // ---------------------------------------------------------------------------
 // disable —— 局部禁用
 //
-// 与 busy 的分工是范围：busy 盖住整页（"这段时间别动"），disable 只灰掉这一撮控件。
-// 关键在恢复的是**各自原状**：一排控件里本来就有几颗是禁用的（上游没就绪、权限
-// 不足），一律置回 false 等于把它们悄悄解禁——用户点下去才发现后端根本不认。
 // ---------------------------------------------------------------------------
 
 describe('disable', () => {
@@ -1515,7 +1488,7 @@ describe('disable', () => {
     expect([save.disabled, name.disabled, restart.disabled]).toEqual([true, true, true]);
 
     off.dispose();
-    // 不是一律 false —— restart 该留在它原来的禁用态
+    // 恢复 restart 原来的禁用态。
     expect([save.disabled, name.disabled, restart.disabled]).toEqual([false, false, true]);
   });
 
@@ -1647,7 +1620,6 @@ describe('copyButton', () => {
     b.dispatchEvent({ type: 'click' });
     await flush();
 
-    // 静默失败最糟：用户以为复制成功了，粘出来的是上一次的剪贴板内容
     expect((host.children[0] as FakeEl).className).toBe('toast bad');
     const modal = host.children[1] as FakeEl;
     expect(modal.className).toBe('modal');
@@ -1692,7 +1664,6 @@ describe('copyButton', () => {
 // ---------------------------------------------------------------------------
 // progress —— 细占比条
 //
-// 与 chip 的分工：chip 印的是一个数（"事件 128"），progress 印的是这个数占多少。
 // ---------------------------------------------------------------------------
 
 describe('progress', () => {
