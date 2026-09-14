@@ -10,7 +10,7 @@ const zh = {
   activeInstanceLamp: '当前供应实例',
   instancesBadge: '实例',
   settingsPanel: '实例与模型',
-  settingsPanelDescription: '保存这个端点用哪个模型、报价与全局供应选择。',
+  settingsPanelDescription: "保存端点模型、价目及当前部署使用的端点。",
   saved: '参数已保存；下一次请求生效。',
   unknownGroup: '未知 Provider 参数组',
   groupOutOfScope: 'Provider 参数组只能修改所属实例',
@@ -29,9 +29,9 @@ const zh = {
   secretNameRequired: '先填写密钥环境变量名,再写入密钥值',
   secretValueInvalid: '密钥值不能为空或含空白',
   modelsUnsupported: '此模块不提供模型列表',
-  probeNoResponses: '该地址没有 Responses 端点(404):检查供应地址与端点路径,或该厂商只提供 chat/completions',
+  probeNoResponses: "请求返回 404；请检查供应地址、端点路径及服务支持的 API。",
   probeAuth: '鉴权失败:检查密钥变量名与密钥值',
-  probeUnreachable: '请求没有到达上游或流中途失败:检查网络、地址与代理',
+  probeUnreachable: "连接或响应流失败；请检查网络、供应地址与代理。",
 };
 const en: typeof zh = {
   connectionDescription: 'Requests bind at start; changes apply from the next request.',
@@ -42,7 +42,7 @@ const en: typeof zh = {
   activeInstanceLamp: 'Active provider instance',
   instancesBadge: 'Instances',
   settingsPanel: 'Instances and models',
-  settingsPanelDescription: 'Save the model this endpoint runs, pricing and the global provider selection.',
+  settingsPanelDescription: "Save the endpoint model, pricing and the active endpoint for this deployment.",
   saved: 'Parameters saved; they apply from the next request.',
   unknownGroup: 'Unknown provider parameter group',
   groupOutOfScope: 'A provider parameter group can only modify its own instance',
@@ -61,8 +61,8 @@ const en: typeof zh = {
   secretNameRequired: 'Set the secret environment variable name before writing a key value',
   secretValueInvalid: 'The key value cannot be empty or contain whitespace',
   modelsUnsupported: 'This module does not list models',
-  probeNoResponses: 'No Responses endpoint at this URL (404): check the provider URL and endpoint path, or the vendor only offers chat/completions',
+  probeNoResponses: "The request returned 404; check the provider URL, endpoint path and supported APIs.",
   probeAuth: 'Authentication failed: check the secret variable name and the key value',
-  probeUnreachable: 'The request did not reach the upstream or the stream failed midway: check network, URL and proxy',
+  probeUnreachable: "The connection or response stream failed; check the network, provider URL and proxy.",
 };
 export const text = (language: Language) => pick(language, { zh, en });

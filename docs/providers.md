@@ -14,12 +14,13 @@ Provider 适配模型服务的通信协议。仓库内建 `openai-responses-comp
 |---|---|
 | `kind` | provider 模块的 id，决定通信协议的实现 |
 | `baseUrl` | 模型服务的基础 URL |
-| `secret` | 密钥所在的环境变量名;值在端点目录的 `.env` 里 |
+| `secret` | 密钥名;优先读取进程环境,其次读取端点目录的 `.env` |
 | `spec` | 模型与生成参数：`model`、`thinking`、`reasoningEffort`、`temperature`、`maxTokens`、`contextWindow` |
 | `multimodal` | 是否接受图片 |
 | `serviceTier` / `pricing` / `options` | 服务档位、价目、模块自定义项 |
 
-`activeProvider` 每次调用现读,控制台上切换即刻生效。provider 模块不预设任何模型名;端点
+主 session 每次模型调用读取当前 `activeProvider`;fork 在创建时固定端点与模型配置。
+provider 模块不预设任何模型名;端点
 没有 `spec` 就不能被设为 active。代码里只有一条默认端点 `deepseek`(`deepseek-flash`),
 部署根 `providers/` 里有同名目录时以那份为准。
 
@@ -75,7 +76,7 @@ Provider 适配模型服务的通信协议。仓库内建 `openai-responses-comp
 
 ## 计价
 
-每次请求尝试按输入、输出、缓存命中与推理用量分别计费,币种默认 USD,写入
+每次请求尝试按价目中声明的计量项计费,包括输入、输出、缓存命中与推理用量等,币种默认 USD,写入
 `data/usage.jsonl`;控制台「用量」页与 `/api/usage` 聚合。模块自带价目,端点条目的 `pricing`
 可覆盖;缺计量的项记为未知而不是零。
 

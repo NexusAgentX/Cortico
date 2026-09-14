@@ -14,10 +14,9 @@ export interface ResponsesInputOptions {
 }
 
 /**
- * Reasoning items re-enter only as signed payloads: plaintext reasoning has no wire form
- * on this transport. A signature is replayed only to the instance, module, compatibility
- * domain and model that produced it. System and developer messages are hoisted into
- * `instructions`, which the standard schema keeps as a single string.
+ * Replay reasoning only when encrypted_content exists and the recorded instance, module,
+ * compatibility domain and model match this request. These are local eligibility checks.
+ * Plaintext reasoning is omitted. System and developer text is joined into instructions.
  */
 export function responsesInput(
   request: Request,

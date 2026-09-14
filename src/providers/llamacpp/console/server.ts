@@ -1,6 +1,6 @@
 /**
- * Data plane of the two llamacpp panels. `runtime` owns the build and the process, `models`
- * is a thin skin over llama-server's `/models*` endpoints; both act on one endpoint by name.
+ * Named-endpoint operations for the runtime and model panels.
+ * Runtime operations manage installation and the process; model operations call llama-server /models*.
  */
 import type { ConsolePageContribution } from '../../../web/shared/console-protocol.ts';
 import type { ProviderConsoleHost } from '../../console/types.ts';

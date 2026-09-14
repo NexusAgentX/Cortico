@@ -12,9 +12,8 @@ export interface ResponseAssembly {
 }
 
 /**
- * Native Responses events retain every Item and are validated before observers receive them.
- * `response.reasoning_text.*` (OpenAI, DeepSeek, xAI reasoning-content deltas) is the same
- * event as the schema's `response.reasoning.*`; the name is normalised before validation.
+ * Validate native Responses Items before notifying observers.
+ * Normalize response.reasoning_text.* to the schema name response.reasoning.* before validation.
  */
 export class NativeResponseAssembly implements ResponseAssembly {
   private readonly accumulator = new ResponseAccumulator();

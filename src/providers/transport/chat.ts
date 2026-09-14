@@ -16,22 +16,22 @@ export interface StreamFailureInfo {
   role?: string;
   /** 同一 (model, role) 上连续第几次在途生成失败(成功即清零)。 */
   streak: number;
-  /** 开流 → 失败的墙钟耗时(ms)。 */
+  /** Elapsed time from stream start to failure, in milliseconds. */
   elapsedMs: number;
   /** LLMError.status;0 = 流内失败,不是 HTTP 码。 */
   status: number;
   requestId: string | null;
-  /** 整条原始失败事件(诊断线索只此一处)。 */
+  /** 完整的上游失败事件，用于诊断。 */
   body: string;
   message: string;
   diagnose: ResponseClient['respond'];
 }
 
-/** 方言对一次在途生成失败的裁决。 */
+/** 传输适配器对流内失败的处理决定。 */
 export interface StreamFailureVerdict {
-  /** false = 本发不再重试,直接上抛。 */
+  /** false 表示停止重试并抛出本次错误。 */
   retry: boolean;
-  /** 附在断流日志末尾的一句方言实话;缺席则只印通用文案。 */
+  /** 可选的诊断说明，追加到通用断流日志。 */
   note?: string;
 }
 export abstract class OpenAIHttpClient extends BaseProvider {
@@ -81,14 +81,14 @@ export abstract class OpenAIHttpClient extends BaseProvider {
             throw error;
           }
         } });
-        this.log.warn('LLM在生成阶段被上游掐断:第 ' + streak + ' 次连败,开流后 ' + (info.elapsedMs / 1000).toFixed(1) + ' 秒' + (verdict.note ? ';' + verdict.note : ''), info);
+        this.log.warn('LLM 生成阶段中断：连续失败 ' + streak + ' 次，开流后 ' + (info.elapsedMs / 1000).toFixed(1) + ' 秒' + (verdict.note ? ';' + verdict.note : ''), info);
         return verdict.retry;
       },
     });
   }
   protected baseUrl: string;
   protected log: Logger;
-  /** chat 端点相对 baseUrl 的路径。方言可覆盖(走原生 /responses 的方言就改这里)。 */
+  /** 相对 baseUrl 的端点路径，可由适配器覆盖。 */
   protected chatPath = '/chat/completions';
   /** 同一 (model, role) 上的连续在途生成失败数;成功即清零。 */
   private inflightStreak = new Map<string, number>();
@@ -105,12 +105,7 @@ export abstract class OpenAIHttpClient extends BaseProvider {
     return `${model}::${role ?? ''}`;
   }
 
-  /**
-   * 在途生成失败(见 StreamFailureInfo)时问一次方言:这一发还值不值得重试。
-   *
-   * 默认放行——重试阶梯对瞬时抖动是对的,不因为一家 provider 有病就改所有端点的
-   * 行为。只有见过确定性掐断的方言才该关掉它。
-   */
+  /** 流内失败后调用；适配器可禁用该次重试，默认允许。 */
   protected async judgeStreamFailure(_info: StreamFailureInfo): Promise<StreamFailureVerdict> {
     return { retry: true };
   }
@@ -126,7 +121,7 @@ export abstract class OpenAIHttpClient extends BaseProvider {
     if (this.inflightFailAt.length < INFLIGHT_ALERT_MIN) return;
     this.log.warn(
       `[告警] ${INFLIGHT_ALERT_WINDOW_MS / 1000} 秒内第 ${this.inflightFailAt.length} 次在途生成失败` +
-        `——成片的断流不会自愈,去看上游`,
+        `；请检查请求错误与上游状态`,
       {
         model: info.model,
         ...(info.role ? { role: info.role } : {}),
@@ -147,10 +142,7 @@ export abstract class OpenAIHttpClient extends BaseProvider {
   /** 每次请求的 HTTP 头(含鉴权,若有)。可异步:OAuth 方言在这里等一次临期刷新。 */
   protected abstract headers(): Record<string, string> | Promise<Record<string, string>>;
 
-  /**
-   * 鉴权失败(401/403)时的补救钩子。返回 true 表示已刷新凭据、本次请求应重试一次;
-   * 默认无补救(返回 false → 直接抛)。仅 OAuth 方言覆盖。
-   */
+  /** 401/403 后调用，返回 true 时刷新后重试一次；默认返回 false。 */
   protected async onAuthError(): Promise<boolean> {
     return false;
   }

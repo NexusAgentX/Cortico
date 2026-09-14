@@ -5,12 +5,7 @@ import { isContextOverflow } from '../transport/errors.ts';
 import { ModelCatalog, ResponsesProvider } from './native.ts';
 import { text } from './strings.ts';
 
-/**
- * Responses endpoints that were reachable when this list was written; the console offers them
- * as candidates for the URL field and nothing else. No vendor facts are recorded here — model
- * catalogues and parameter support change faster than this file, and the endpoint answers both
- * questions itself (`GET /models`, and a real request).
- */
+/** Suggested base URLs for the console field; operators may enter other URLs. */
 const BASE_URLS: readonly string[] = [
   'https://api.openai.com/v1',
   'https://api.deepseek.com',
@@ -18,7 +13,7 @@ const BASE_URLS: readonly string[] = [
   'https://api.x.ai/v1',
 ];
 
-/** OpenAI's vocabulary, which the other endpoints either share or ignore. */
+/** Reasoning-effort choices used by the console. */
 const EFFORTS: readonly string[] = ['none', 'low', 'medium', 'high', 'xhigh'];
 
 export interface CompatOptions {

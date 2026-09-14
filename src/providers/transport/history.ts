@@ -37,12 +37,8 @@ export function mapTools(tools?: ToolSchema[]): Array<Record<string, unknown>> |
 }
 
 /**
- * 把消息渲染成 OpenAI 兼容线上形态:剥掉内部 blobs 字段;reasoning_content 按方言取舍——
- * compat 剥掉(llama.cpp 不认识该字段),`keepReasoning` 的方言保留非空的(空值按
- * Option 语义省略字段,让无推理消息的渲染字节与剥除版逐字相同)。
- * media.enabled() 为真时,带附件的消息升格成 `[text, image_url...]` content
- * 分片(data URL);读不到字节的句柄静默跳过——content 里本来就有每份附件的文本形态。
- * 各 chat 方言共用这套消息渲染。
+ * 渲染 Chat 请求消息，移除内部 blobs 字段。仅在 keepReasoning 时保留非空 reasoning_content。
+ * 启用媒体时将可读取附件转换为 data URL 内容块；无法读取的附件跳过，原文本引用仍保留。
  */
 export function renderMessagesWithMedia(
   messages: NativeChatMessage[],

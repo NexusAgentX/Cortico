@@ -1,7 +1,4 @@
-/**
- * 运行时安装:从一台本地 HTTP server 下载手工构造的 zip 与 tar.gz,解压到版本目录,写标记;
- * 失败留 error 态且不留半成品。不碰网络。
- */
+/** 从本地 HTTP 服务下载测试 zip/tar.gz，检查解压、标记与失败清理；不访问外部网络。 */
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer } from 'node:http';
 import { AddressInfo } from 'node:net';
@@ -83,7 +80,7 @@ describe('RuntimeStore', () => {
     expect(RUNTIME_MARKER).toBe('cortico-runtime.json');
   });
 
-  it('几 MB 的压缩包整份落地,进度按字节报到总量;高压缩比的大条目也不会卡在收尾', async () => {
+  it("大压缩包和高压缩比条目完成安装，进度字节数达到总量", async () => {
     const payload = randomBytes(3 * 1024 * 1024);
     const zeros = new Uint8Array(24 * 1024 * 1024);
     const zip = Buffer.from(zipSync({ 'blob.bin': new Uint8Array(payload), 'zeros.bin': zeros }, { level: 6 }));

@@ -23,7 +23,7 @@ function fixture() {
   };
   cfg.activeProvider = 'cloud';
   const file = join(temp.dir, crypto.randomUUID() + '.json');
-  // 迁移之后部署 config.json 只剩"这份部署用哪个端点";端点表在全局那份下面。
+  // activeProvider 保存在当前部署；端点表位于共享目录。
   writeFileSync(file, JSON.stringify({ activeProvider: 'cloud', untouched: { watermark: 55 } }, null, 2));
   const providersDir = join(temp.dir, crypto.randomUUID());
   const registry = new ProviderRegistry(() => cfg.providers, {
@@ -81,7 +81,7 @@ describe('Provider 配置事务', () => {
     expect(() => bad.activate('local')).toThrow();
     expect(cfg.activeProvider).toBe('cloud');
     const settings = new ProviderSettings(cfg, registry, file, providersDir);
-    // cloud 从来没选过模型:模型整组归 provider,框架没有人格 baseline 可以替它兜底
+    // 未选择模型的端点不能启用。
     expect(() => settings.activate('cloud')).toThrow('模型档');
     expect(cfg.activeProvider).toBe('cloud');
     settings.save('local', cfg.providers.local);
@@ -155,7 +155,7 @@ describe('Provider 配置事务', () => {
       }),
     ).toThrow('非负');
   });
-  it('端点表面板认领内核内置实现:每个模块只出数据面,界面不归它', () => {
+  it("端点表使用控制台内建面板，模块提供操作接口", () => {
     const { settings } = fixture();
     for (const source of settings.sources()) {
       const panel = source.contribute('zh').panels!.find((p) => p.id === 'settings')!;
@@ -164,7 +164,7 @@ describe('Provider 配置事务', () => {
   });
   it('条目改动重建客户端,但 host.resource 持有的控制器与兼容域跨重建保留', () => {
     const { cfg } = fixture();
-    // 授权管理器这类长寿对象归 `host.resource`:端点条目一改,客户端重建,它不跟着重来
+    // host.resource 保存的对象跨客户端重建保留。
     const probe: ProviderModule = {
       id: 'probe',
       title: 'Probe',
@@ -198,7 +198,7 @@ describe('Provider 数据面:建、删、复制、密钥、模型列表、探测
     const { cfg, settings, endpoint } = fixture();
     cfg.providers.ghost = { kind: 'deleted-module', baseUrl: 'https://ghost.test' };
     await invoke(settings, 'create', { name: 'router', baseUrl: 'https://openrouter.ai/api/v1' });
-    // 地址之外什么都不带:密钥名、options 全由操作者自己填
+    // 仅提供地址，其余连接参数由操作者配置。
     expect(cfg.providers.router).toEqual({
       kind: 'openai-responses-compat', baseUrl: 'https://openrouter.ai/api/v1', options: {}, pricing: expect.anything(),
     });
@@ -257,7 +257,7 @@ describe('Provider 数据面:建、删、复制、密钥、模型列表、探测
     }
     await expect(invoke(settings, 'setSecret', { name: 'local', value: 'x' })).rejects.toThrow('变量名');
   });
-  it('models 走实例的目录;probe 用 diagnostic 一发报状态、耗时、用量与报价,404 给出 Responses 缺席的提示', async () => {
+  it("模型列表来自实例；probe 返回状态、耗时、用量和报价，404 提示检查地址与路径", async () => {
     const { cfg, settings } = fixture();
     cfg.providers.cloud.spec = { model: 'deepseek-flash', thinking: true, reasoningEffort: 'low', maxTokens: 4096 };
     cfg.providers.cloud.pricing = [{ models: ['*'], currency: 'USD', basis: 'marginal', source: 'console', rules: [{ meter: 'input', perMillion: 1 }, { meter: 'output', perMillion: 2 }] }];
@@ -281,7 +281,7 @@ describe('Provider 数据面:建、删、复制、密钥、模型列表、探测
     status = 404;
     const missing = (await invoke(settings, 'probe', { name: 'cloud' })) as Record<string, unknown>;
     expect(missing).toMatchObject({ ok: false, status: 404 });
-    expect(String(missing.hint)).toContain('Responses');
+    expect(String(missing.hint)).toContain('端点路径');
     expect(bodies).toHaveLength(2);
     await expect(invoke(settings, 'probe', { name: 'local' })).resolves.toMatchObject({ ok: false });
   });

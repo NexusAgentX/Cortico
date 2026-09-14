@@ -3,7 +3,7 @@ import { pick, type Language } from '../../core/language.ts';
 /** Server side: ConfigGroup titles, validation errors, runtime and server state details. */
 const zh = {
   release: 'llama.cpp 版本(release tag)',
-  releaseDescription: '上游 GitHub release 的 tag,如 b10930。改了要重新下载。',
+  releaseDescription: "上游 release tag，如 b10930；对应构建未安装时需下载。",
   backend: '后端',
   backendDescription: '按本机平台给出的官方构建;CUDA 版自动搭配上游的 cudart 包。',
   runtimeDir: '自备运行时目录',
@@ -36,24 +36,24 @@ const zh = {
   instanceNameRequired: '需要端点名',
   modelIdRequired: '需要模型 id',
   bodyRequired: '需要请求体',
-  serverUnreachable: 'llama-server 不可达,先启动它',
+  serverUnreachable: "llama-server 不可达；请检查端点地址与服务状态。",
   externalServer: '端点已有服务在跑(外部启动),不接管',
   starting: 'llama-server 启动中',
   spawnFailed: (message: string) => `进程启动失败: ${message}`,
   spawnBlocked: (exe: string) =>
-    `Windows 应用控制策略拦下了 ${exe}(智能应用控制对未签名二进制的默认处置)。` +
-    '去「Windows 安全中心 → 应用和浏览器控制 → 智能应用控制」关掉,或填一份自己签过名的自备运行时目录。',
+    `Windows 启动 ${exe} 失败（UNKNOWN）。` +
+    '启动失败时可在 Windows 安全中心核对拦截记录；若确认被拦截，请使用符合信任要求的运行时。',
   exited: (code: number | null, tail: string) => `进程退出 code=${code};stderr 尾部: ${tail}`,
   badBaseUrl: (baseUrl: string) => `baseUrl 无法解析出 host/port: ${baseUrl}`,
   missingBinary: (exe: string) => `运行时目录里没有 ${exe}`,
-  healthTimeout: 'health 检查超时(端口不对,或进程起来了但没监听)',
+  healthTimeout: "/health 检查超时；请检查端点地址与服务状态。",
   downloadFailed: (file: string, message: string) => `下载 ${file} 失败: ${message}`,
   extractFailed: (file: string, message: string) => `解压 ${file} 失败: ${message}`,
   installBusy: '正在安装另一份运行时',
 };
 const en: typeof zh = {
   release: 'llama.cpp release tag',
-  releaseDescription: 'Tag of the upstream GitHub release, e.g. b10930. Changing it means a new download.',
+  releaseDescription: "Upstream release tag, such as b10930; download the selected build if it is not installed.",
   backend: 'Backend',
   backendDescription: 'Official builds for this platform; CUDA builds are paired with the upstream cudart package.',
   runtimeDir: 'Own runtime directory',
@@ -86,17 +86,17 @@ const en: typeof zh = {
   instanceNameRequired: 'An endpoint name is required',
   modelIdRequired: 'A model id is required',
   bodyRequired: 'A request body is required',
-  serverUnreachable: 'llama-server is unreachable; start it first',
+  serverUnreachable: "llama-server is unreachable; check the endpoint URL and server status.",
   externalServer: 'A server is already running at the endpoint (started externally); not taking over',
   starting: 'llama-server starting',
   spawnFailed: (message: string) => `Process failed to start: ${message}`,
   spawnBlocked: (exe: string) =>
-    `Windows application control blocked ${exe} (Smart App Control's default for unsigned binaries). ` +
-    'Turn it off under Windows Security → App & browser control → Smart App Control, or point the own runtime directory at a signed build.',
+    `Windows failed to start ${exe} (UNKNOWN). ` +
+    'If startup fails, check Windows Security for a block record. If a block is confirmed, use a runtime that meets the trust requirements.',
   exited: (code: number | null, tail: string) => `Process exited code=${code}; stderr tail: ${tail}`,
   badBaseUrl: (baseUrl: string) => `Cannot derive host/port from baseUrl: ${baseUrl}`,
   missingBinary: (exe: string) => `No ${exe} in the runtime directory`,
-  healthTimeout: 'Health check timed out (wrong port, or the process is up but not listening)',
+  healthTimeout: "The /health check timed out; check the endpoint URL and server status.",
   downloadFailed: (file: string, message: string) => `Download of ${file} failed: ${message}`,
   extractFailed: (file: string, message: string) => `Extraction of ${file} failed: ${message}`,
   installBusy: 'Another runtime is being installed',
@@ -108,7 +108,7 @@ export const text = (language: Language) => pick(language, { zh, en });
 const panelZh = {
   runtimeTitle: '运行时',
   modelsTitle: '模型',
-  managedOff: '这条端点连的是已经在跑的 llama-server;要让 Cortico 自己起一个,点「开启托管」。',
+  managedOff: "此端点由外部管理；开启托管后由 Cortico 管理 llama-server 进程。",
   enable: '开启托管',
   disable: '关闭托管',
   release: '版本',
@@ -123,8 +123,8 @@ const panelZh = {
   install: '下载并安装',
   reinstall: '重新安装',
   sacWarning:
-    '本机开着 Windows 智能应用控制(强制态)。llama.cpp 官方二进制未签名,下载完也起不来。' +
-    '去「Windows 安全中心 → 应用和浏览器控制 → 智能应用控制」关掉,或填一份自己签过名的自备运行时目录。',
+    "检测到 Windows 智能应用控制处于强制模式。" +
+    '启动失败时可在 Windows 安全中心核对拦截记录；若确认被拦截，请使用符合信任要求的运行时。',
   server: 'server',
   status: '状态',
   endpoint: '端点',
@@ -136,7 +136,7 @@ const panelZh = {
   stop: '停止',
   refresh: '刷新',
   phase: { stopped: '未运行', starting: '启动中', running: '运行中', error: '出错' } as Record<string, string>,
-  paramsNote: '版本、后端、上下文长度这些在「参数」页签里改。',
+  paramsNote: "",
   modelId: '模型 id',
   modelStatus: '状态',
   modality: '输入',
@@ -160,12 +160,12 @@ const panelZh = {
     failed: '加载失败',
     unknown: '在线',
   } as Record<string, string>,
-  serverDown: 'llama-server 不可达;先在「运行时」里启动它。',
+  serverDown: "llama-server 不可达；请检查端点地址与服务状态。",
 };
 const panelEn: typeof panelZh = {
   runtimeTitle: 'Runtime',
   modelsTitle: 'Models',
-  managedOff: 'This endpoint connects to a llama-server that is already running; click "Enable hosting" to let Cortico start one.',
+  managedOff: "This endpoint is externally managed. Enable hosting to manage its llama-server process through Cortico.",
   enable: 'Enable hosting',
   disable: 'Disable hosting',
   release: 'Release',
@@ -180,8 +180,8 @@ const panelEn: typeof panelZh = {
   install: 'Download and install',
   reinstall: 'Reinstall',
   sacWarning:
-    'Windows Smart App Control is enforced on this machine. The official llama.cpp binaries are unsigned and will not start after download. ' +
-    'Turn it off under Windows Security → App & browser control → Smart App Control, or point the own runtime directory at a signed build.',
+    "Windows Smart App Control is in enforced mode. " +
+    'If startup fails, check Windows Security for a block record. If a block is confirmed, use a runtime that meets the trust requirements.',
   server: 'server',
   status: 'Status',
   endpoint: 'Endpoint',
@@ -193,7 +193,7 @@ const panelEn: typeof panelZh = {
   stop: 'Stop',
   refresh: 'Refresh',
   phase: { stopped: 'stopped', starting: 'starting', running: 'running', error: 'error' } as Record<string, string>,
-  paramsNote: 'Release, backend and context size are edited on the parameters tab.',
+  paramsNote: "",
   modelId: 'Model id',
   modelStatus: 'Status',
   modality: 'Input',
@@ -217,6 +217,6 @@ const panelEn: typeof panelZh = {
     failed: 'load failed',
     unknown: 'online',
   } as Record<string, string>,
-  serverDown: 'llama-server is unreachable; start it on the Runtime panel first.',
+  serverDown: "llama-server is unreachable; check the endpoint URL and server status.",
 };
 export const panel = { zh: panelZh, en: panelEn };

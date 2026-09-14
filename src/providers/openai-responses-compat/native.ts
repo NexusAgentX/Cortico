@@ -25,9 +25,9 @@ export interface ResponsesProviderOptions {
 }
 
 /**
- * `reasoning` is sent only when the request carries an effort; an empty object means the
- * endpoint decides. `store:false` plus the encrypted-content include is the stateless
- * pattern every listed vendor accepts; vendors without signatures ignore the include.
+ * Send reasoning only when an effort is supplied; otherwise leave it to the endpoint.
+ * Requests set store=false and request encrypted reasoning content for local stateless replay.
+ * Endpoint extraBody fields are merged last.
  */
 export function buildResponsesBody(
   request: Request,

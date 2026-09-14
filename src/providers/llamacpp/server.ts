@@ -89,8 +89,8 @@ export function launchEnv(runtimeDir: string, cacheDir: string, apiKey: string |
 }
 
 /**
- * Windows reports an application-control block as errno `UNKNOWN`; the plain message would
- * send nobody to the right setting.
+ * Windows UNKNOWN errors include the executable path and a conditional application-control check.
+ * The error code alone does not identify an application-control block.
  */
 function spawnFailDetail(error: unknown, exe: string): Detail {
   const e = error as NodeJS.ErrnoException;

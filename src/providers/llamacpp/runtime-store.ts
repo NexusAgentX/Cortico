@@ -1,9 +1,7 @@
 /**
- * Installed llama.cpp builds under `<runtimes root>/llama.cpp/<release>/<plan key>/`.
- *
- * An install is one directory: archives download into `<dir>.partial/`, unpack there, and the
- * directory is renamed into place once the marker is written. A crash leaves only a partial
- * directory, which the next install removes first.
+ * Install builds under <runtimes root>/llama.cpp/<release>/<plan key>/.
+ * Download and unpack into <dir>.partial, write the completion marker, then rename to the destination.
+ * A later installation removes any remaining partial directory before starting.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

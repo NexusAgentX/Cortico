@@ -8,11 +8,8 @@ function respond(client: ResponseClient, spec: ModelSpec, history: ChatMessage[]
   return client.respond(responseRequest(spec, context, tools), { context, nativeSpec: spec });
 }
 /**
- * Provider 路由:core 未注入 llm 时按 cfg.activeProvider 现读路由。
- *  - 全局单选;热改 activeProvider 下一次调用即生效
- *  - 两个端点各走各的地址、鉴权与原生参数
- *  - modelFacts.accepts 读活跃 provider 条目的 multimodal 手动开关
- *  - activeProvider 指向不存在的键 → 调用时抛清晰错误
+ * 未注入 LLM 时，Core 按当前部署的 activeProvider 选择端点。
+ * 验证热切换、各端点地址与鉴权、multimodal 配置和缺失端点错误。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -41,7 +38,7 @@ function buildHarness() {
     },
   };
   config.activeProvider = 'deepseek';
-  // 端点密钥只有一处来源:这个端点自己那格的 .env
+  // 本测试从端点 .env 读取密钥；进程环境优先级另有测试。
   mkdirSync(join(tmp.dir, 'providers', 'deepseek'), { recursive: true });
   writeFileSync(join(tmp.dir, 'providers', 'deepseek', '.env'), 'DEEPSEEK_API_KEY=sk-cloud\n');
   const loaded = makeLoaded({
@@ -109,7 +106,7 @@ describe('Core · LLM provider 路由', () => {
     expect(facts.accepts('audio/wav')).toBe(false); // 只认 image/*
   });
 
-  it('activeProvider 指向不存在的键:调用时抛清晰错误(不在构造期炸)', async () => {
+  it("activeProvider 不存在时在调用阶段抛错", async () => {
     const { core, config, tmp } = buildHarness();
     cleanup = tmp.cleanup;
     config.activeProvider = 'nope';
