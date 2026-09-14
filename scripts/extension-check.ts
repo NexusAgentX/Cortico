@@ -1,8 +1,6 @@
 /**
- * `pnpm check:extension <扩展目录>` —— 扩展作者发布前的自查。
- *
- * 走的是启动时那条装载线本身(同一份 manifest 解析、同一个入口解析、同一套形状校验),
- * 所以这里报通过,框架启动时就会加载它。每条不合格都指出改哪里;有一条不合格即退出码 1。
+ * 检查扩展的 manifest、入口导入、导出结构、控制台产物与构造契约。
+ * 有检查失败时退出码为 1;不启动扩展或验证外部服务。
  */
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -41,10 +39,10 @@ const fail = (msg: string): void => { failures += 1; console.log(`  ✗ ${msg}`)
 function verdict(): void {
   console.log('');
   if (failures === 0) {
-    console.log('通过:这个包可以装进 extensions/。');
+    console.log('扩展检查通过。');
     return;
   }
-  console.log(`${failures} 项不合格,发布前先改掉(每条自己说了是拦下整个包,还是只缺那一块)。`);
+  console.log(`${failures} 项检查失败。`);
   process.exitCode = 1;
 }
 
@@ -105,7 +103,7 @@ async function main(): Promise<void> {
     : manifest.kind === 'provider' ? isProviderModule(exported)
     : isBotDefinition(exported);
   if (!shaped) {
-    fail(`${extensionShapeMismatch(manifest.kind)}整个包都不会装上。`);
+    fail(`${extensionShapeMismatch(manifest.kind)}扩展无法加载。`);
     verdict();
     return;
   }
@@ -116,9 +114,9 @@ async function main(): Promise<void> {
     console.log('    bot id 不得与仓内 bots/ 下任一目录同名;deployment.json 的 bot 字段填包名即启用。');
     console.log('    包目录只读:promptDocs 里没给 deploymentPath 的模板在控制台里显示但不能保存。');
   } else {
-    console.log(`    ${noun} id 在整份部署里唯一,与内建的或别的扩展撞名就不会装上。`);
+    console.log(`    ${noun} id 在整份部署里唯一,与内建的或别的扩展同名时无法加载。`);
     const builtin = manifest.kind === 'world' ? BUILTIN_WORLDS.map((w) => w.id) : providerModules.map((p) => p.id);
-    if (builtin.includes(id)) fail(`${noun} id「${id}」与内建的撞名,装载器不装它。`);
+    if (builtin.includes(id)) fail(`${noun} id「${id}」与内建的撞名,装载器拒绝加载。`);
   }
 
   if (manifest.consoleClient === undefined) {
@@ -138,9 +136,9 @@ async function main(): Promise<void> {
     }
   }
 
-  // 干装载:装载器在 import 之后、start() 之前会做的事,在假部署里做一遍。
+  // 使用临时部署检查构造与声明,不调用 start()。
   console.log('');
-  console.log('干装载(假部署、默认配置、无密钥,不起进程):');
+  console.log('构造检查(临时部署、默认配置、无密钥,不调用 start):');
   const scratchDir = mkdtempSync(join(tmpdir(), 'cortico-check-'));
   try {
     const dryOpts = {
@@ -152,7 +150,7 @@ async function main(): Promise<void> {
     let report: DryMountReport;
     if (manifest.kind === 'world') {
       const { taken, skipped } = collectToolNames(BUILTIN_WORLDS, dryOpts);
-      for (const s of skipped) warn(`内建 World 在假环境下构造失败,撞名对照缺它: ${s}`);
+      for (const s of skipped) warn(`内建 World 构造失败,无法将其工具纳入重名检查: ${s}`);
       report = await dryMountWorld(exported as WorldDefinition<WorldSection>, { ...dryOpts, takenToolNames: taken });
     } else if (manifest.kind === 'provider') {
       report = dryMountProvider(exported as ProviderModule, dryOpts);

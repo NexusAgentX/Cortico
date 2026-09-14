@@ -1,13 +1,9 @@
 /**
- * 扩展的干装载:不起进程、不连平台,把装载器在 import 之后、`start()` 之前会做的事在假环境里
- * 做一遍——World 按默认配置 `create()`,跑 `tools()` / `envPromptVars()` / `console()`,对照保留名与
- * 已占用的工具名;provider 按假端点条目 `create()`;bot 按假部署 `build()`。`pnpm check:extension`
- * 在形状校验之后调它,扩展作者不必装进真实实例就能看到装配层会拒绝什么。
- *
- * 判定口径与装配层一致:装配层对每个定义都调 `create()`(不管启没启用),所以 World 在默认配置、
- * 没有密钥的条件下构造失败就是失败;provider 实例只在端点被绑定时才建,假条目下构造失败只算警告。
- *
- * 假环境全部落在 `scratchDir` 下,调用方负责建与删。
+ * 在临时部署中检查扩展构造与声明接口，不调用 start()。
+ * World 使用默认配置、无密钥，检查 create、tools、envPromptVars、console 与工具名冲突；
+ * provider 使用测试端点 create，bot 使用测试部署 build。
+ * World 构造失败为错误；provider 仅在绑定端点时构造，测试条目不完整导致的失败记为警告。
+ * 临时文件位于 scratchDir，调用方负责创建与清理。
  */
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -77,8 +73,8 @@ export function fakeWorldContext<S extends WorldSection>(def: WorldDefinition<S>
 }
 
 /**
- * 一组定义在假环境下各自报的工具名,给撞名对照用:名字 → 定义的 label。构造不了的定义跳过
- * 并列在 `skipped` 里(对照因此不完整,调用方要说出来)。
+ * 收集工具名称及所属定义，用于冲突检查；无法构造的定义列入 skipped，
+ * 调用方应说明冲突检查未覆盖这些定义。
  */
 export function collectToolNames(
   defs: readonly WorldDefinition<WorldSection>[],
@@ -127,7 +123,7 @@ export async function dryMountWorld(def: WorldDefinition<WorldSection>, opts: Wo
   try {
     world = def.create(fakeWorldContext(def, opts));
   } catch (error) {
-    failures.push(`create() 在默认配置、无密钥下抛错: ${message(error)}。装配层启动时对每个定义都调 create(),不管启没启用;构造失败这一格就废了。`);
+    failures.push(`create() 在默认配置、无密钥下抛错: ${message(error)}。装配层会构造所有可用定义，默认配置下也必须能完成构造。`);
     return report;
   }
   if (world.id !== def.id) {
@@ -162,7 +158,7 @@ export async function dryMountWorld(def: WorldDefinition<WorldSection>, opts: Wo
     if (!isPlainObject(tool.parameters)) failures.push(`工具「${name}」的 parameters 不是对象:它是发给模型的 JSON Schema。`);
     if (typeof tool.handler !== 'function') failures.push(`工具「${name}」没有 handler。`);
     if (!Array.isArray(tool.tags)) failures.push(`工具「${name}」没有 tags 数组:空数组表示明确不分类,缺席不行。`);
-    else if (tool.tags.length === 0) warnings.push(`工具「${name}」的 tags 为空:只进主 session,挂载时会记一条 warn。`);
+    else if (tool.tags.length === 0) warnings.push(`工具「${name}」的 tags 为空，按标签选择工具时不会匹配；挂载时记录警告。`);
     if (!TOOL_PREFIX.test(name)) warnings.push(`工具名「${name}」没有前缀:惯例是 <短名>_<动词短语>,工具名在整个 bot 里唯一。`);
   }
   if (!failures.length) ok.push(tools.length ? `tools(): ${tools.map((t) => t.name).join(', ')}` : 'tools(): 没有工具。');
@@ -187,7 +183,7 @@ export async function dryMountWorld(def: WorldDefinition<WorldSection>, opts: Wo
         panelIds.add(panel.id);
       }
       if (panels.length && !opts.hasConsoleClient) {
-        warnings.push(`console() 声明了 ${panels.length} 个面板,manifest 没有 cortico.consoleClient:控制台画不出它们。`);
+        warnings.push(`console() 声明了 ${panels.length} 个面板，未声明 cortico.consoleClient；使用自定义面板时需提供浏览器产物。`);
       }
       if ((decl.lamps?.length ?? 0) > MODULE_LAMP_MAX) {
         warnings.push(`console().lamps 有 ${decl.lamps?.length} 颗,控制台最多画 ${MODULE_LAMP_MAX} 颗。`);
@@ -286,7 +282,7 @@ export function dryMountProvider(mod: ProviderModule, opts: ProviderDryMountOpti
   if (mod.localize) {
     try {
       mod.localize(language);
-      ok.push('localize() 能跑。');
+      ok.push("localize() 调用成功。");
     } catch (error) {
       failures.push(`localize() 抛错: ${message(error)}`);
     }
@@ -297,7 +293,7 @@ export function dryMountProvider(mod: ProviderModule, opts: ProviderDryMountOpti
       const contribution = mod.console({
         language,
         entries: () => [],
-        instance: () => { throw new Error('干装载没有端点实例'); },
+        instance: () => { throw new Error("构造检查不提供实际端点实例"); },
         save: () => {},
       });
       const panels = contribution.panels ?? [];
@@ -305,7 +301,7 @@ export function dryMountProvider(mod: ProviderModule, opts: ProviderDryMountOpti
         if (!PANEL_ID.test(panel.id)) failures.push(`面板 id「${panel.id}」不合形状:只用 [a-z0-9-]。`);
       }
       if (panels.length && !opts.hasConsoleClient) {
-        warnings.push(`console() 声明了 ${panels.length} 个面板,manifest 没有 cortico.consoleClient:控制台画不出它们。`);
+        warnings.push(`console() 声明了 ${panels.length} 个面板，未声明 cortico.consoleClient；使用自定义面板时需提供浏览器产物。`);
       }
       ok.push(`console(): ${panels.length} 个面板。`);
     } catch (error) {
@@ -331,7 +327,7 @@ export function dryMountBot(def: BotDefinition<CoreConfig>, opts: BotDryMountOpt
     return report;
   }
   if (!isPlainObject(config)) {
-    failures.push('defaults() 没有返回对象:装配时的四层合并从它开始。');
+    failures.push("defaults() 必须返回配置对象。");
     return report;
   }
   (config as { worlds?: unknown }).worlds ??= {};
@@ -358,7 +354,7 @@ export function dryMountBot(def: BotDefinition<CoreConfig>, opts: BotDryMountOpt
   try {
     parts = def.build(loaded, []);
   } catch (error) {
-    failures.push(`build() 在假部署(默认配置、空 Memory、无密钥)下抛错: ${message(error)}。createBot 起步就调它。`);
+    failures.push(`build() 在假部署(默认配置、空 Memory、无密钥)下抛错: ${message(error)}。build() 必须能在该配置下完成构造。`);
     return report;
   }
   const persona = parts?.persona as unknown;
@@ -382,7 +378,7 @@ export function dryMountBot(def: BotDefinition<CoreConfig>, opts: BotDryMountOpt
     if (ids.has(world.id)) failures.push(`预建 World id 重复: ${world.id}。`);
     ids.add(world.id);
   }
-  if (prebuilt.length) ok.push(`预建 World: ${[...ids].join(', ')}(永远挂载,控制台只能停起)。`);
+  if (prebuilt.length) ok.push(`预建 World: ${[...ids].join(', ')}（预建实例重启时复用原对象）。`);
 
   for (const group of parts.console?.configGroups ?? []) {
     if (group.owner !== 'persona') warnings.push(`配置组「${group.id}」的 owner 是「${group.owner}」,Persona 的配置组 owner 应为 persona。`);

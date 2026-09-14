@@ -1,10 +1,4 @@
-/**
- * 最小完整的 World:一条生命周期事件、一个工具、一段环境提示词、一个旋钮。
- *
- * 边界照 docs/worlds.md:事件与回执只陈述系统能确认的事实;World 这一侧的状态变化(这里是
- * 挂载本身)投事件告知 bot;工具的使用时机写在环境提示词里,description 只放工具自己的定义;
- * 不碰 Memory,不绑 Persona 的工具。
- */
+/** World 示例：挂载事件、echo 工具与环境模板。状态和回执仅描述 World 可确认的事实。 */
 import { fileURLToPath } from 'node:url';
 import type { ToolDef, World, WorldConsoleDecl, WorldHost } from 'cortico/core/types.ts';
 import { nowIso } from 'cortico/core/util.ts';
@@ -48,7 +42,7 @@ export class ExampleWorld implements World {
     };
   }
 
-  /** 挂载是 World 这一侧的状态变化,投一条事件告知 bot;`origin: 'internal'` = World 报自己的机制。 */
+  /** 挂载时投递状态事件；origin: internal 表示 World 的内部机制事件。 */
   async start(host: WorldHost): Promise<void> {
     await host.pushEvent({
       type: 'example.started',

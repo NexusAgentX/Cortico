@@ -57,12 +57,12 @@ export default { id: 'discord', label: 'Discord', defaults: () => ({ ... }), cre
 开发期在包的 `tsconfig.json` 里写 `"paths": { "cortico/*": ["../BOT/src/*"] }`,vitest 里加同样
 的 alias。`"type": "module"` 是硬要求。
 
-控制台面板可选。有则 `src/console/client.ts` 默认导出 `{ panels: { <id>: { mount(ctx) } } }`,
+控制台面板可选。自定义面板的 `src/console/client.ts` 默认导出 `{ panels: { <id>: { mount(ctx) } } }`,
 用 esbuild 打成 `dist/console.js`(+ `.css`),路径写进 manifest;浏览器侧对 `cortico/*` 只能
 `import type`。面板契约在 `src/web/shared/client-panel.ts`。
 
-配置段归包:`worlds.<id>` 的形状由 `defaults()` 定,bot 侧只在 `declares` 里写 id;
-部署 `config.json` 的同名段压过默认值。
+配置段归 World 包:`worlds.<id>` 的形状由 `defaults()` 定。bot 通过 `declares` 声明默认启用的 World,
+也可提供 World 配置覆盖;部署 `config.json` 的同名段优先于包默认值。
 
 ## 写一个 provider 扩展
 

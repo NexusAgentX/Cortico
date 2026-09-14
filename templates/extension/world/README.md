@@ -2,9 +2,8 @@
 
 Owner: `src/definition.ts`
 
-最小完整的 World:挂载时投一条 `example.started` 事件,提供 `example_echo` 工具,一段环境提示词,
-一个热改的旋钮 `worlds.example.greeting`。它验证的是接线:事件进时间线、工具可调用、旋钮在控制台
-可改且回执随之变。
+挂载时投递 `example.started` 事件，提供 `example_echo` 工具和环境提示词。
+配置项 `worlds.example.greeting` 可在控制台修改并立即生效。测试覆盖事件投递、工具调用和配置修改后的回执。
 
 | 文件 | 内容 |
 |---|---|
