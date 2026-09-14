@@ -1,10 +1,6 @@
 /**
- * 容器账本:按方块坐标记住上次看见的内容。
- *
- * 不是地标。箱子族服务 stow/take/peek 选箱和快照「近处」那一行;炉子族多记三个
- * 槽位与「按估计什么时候烧完」,给到期事件和收货用;自备的工作台/熔炉也入账,
- * 几何族试算据此点名「这片罩住了你放的工作台」。没开过就是不知道,走远了不把
- * 全世界的箱子塞进上下文。
+ * 按维度与坐标保存容器上次读取的内容，供容器选择、快照和蓝图材料统计使用。
+ * 炉子另外记录槽位与预计完成时间；工作站记录放置时刻。
  */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -18,17 +14,14 @@ export const CHEST_BLOCKS = ['chest', 'trapped_chest', 'barrel', 'ender_chest'] 
 
 const CHEST_KINDS = new Set<string>(CHEST_BLOCKS);
 
-/**
- * 炉子三槽位的上次读数 + 按每件耗时估计的烧完时刻。
- * 服务端不同步没开窗的炉子槽位,这份永远是「上次看见」,措辞必须按估计说。
- */
+/** 炉子槽位与预计完成时间的上次读数；未开窗时不持续同步。 */
 interface FurnaceState {
   input: ItemStack | null;
   fuel: ItemStack | null;
   output: ItemStack | null;
   /** 下料(或最近一次读到槽位)的时刻 */
   loadedAt: number;
-  /** 按每件耗时估计的烧完时刻;null = 输入槽空着,没在烧 */
+  /** 预计完成时间；null 表示未记录预计时间。 */
   expectedDoneAt: number | null;
   /** 到期事件已经发过,不重复发 */
   notified?: boolean;
@@ -50,10 +43,7 @@ export interface ChestRecord {
   furnace?: FurnaceState;
 }
 
-/**
- * 一条账目自报的方块名。开箱记下的那份不带 `name`(旧档案同样不带),一律按 `chest`
- * 兜底 —— 这条兜底口径只此一处,读它的地方(账本自己、回执、试算点名)不再各写一遍。
- */
+/** 缺少 name 的记录按 chest 处理。 */
 export function chestBlockName(rec: ChestRecord): string {
   return rec.name ?? 'chest';
 }
@@ -63,16 +53,13 @@ export function matchItemName(query: string, name: string): boolean {
   return name === query || name.endsWith(`_${query}`);
 }
 
-/**
- * registry 的名字面。判据只问 itemsByName / blocksByName 有没有这个 key;
- * 两张表都可缺 —— 拿不到表时判据答不出「这是不是真 id」,退回后缀口径而不是装作知道。
- */
+/** 物品和方块名字的注册表接口；缺失时回退到后缀匹配。 */
 export interface NameRegistry {
   itemsByName?: Record<string, unknown>;
   blocksByName?: Record<string, unknown>;
 }
 
-/** `name` 是不是 registry 里的真实物品/方块 id */
+/** 名字是否存在于当前注册表。 */
 export function isRealId(reg: NameRegistry | null | undefined, name: string): boolean {
   return reg != null
     && (reg.itemsByName?.[name] !== undefined || reg.blocksByName?.[name] !== undefined);
@@ -124,7 +111,7 @@ export class ChestBook {
     usedSlots: number,
     slots: number,
   ): void {
-    // 重开箱子只刷新内容,别把「这是我放的」那份来历冲掉
+    /** 刷新内容时保留原 placedAt。 */
     const prev = this.map.get(chestKey(dimension, p));
     const rec: ChestRecord = {
       x: p.x, y: p.y, z: p.z, dimension, items, usedSlots, slots,
@@ -135,10 +122,7 @@ export class ChestBook {
     this.save();
   }
 
-  /**
-   * 工作站入账(自备的工作台/熔炉,或右键认出来的容器方块名)。
-   * 只登来历与名字,不动已记的内容;placedAt 给了才写(= 这一座是我们自己放的)。
-   */
+  /** 更新方块名及可选的放置时间，保留原内容记录。 */
   rememberStation(
     dimension: string,
     p: { x: number; y: number; z: number },
@@ -159,10 +143,7 @@ export class ChestBook {
     this.save();
   }
 
-  /**
-   * 炉子的三槽位读数入账。`expectedDoneAt` 由调用方按「每件几秒 × 件数」算好传进来
-   * (账本不持有时钟);null = 输入槽空着。items 同步成非空槽的清单,快照那行照读。
-   */
+  /** expectedDoneAt 由调用方计算；槽位读数同步到 items。 */
   rememberFurnace(
     dimension: string,
     p: { x: number; y: number; z: number },
@@ -184,7 +165,6 @@ export class ChestBook {
     this.save();
   }
 
-  /** 到点没报过的炉子(expectedDoneAt ≤ now 且没发过到期事件) */
   due(now: number): ChestRecord[] {
     const out: ChestRecord[] = [];
     for (const rec of this.map.values()) {
@@ -194,7 +174,6 @@ export class ChestBook {
     return out;
   }
 
-  /** 到期事件发过了:同一炉不重复报 */
   markNotified(dimension: string, p: { x: number; y: number; z: number }): void {
     const rec = this.map.get(chestKey(dimension, p));
     if (!rec?.furnace || rec.furnace.notified) return;
@@ -202,7 +181,6 @@ export class ChestBook {
     this.save();
   }
 
-  /** 记着的东西还有哪些槽里有料的炉子(preempt 回执点名用) */
   loadedFurnaces(dimension: string): ChestRecord[] {
     const out: ChestRecord[] = [];
     for (const rec of this.map.values()) {
@@ -226,14 +204,12 @@ export class ChestBook {
     return out;
   }
 
-  /** 方块被挖掉了:这一条从账上划掉。没记过就什么都不做(也不写盘) */
   forget(dimension: string, p: { x: number; y: number; z: number }): boolean {
     const removed = this.map.delete(chestKey(dimension, p));
     if (removed) this.save();
     return removed;
   }
 
-  /** 落在这批格子里的账目(几何族试算点名工作站用) */
   inCells(dimension: string, cells: ReadonlyArray<{ x: number; y: number; z: number }>): ChestRecord[] {
     if (this.map.size === 0) return [];
     const keys = new Set(cells.map((c) => chestKey(dimension, c)));
@@ -244,10 +220,7 @@ export class ChestBook {
     return out;
   }
 
-  /**
-   * 这个维度账面上的合计:物品名 → 数量(蓝图三分账单的「在箱」那一栏读它)。
-   * 口径与账本本身一致 —— 全是「上次看见」,不是此刻的真值,调用方措辞照此。
-   */
+  /** 汇总当前维度容器的上次观测数量，供蓝图材料统计使用。 */
   tally(dimension: string): Record<string, number> {
     const out: Record<string, number> = {};
     for (const rec of this.map.values()) {

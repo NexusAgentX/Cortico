@@ -1,12 +1,4 @@
-/**
- * Minecraft 引擎子进程入口(经 proxy.ts fork,不手动运行)。
- *
- * 真正的 MinecraftWorld 原样跑在这里(含 mineflayer、寻路、执行器、反射层、
- * world tick、视觉、以及它托管的 java/llama 进程管理器);WorldHost 的各能力
- * 换成面向主进程的通道:事件走 hreq/hrep 往返拿真实信封,日志/用量/自省信号
- * 走单向通知。x-hot 配置以快照 cast 进来,就地改同一个 cfg 对象——World 的
- * getter 现读语义因此原样成立。
- */
+/** Minecraft 引擎子进程入口。创建 World 并通过 IPC 接收配置和工具请求，向主进程转发事件及 Core 请求。 */
 import { createIpcLogger } from '../../core/ipc-logger.ts';
 import { withAnchors } from '../../core/log-context.ts';
 import { MinecraftWorld } from './world.ts';
@@ -37,11 +29,7 @@ const makeLogger = (area: string): Logger => createIpcLogger((note) => send({ t:
 const log = makeLogger('');
 
 const HOST_RPC_TIMEOUT_MS = 10_000;
-/**
- * 认知外包那一条的死线:她那边一次构思整体 15 分钟(Persona自己的上限),
- * 这里给 16 分钟 —— 比它长一点,好让"她那边判超时"的结论走正门回来,
- * 而不是被这条管子先掐断成一句"主进程没回执"。
- */
+/** 认知请求的 RPC 超时为 16 分钟。 */
 const COGNITION_RPC_TIMEOUT_MS = 16 * 60_000;
 let nextHostReqId = 1;
 const pendingHost = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
@@ -59,8 +47,7 @@ function hostRpc(req: HostRequest, timeoutMs = HOST_RPC_TIMEOUT_MS): Promise<unk
   });
 }
 
-// 同步成员无法跨进程边界。不可用成员必须显式失败;占位返回会违反调用方依赖的
-// 事实可用性契约。
+/** 同步 Core 接口不能经异步 IPC 调用，使用时抛错。 */
 const unavailable = (what: string): never => {
   throw new Error(`${what} 在子进程宿主里不可用`);
 };
@@ -73,11 +60,7 @@ const store: EventStoreReader = {
   grep: () => unavailable('store.grep'),
 };
 
-/**
- * 投递成文的渲染回调过不了进程边界:回调本体按 type 登记在这里,
- * 主进程代挂总线项,发车刻经 render-deferred 请求回来现拿正文。
- */
-// 渲染回调过进程边界只带文本:子进程侧的投递成文事件不带附件。
+/** 按事件类型保存延迟渲染回调。 */
 const textRender = (render: () => DeferredRendered | null | Promise<DeferredRendered | null>) =>
   async (): Promise<string | null> => {
     const out = await render();
@@ -85,13 +68,9 @@ const textRender = (render: () => DeferredRendered | null | Promise<DeferredRend
   };
 const deferredRenders = new Map<string, () => Promise<string | null>>();
 
-/** 主进程那边此刻有没有 `host.cognition`(随 caps 投递更新) */
 let cognitionOn = false;
 
-/**
- * 认知外包的过界句柄。**不抛错**:一切失败都以 `{error}` 回去,与主进程侧那个
- * 端口的契约逐字一致(World 两种都要能如实转述给她)。
- */
+/** 跨进程请求失败返回含 error 的结果。 */
 const cognitionHost: NonNullable<WorldHost['cognition']> = {
   request: async (req) => {
     try {
@@ -103,7 +82,6 @@ const cognitionHost: NonNullable<WorldHost['cognition']> = {
 };
 
 const host: WorldHost = {
-  // 附件随记录过界要走字节序列化,子进程侧不推带附件的事件。
   pushEvent: (e, opts) => hostRpc({ kind: 'push', evt: e as Parameters<typeof host.pushEvent>[0] & { blobs?: undefined }, opts }) as Promise<EventEnvelope>,
   pushDeferred: (e, opts) => {
     deferredRenders.set(e.type, textRender(e.render));
@@ -120,21 +98,15 @@ const host: WorldHost = {
     });
   },
   store,
-  // filter 函数过不了进程边界:主进程按"本 World 来源"筛,drain 语义只窄不宽
   drainPendingEvents: () => hostRpc({ kind: 'drain' }) as Promise<EventEnvelope[]>,
   modelFacts: {
     model: () => unavailable('modelFacts.model'),
     accepts: () => unavailable('modelFacts.accepts'),
     contextWindow: () => unavailable('modelFacts.contextWindow'),
   },
-  // 附件库在主进程;子进程侧没有要落库的字节。
   blob: () => unavailable('blob'),
   reportUsage: (usage, opts) => send({ t: 'note', note: { kind: 'usage', usage, opts } }),
-  /**
-   * 认知外包:主进程侧有句柄时这里才出现(契约要求 World 能用 `if (host.cognition)`
-   * 判断能力在不在)。可用性随 `caps` 投递现读 —— Persona那个全局开关是热的,
-   * 关掉之后这个属性下一次读就该是 undefined。
-   */
+  /** 能力随配置消息更新。 */
   get cognition(): WorldHost['cognition'] {
     return cognitionOn ? cognitionHost : undefined;
   },
@@ -146,7 +118,6 @@ let cfg: EngineInit['cfg'] | null = null;
 let statusTimer: ReturnType<typeof setInterval> | null = null;
 let lastStatus = '';
 
-/** x-hot 快照就地并进活对象:World 各处持有的 cfg 引用立即看到新值 */
 function applyCfg(target: Record<string, unknown>, next: Record<string, unknown>): void {
   for (const [k, v] of Object.entries(next)) {
     const cur = target[k];
@@ -218,7 +189,7 @@ async function handleRequest(req: EngineRequest): Promise<unknown> {
     return null;
   }
   if (req.kind === 'render-deferred') {
-    // 发车刻现拿:查 pushDeferred 时登记的回调;没登记(重启后旧挂单)→ null 蒸发
+    /** 渲染失败返回 null。 */
     const render = deferredRenders.get(req.type);
     return render ? await render() : null;
   }
@@ -230,7 +201,6 @@ async function handleRequest(req: EngineRequest): Promise<unknown> {
       role: req.role,
       log,
       ...(req.callId ? { callId: req.callId } : {}),
-      // 主进程认好的轮号原样落到 ctx.round 上(见 round.ts)
       ...(req.round !== null ? { round: req.round } : {}),
     }));
   }
@@ -274,7 +244,7 @@ process.on('message', (msg: MainToChild) => {
   }
 });
 
-// 父进程没了就跟着退,不留孤儿(mineflayer 连接与托管的 java/llama 进程一并收干净)
+/** 父进程关闭时停止 World 及其管理的进程。 */
 process.on('disconnect', () => {
   const m = mod;
   if (!m) {
@@ -283,20 +253,17 @@ process.on('disconnect', () => {
   void m.stop().finally(() => process.exit(0));
 });
 
-// 子进程是 MC 服务器和观察者客户端的父进程,它一死两者陪葬。库里漏出来的 Promise 拒绝
-// (mineflayer 的 async 事件监听器就会漏)记一条日志即可,不值得赔上整局游戏。
-// 注册了本监听器,Node 便不再把未处理拒绝提升成 uncaughtException。
+/** 未处理的 Promise 拒绝只记录日志。 */
 process.on('unhandledRejection', (reason) => {
   log.emit('error', '引擎子进程未处理的 Promise 拒绝(已忽略)', { event: 'unhandled-rejection', err: reason });
 });
 
-// 致命退出先调用 mod.stop()，让自管服务端保存世界并关闭子进程。
-// 八秒后强制退出，避免关闭流程无限等待。
+/** 致命异常先尝试停止 World；8 秒后强制退出。 */
 const FATAL_DRAIN_MS = 8_000;
 let dying = false;
 process.on('uncaughtException', (err) => {
   log.emit('error', '引擎子进程未捕获异常', { event: 'uncaught-exception', err });
-  if (dying) return; // 收尾途中又炸一次:让先来的那条把存档做完
+  if (dying) return;
   dying = true;
   const m = mod;
   mod = null;

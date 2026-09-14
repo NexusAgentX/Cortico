@@ -1,12 +1,6 @@
 /**
- * 锚点几何:build / excavate / probe 共用的形状语言。
- *
- * 坐标写绝对数字,或 "~"/"~±n" 相对写法。相对的原点是**这一步开始执行那一刻**
- * 我脚下那一格——`goto` 之后位置是确定的,"走到那儿再往下挖"这类链子照写。
- * 没有朝向相对写法(前/左/右):寻路一路在转朝向,下令那一刻无法预知执行时朝哪。
- *
- * 栅格化是纯函数:同一份 spec 永远铺出同一批格子,执行器与试算(dryRun)
- * 共用,不会各说各话。
+ * build、excavate 与 probe 共用的坐标解析和栅格化。
+ * 相对坐标“~”/“~±n”按调用方传入的 origin 解析。
  */
 
 export interface Cell { x: number; y: number; z: number }
@@ -16,13 +10,8 @@ export type AnchorCoord = number | string;
 export type Anchor = [AnchorCoord, AnchorCoord, AnchorCoord];
 
 /**
- * 方块的六个面,名字取原版:`up`/`down`/`north`/`south`/`west`/`east`。
- *
- * 原版放置就是"点已有方块的一个面",新方块落在那一面的外侧——协议里是
- * `use_item_on { position, face, cursor }`,mineflayer 是 `placeBlock(参照方块, 面向量)`。
- * 值是该面的**外法向量**:参照方块 + 向量 = 新方块那一格。
- * 声明顺序即协议里 Direction 的 0-5。
- * (把握:六个面名=确定;down/up/north/south/west/east 的枚举序=确定)
+ * 六面向量为外法向量：参照方块坐标加向量得到放置坐标。
+ * 声明顺序对应协议 Direction 的 0–5。
  */
 export type BlockFace = 'down' | 'up' | 'north' | 'south' | 'west' | 'east';
 
@@ -33,7 +22,6 @@ export const BLOCK_FACES: Record<BlockFace, readonly [number, number, number]> =
 
 export const FACE_NAMES = Object.keys(BLOCK_FACES) as BlockFace[];
 
-/** 贴着参照方块的某一面放,新方块落在哪一格 */
 export function cellOnFace(ref: Cell, face: BlockFace): Cell {
   const [dx, dy, dz] = BLOCK_FACES[face];
   return { x: ref.x + dx, y: ref.y + dy, z: ref.z + dz };
@@ -41,17 +29,9 @@ export function cellOnFace(ref: Cell, face: BlockFace): Cell {
 
 export type ShapeName = 'line' | 'rect' | 'triangle' | 'arc' | 'box';
 
-/**
- * 长方体的填充方式,词取原版 `/fill` 的模式名:`solid` 全填、`outline` 只动外壳而
- * 内部原样。原版另有一个 `hollow`——外壳 + **内部清成空气**,我们没有这个模式,所以
- * 这个词一个字都不出现:占着原版的词给另一套意思比自造一个词更糟,自造词只是让先验
- * 失效,假朋友会让先验主动给出反向答案。`edges`(12 条棱)原版 /fill 没有对应模式,
- * 是自造词,与 outline 配一对读得出是面还是棱。
- * (把握:原版 hollow 与 outline 的分别=确定;/fill 没有棱模式=确定)
- */
+/** solid 填充全部格；outline 仅外壳、保留内部；edges 仅十二条棱。 */
 export type BoxFill = 'solid' | 'outline' | 'edges';
 
-/** 每种形状要几个锚点 */
 export const ANCHOR_COUNT: Record<ShapeName, number> = { line: 2, rect: 2, triangle: 3, arc: 3, box: 2 };
 
 export const SHAPE_NAMES = Object.keys(ANCHOR_COUNT) as ShapeName[];
@@ -69,7 +49,7 @@ function resolveCoord(v: AnchorCoord, origin: number): number | null {
   return Number.isFinite(abs) && s !== '' ? Math.floor(abs) : null;
 }
 
-/** 锚点 → 格坐标;origin 是我脚下那一格。解析失败返回错误话术 */
+/** 按 origin 解析锚点；失败返回错误说明。 */
 export function resolveAnchors(
   anchors: readonly Anchor[],
   origin: Cell,
@@ -89,7 +69,6 @@ export function resolveAnchors(
 
 const key = (c: Cell): string => `${c.x},${c.y},${c.z}`;
 
-/** 去重收集器:铺格子的顺序即返回顺序 */
 class CellSet {
   private seen = new Set<string>();
   readonly cells: Cell[] = [];
@@ -195,7 +174,6 @@ export function rasterize(
       break;
     }
     case 'triangle': {
-      // 扇形填充:第 1 点向对边每一格连线
       const edge = new CellSet();
       lineInto(edge, anchors[1], anchors[2]);
       for (const p of edge.cells) lineInto(out, anchors[0], p);
@@ -213,7 +191,6 @@ export function rasterize(
       for (let x = lo.x; x <= hi.x; x++) {
         for (let y = lo.y; y <= hi.y; y++) {
           for (let z = lo.z; z <= hi.z; z++) {
-            // 处在边界的轴数:0=内部 1=面上 2=棱上 3=角上
             const onFace = (x === lo.x || x === hi.x ? 1 : 0)
               + (y === lo.y || y === hi.y ? 1 : 0)
               + (z === lo.z || z === hi.z ? 1 : 0);

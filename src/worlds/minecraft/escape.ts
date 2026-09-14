@@ -1,6 +1,6 @@
 /**
- * mc_escape 的纯逻辑:重生点解析、player.dat 读 Spawn*、传送指令与回执。
- * World 负责接线(清队列、发指令、等 forcedMove);这里不碰 mineflayer。
+ * mc_escape 的重生点解析、候选排序、传送指令和回执。
+ * World 负责清空队列、发送指令与等待位置变化。
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -29,7 +29,6 @@ export interface Vec3like {
   z: number;
 }
 
-/** 维度 id 收成 `minecraft:overworld` 这种全名,给 `/execute in` 用 */
 export function normalizeDimension(raw: string | undefined | null): string {
   const s = (raw ?? '').trim();
   if (!s) return 'minecraft:overworld';
@@ -76,7 +75,6 @@ interface EscapeCandidate {
   landing: Vec3like | null;
 }
 
-/** 同维度、同一格(取整)算同一个锚:床重生点与她圈的「床」路标常常是同一处 */
 function anchorKey(t: SpawnTarget): string {
   return `${normalizeDimension(t.dimension)}:${Math.floor(t.x)},${Math.floor(t.y)},${Math.floor(t.z)}`;
 }
@@ -114,10 +112,8 @@ export function escapeCandidates(
     });
   }
   return out.sort((a, b) => {
-    // 不同维度的排在后面:它们没有可比的距离
     if (a.distance === null) return b.distance === null ? 0 : 1;
     if (b.distance === null) return -1;
-    // 明确读出「站不住」的降级;null(没读数)不降 —— 宁可不下结论也不误诊
     const aBad = a.standable === false ? 1 : 0;
     const bBad = b.standable === false ? 1 : 0;
     if (aBad !== bBad) return aBad - bBad;
@@ -135,7 +131,6 @@ export function pickEscapeTarget(
   return nearest?.target ?? resolveEscapeTarget(personal, world);
 }
 
-/** 一个锚的说法:「床重生点」「你圈的「家」」…… */
 function anchorText(t: SpawnTarget): string {
   if (t.source === 'world') return '世界出生点';
   if (t.source === 'anchor') return '重生锚';
@@ -143,11 +138,7 @@ function anchorText(t: SpawnTarget): string {
   return '床重生点';
 }
 
-/**
- * 候选清单那一段。只报读数(去处、坐标、多远、在不在她自己圈的危险区里),
- * 不评价哪个更该去 —— 换不换地方是她的决定。只有一个候选时不出这一段:
- * 「候选就它自己」是零信息。
- */
+/** 多个候选时报告坐标、距离、可站性及登记的危险区。 */
 export function formatCandidates(
   candidates: readonly EscapeCandidate[],
   chosen: SpawnTarget | null,
@@ -176,7 +167,6 @@ export function alreadyNear(
   return Math.hypot(here.x - target.x, here.y - target.y, here.z - target.z) < radius;
 }
 
-/** 落在目标格中心,避免卡进床方块里 */
 export function tpLine(name: string, target: SpawnTarget): string {
   const x = Math.floor(target.x) + 0.5;
   const z = Math.floor(target.z) + 0.5;
@@ -192,7 +182,7 @@ export function readPlayerDatFile(path: string): SpawnTarget | null {
   return parsePlayerDat(readFileSync(path));
 }
 
-/** gzip(或裸) player.dat → 个人重生点;没睡过床则没有 SpawnX */
+/** 从 gzip 或未压缩的 player.dat 读取 Spawn*；缺少坐标时返回 null。 */
 export function parsePlayerDat(buf: Buffer): SpawnTarget | null {
   const nbt = decodeRootCompound(maybeGunzip(buf));
   if (!nbt) return null;
@@ -219,9 +209,7 @@ export function formatEscapeReceipt(
   cleared: string | null,
   here?: Vec3like & { dimension?: string },
   from?: Vec3like & { dimension?: string },
-  /** 短时间内反复逃回同一点时追加的那句事实(见 EscapeDeps.noteRepeat) */
   repeat?: string | null,
-  /** 候选清单那一段(见 formatCandidates);只有一个候选时是空串 */
   candidates?: string | null,
 ): string {
   const at = `[${zhDimension(target.dimension)}] (${Math.round(target.x)}, ${Math.round(target.y)}, ${Math.round(target.z)})`;
@@ -253,7 +241,6 @@ interface EscapeDeps {
   personalSpawn: SpawnTarget | null;
   /** 登记为家或床的安全路标；空数组时仍可使用个人重生点与世界出生点。 */
   safeMarks?: readonly SpawnTarget[];
-  /** 一个锚落在她圈的哪几个危险区里;只报事实,不参与选点 */
   dangerAt?: (t: SpawnTarget) => readonly string[];
   /**
    * 返回确认能站的具体落脚格;false 表示全不可站,null 表示读不到。
@@ -286,7 +273,6 @@ export async function runEscape(deps: EscapeDeps): Promise<string> {
   if (!anchor) return '[mc_escape 失败] 还不知道出生点,也没有圈过可以去的地方';
   const chosen = candidates.find((c) => c.target === anchor);
   const target = chosen?.landing ? { ...anchor, ...chosen.landing } : anchor;
-  // 选中的落点读出「站不住」= 同维度候选全被降过级,得把这个事实说出来
   const chosenBad = chosen?.standable === false;
   const footing = chosenBad
     ? '所有候选落点按世界读数都站不住人(落点和它周围一格要么实心要么悬空),去的是其中最近的。'

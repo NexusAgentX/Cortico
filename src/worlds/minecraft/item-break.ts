@@ -40,10 +40,7 @@ const INVENTORY_SLOT = new Map<number, ItemBreakSlot>([
   [8, 'feet'],
 ]);
 
-/**
- * 服务端权威物品损坏事件解码器。槽位变化只维护快照；只有本玩家的 47–52
- * `entity_status` 才产生事实。
- */
+/** 从本玩家的 entity_status 47–52 读取物品损坏事件；槽位变化只更新关联用的装备快照。 */
 export class ItemBreakDecoder {
   private attached = false;
   private readonly snapshots = new Map<ItemBreakSlot, ItemSnapshot>();

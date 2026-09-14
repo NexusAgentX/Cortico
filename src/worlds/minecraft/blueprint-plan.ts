@@ -1,10 +1,7 @@
 /**
- * 蓝图施工的受理、IR 编译、世界对账、三分账单、进度与回读裁决。
- * 全部为纯函数，世界数据由调用方提供取格函数，不持有 bot，也不落盘。
- *
- * 体量按 palette 编码后的输出长度计，不限制单边。普通放置保证 type，尽力匹配
- * state 并报告 drift；由施工动作明确调出的功能状态会核对对应属性。
- * 层序自底向上、层内扫描线；stopAfter 按 y 层，贪心并块不得跨层。
+ * 蓝图受理、施工中间表示（IR）编译、世界核验、材料统计与进度计算。
+ * 体量按 Palette 编码长度计；普通放置核验方块类型并报告属性差异，功能动作核验指定属性。
+ * 自底向上逐层编译，层内按行扫描，合并与 stopAfter 均不跨层。
  */
 
 import {
@@ -68,7 +65,7 @@ export function blueprintOutputChars(blueprint: NormalizedBlueprint): number {
   }).length;
 }
 
-/** 输出预算；长条、扁平与高塔只要总交稿长度相同就同等受理。 */
+/** 按编码字符数限制提交大小。 */
 export function validateBlueprintLimits(
   blueprint: NormalizedBlueprint,
 ): BlueprintStateFailure[] {
@@ -82,10 +79,7 @@ export function validateBlueprintLimits(
 
 // ── IR ────────────────────────────────────────────────────────────────────────
 
-/**
- * 一步 IR:一整个同状态的长方体。坐标是**蓝图局部坐标**(含端点),
- * 落到世界哪儿由锚点决定(`stepToBuildCall`)。
- */
+/** 一个同状态长方体的施工步骤；from/to 是含端点的蓝图局部坐标。 */
 export interface BlueprintStep {
   /** 步序,0 起,即游标口径 */
   index: number;
@@ -101,10 +95,7 @@ export interface BlueprintStep {
   y: number;
 }
 
-/**
- * 从部件的回读核对格:门的上半格、床头。不单独出步——主部件放下去时它自己长出来;
- * 完工回读时照样逐格核对,漏了它就是没完成。
- */
+/** 门上半格、床头等从部件不单独生成步骤，仍参与主步骤的完成核验。 */
 export interface BlueprintCheckCell {
   pos: PositionXYZ;
   state: string;
@@ -113,10 +104,7 @@ export interface BlueprintCheckCell {
   mainStep: number;
 }
 
-/**
- * 图外现场才决定得了的一条前提(作物下面的耕地、门下面的地基)。不拦受理——
- * 编译期看不见工地,只能把这一条摆到回执里让她自己核。
- */
+/** 需要在工地核验的图外条件；不阻止设计受理。 */
 interface BlueprintAdvisory {
   /** 同一条提醒第一次出现的位置 */
   path: string;
@@ -153,11 +141,8 @@ function cellPath(x: number, y: number, z: number): string {
 }
 
 /**
- * 支撑与附着核对:门底下要完整顶面、作物底下要耕地、火把要贴得住、床要托得住。
- *
- * 支撑格在图内却不满足 = 服务端会永久拒绝这一步,当失败拦下;支撑格在图外或画成
- * structure_void 只汇总成提醒——那一格是现场事实,编译期无从判断。同一条按
- * 「状态 + 要求 + 违规」归并,报第一处并带上格数。
+ * 图内支撑不符合规则时拒绝；图外或 structure_void 支撑只生成现场核验提示。
+ * 按状态、要求和违规类型归并，报告首个位置与数量。
  */
 function reviewSupports(
   blueprint: NormalizedBlueprint,
@@ -216,10 +201,7 @@ function reviewSupports(
   };
 }
 
-/**
- * 蓝图 → 有序 IR 步。层序自底向上,层内按扫描线(先北后南、先西后东),
- * 同状态的相邻格贪心并成长方体:先往东吃满一行,再整行往南推。
- */
+/** 按层、从北向南及从西向东编译；同状态格先向东合并，再合并相邻整行。 */
 export function compileBlueprint(blueprint: NormalizedBlueprint): BlueprintPlan {
   const [sizeX, sizeY, sizeZ] = blueprint.size_xyz;
   const failures: BlueprintStateFailure[] = [];
@@ -282,7 +264,6 @@ export function compileBlueprint(blueprint: NormalizedBlueprint): BlueprintPlan 
   failures.push(...supports.failures);
 
   const steps: BlueprintStep[] = [];
-  // 局部坐标 → 步序,给从部件找主部件那一步用
   const stepOfCell = new Map<string, number>();
   const key = (x: number, y: number, z: number): string => `${x},${y},${z}`;
   let placeCells = 0;
@@ -373,11 +354,7 @@ export function toWorld(anchor: PositionXYZ, local: PositionXYZ): PositionXYZ {
   return [anchor[0] + local[0], anchor[1] + local[1], anchor[2] + local[2]];
 }
 
-/**
- * IR 步 → 几何族的 build 调用。`box` + `solid` + 一对绝对坐标锚点,
- * 与 `mc_do` 里手写的 build 完全同形——重生锚闸、重力方块闸、scaffold 规则自动继承。
- * `needs` / `expect` 这类步边界由队列侧自己补。
- */
+/** 将 IR 转为 box/solid 的绝对坐标 build 调用；needs 与 expect 由队列补充。 */
 interface BlueprintBuildCall {
   skill: 'build';
   shape: 'box';
@@ -408,7 +385,6 @@ interface BlueprintAcceptance {
   plan: BlueprintPlan | null;
   metrics: VoxelMetrics | null;
   repair: RepairReport;
-  /** 精确错误路径清单;原样进回执给生成侧自纠 */
   failures: BlueprintStateFailure[];
 }
 
@@ -417,10 +393,8 @@ interface AcceptOptions {
 }
 
 /**
- * `{save}` 的机械部分:严格解析 → 宽容修复重试 → 补默认属性 → registry 校验 →
- * 尺寸/体量上限 → 可放置性 → IR 编译。
- *
- * 任一步不过就带着**全部**已发现的精确错误路径返回——一次说清比来回三轮省。
+ * 受理顺序：严格解析、格式修复、默认属性、注册表、体量和施工规则校验、IR 编译。
+ * 失败时返回已发现的精确错误路径。
  */
 export function acceptBlueprint(
   submission: unknown,
@@ -458,7 +432,6 @@ export function acceptBlueprint(
   }
   normalized = completed.blueprint;
 
-  // registry 没过的状态不再跑可放置性——同一格说两遍反而看不清该改哪儿
   const registryResult = validateBlueprintRegistry(normalized);
   const failures: BlueprintStateFailure[] = [
     ...registryResult.failures,
@@ -484,10 +457,7 @@ export function acceptBlueprint(
 
 // ── 世界对账 ──────────────────────────────────────────────────────────────────
 
-/**
- * 世界取格函数:世界坐标 → 方块名(带不带 `minecraft:` 前缀都收);
- * 区块没加载、读不到 → `null`,按"还不知道"处理,不当冲突也不当已建。
- */
+/** 按世界坐标读取方块；null 表示读数不可用，不计入冲突或完成。 */
 export type BlockNameReader = (x: number, y: number, z: number) => string | null;
 
 type ConflictKind = 'wrong-block' | 'should-be-air';
@@ -543,10 +513,7 @@ interface DiffOptions {
   sampleLimit?: number;
 }
 
-/**
- * 蓝图与世界对账。普通方块只比 type，避免服务器规范化楼梯朝向后逼她重铺；
- * 杠杆、重复器等由施工步骤主动调出的功能属性按目标值核对。
- */
+/** 普通方块按类型核验；功能动作另外核验指定属性。 */
 export function diffBlueprint(
   blueprint: NormalizedBlueprint,
   plan: BlueprintPlan,
@@ -658,13 +625,13 @@ export function diffBlueprint(
 
 // ── 三分账单 ──────────────────────────────────────────────────────────────────
 
-/** 物品名 → 数量。背包快照与容器账本都是这个形状,不绑任何具体类型。 */
+/** 物品名到数量的映射。 */
 export type ItemTally = Readonly<Record<string, number>>;
 
 interface BlueprintBillInput {
   /** 随身 */
   carried?: ItemTally;
-  /** 在箱(她登记过的容器合计) */
+  /** 容器上次观测的合计数量。 */
   stored?: ItemTally;
 }
 
@@ -689,8 +656,7 @@ interface BlueprintBill {
 }
 
 function tallyOf(source: ItemTally | undefined, item: string): number {
-  // 工具族名(hoe/shovel)按后缀认任意一把;耗材必须原名精确对,模糊后缀会把
-  // golden_carrot 算成能种的胡萝卜、dirt_path 算成基材泥土,账单和 reach 都虚报。
+  /** 工具族按 _hoe/_shovel 后缀匹配；耗材要求精确物品名。 */
   const family = BLUEPRINT_TOOL_FAMILIES.has(item);
   let total = 0;
   for (const [name, value] of Object.entries(source ?? {})) {
@@ -719,7 +685,6 @@ function blueprintStepRequirements(step: BlueprintStep): BlueprintRequirement[] 
       count: step.method.reusable ? 1 : step.cells,
       reusable: step.method.reusable === true,
     },
-    // 播种前那一下锄地也是这一步的活,没锄就一格都种不下去
     ...(blueprintNeedsTilledSoil(step.state)
       ? [{ item: 'hoe', count: 1, reusable: true }]
       : []),
@@ -746,10 +711,7 @@ function reachable(
   return { steps: count, cells };
 }
 
-/**
- * 剩余步 → 三分账单。「从头连着能盖完前 k 步」按顺序扣料算,遇到第一步不够就停——
- * 与执行口径一致:默认执行就是盖到料尽,不跳着挑够料的步做。
- */
+/** 按剩余步骤顺序扣减材料，统计随身、容器与缺口；材料不足时停止计算可完成步数。 */
 export function billForSteps(
   steps: readonly BlueprintStep[],
   input: BlueprintBillInput = {},

@@ -1,6 +1,6 @@
 /**
- * 从 Mojang 版本 JSON 生成客户端 Java 命令，支持 World 版本使用的 `inheritsFrom`。
- * 本模块只计算命令；client.ts 负责进程生命周期，控制台可在启动前预览结果。
+ * 从 Mojang 版本 JSON 生成客户端 Java 命令，支持 inheritsFrom 继承。
+ * client.ts 管理进程生命周期。
  */
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -73,7 +73,7 @@ const OS_NAMES: Partial<Record<NodeJS.Platform, string>> = {
   linux: 'linux',
 };
 
-/** 离线账号的 UUID:与所有启动器一致的 md5("OfflinePlayer:<名字>") 版本 3 */
+/** 离线账号 UUID：以 OfflinePlayer:<名字> 的 MD5 生成版本 3 UUID。 */
 export function offlineUuid(username: string): string {
   const h = createHash('md5').update(`OfflinePlayer:${username}`).digest();
   h[6] = (h[6] & 0x0f) | 0x30;
@@ -211,7 +211,7 @@ export function buildClientLaunch(input: ClientLaunchInput): ClientLaunch | { er
       const abs = join(librariesDir, rel);
       if (seenPaths.has(abs)) continue;
       seenPaths.add(abs);
-      if (!existsSync(abs)) continue; // 缺库交给 java 报错,不在这里替它判死刑
+      if (!existsSync(abs)) continue;
       if (/natives/i.test(rel)) nativeJars.push(abs);
       classpath.push(abs);
     }
@@ -247,7 +247,7 @@ export function buildClientLaunch(input: ClientLaunchInput): ClientLaunch | { er
     quickPlayPath: '',
   };
 
-  // World 版本的 json 可以整段省略 jvm 参数,继承链里一条都没有时用原版那三条
+  /** 继承链均未声明 JVM 参数时，使用默认的三项参数。 */
   const jvmEntries = chain.flatMap((v) => flattenArgs(v.arguments?.jvm, ctx));
   const jvmArgs = jvmEntries.length > 0
     ? jvmEntries

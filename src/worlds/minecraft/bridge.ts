@@ -1,8 +1,6 @@
 /**
- * mineflayer 连接管理:建 bot、断线重连、prismarine-viewer 拉起。
- *
- * World 与执行器只能使用当前连接的 bot;重连会替换实例,持有方必须通过
- * `bridge.bot` 解析引用。断线转为事件与重连,不外溢异常。
+ * 管理 Mineflayer 连接、重连和 prismarine-viewer。
+ * 重连会替换 bot 实例，World 与执行器须通过 bridge.bot 取得当前实例。
  */
 import mineflayer from 'mineflayer';
 import pathfinderPkg, { pathfinder, Movements } from 'mineflayer-pathfinder';
@@ -49,31 +47,20 @@ interface BridgeOptions {
   showTempo?: () => ShowTempo | null;
   /** spawn 完成(含重连后) */
   onSpawn: () => void;
-  /**
-   * 同一条连接里死亡之后重生。**不是**新连接:连接代次不变、这一代的资源袋照旧,
-   * 只通知上层"身体换了一期"。
-   */
+  /** 同一连接内的死亡重生；连接代次和资源保持不变。 */
   onRespawn?: () => void;
-  /**
-   * 断线(kicked/end),已安排重连。`attempt` = 在这之前已经连不上几次
-   * (连上一次归零):0 是刚掉线,>0 是重连又没成——播报文案据此分档。
-   */
+  /** 断线后通知；attempt 为本次断线前连续连接失败次数，连接成功归零。 */
   onDisconnect: (reason: string, willReconnect: boolean, attempt: number) => void;
-  /** 明确告警(服务器没在跑那一类):接 World 的事件通道,不走断线播报 */
+  /** 连接告警通过 World 事件通道投递。 */
   onAlarm?: (text: string) => void;
-  /** 收摊期不新建连接、不安排重连；未提供时视为非收摊期。 */
+  /** 停止期间不创建连接或安排重连。 */
   shuttingDown?: () => boolean;
 }
 
 const RECONNECT_DELAYS_MS = [3_000, 10_000, 30_000, 60_000];
 
-/** 同一格连挖这么多次没挖动就退避;计数只算连续失败,挖成一次即清零 */
 const DIG_BACKOFF_TRIES = 3;
 
-/**
- * 退避时效。挖不动的原因多半会变(基岩不会,但屏障、别人正在放的方块、
- * 够不着的角度都会),所以是时效不是永久名单。
- */
 const DIG_BACKOFF_MS = 60_000;
 
 interface Cell { x: number; y: number; z: number }
@@ -87,26 +74,19 @@ interface DigBackoffCell extends Cell {
 
 /** 本机端口连续拒连达到此次数时，提示检查服务器是否已启动。 */
 const REFUSED_ALARM_AT = 5;
-/** 越过阈值之后每再拒连这么多次复述一遍告警,免得只在第 5 次说一句就没了下文 */
 const REFUSED_ALARM_EVERY = 10;
-/** 已经确认"服务器没在跑"之后的重连间隔:再密也没用,留给人去启动 */
+/** 连续连接被拒绝达到阈值后的重试间隔。 */
 const REFUSED_DELAY_MS = 120_000;
 
-/** 本机地址:告警只对自己托管的服务器说「去面板启动」 */
 function isLocalHost(host: string): boolean {
   return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0';
 }
 
-/**
- * 单份路线试算的思考预算:timeout 是 A* 的总思考上限,tick 是每次迭代的片段。
- * 生成器在 partial 时继续同一场搜索,迭代到有结论或预算耗尽——一发弱扫描的
- * partial 会把"没算完"误当"没有路"。
- */
+/** 路线试算的总超时与单次迭代预算；partial 时继续原搜索。 */
 const PROBE_TIMEOUT_MS = 400;
 const PROBE_TICK_MS = 60;
 const PROBE_WALL_MS = 500;
 
-/** 试算只读这几个面(ComputedPath 的平面形状) */
 interface ProbePath {
   status: string;
   /** A* closed set 大小;=1 表示只展开了起点 */
@@ -114,15 +94,12 @@ interface ProbePath {
   path: Array<{ x: number; y: number; z: number; toBreak?: unknown[]; toPlace?: unknown[] }>;
 }
 
-/** 最后一次读到"沾水"之后再压制多少个物理 tick 的疾跑(20 tick = 1s) */
+/** 最后一次检测到水后禁用疾跑的物理 tick 数；20 tick 约一秒。 */
 const SPRINT_WET_TICKS = 40;
 
 const WATER_BLOCKS = new Set(['water', 'bubble_column', 'kelp', 'kelp_plant', 'seagrass', 'tall_seagrass']);
 
-/**
- * 水面附近的 `isInWater` 会逐 tick 抖动；检测到水后禁用疾跑 40 tick 形成滞回。
- * 离水一秒后恢复疾跑，陆地移动不受影响。
- */
+/** 水面附近 isInWater 会逐 tick 变化；检测到水后禁用疾跑 40 tick（约两秒）。 */
 function suppressSprintNearWater(bot: mineflayer.Bot, movements: Movements): void {
   let wet = 0;
   // isInWater 由 prismarine-physics 每 tick 写在实体上,prismarine-entity 的类型里没有
@@ -140,10 +117,7 @@ interface ViewerModule {
   mineflayer(bot: mineflayer.Bot, opts: { port: number; firstPerson: boolean }): void;
 }
 
-/**
- * viewer 关闭之后等端口真正让出的上限。上游的 close 不返回 Promise,端口何时让出
- * 只能自己探;探不到就记一条 warn 走人,不无限等。
- */
+/** 上游 viewer.close() 不返回 Promise，关闭后轮询端口是否可绑定，超时记录警告。 */
 const VIEWER_RELEASE_MS = 3_000;
 const VIEWER_RELEASE_POLL_MS = 50;
 
@@ -166,7 +140,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 class ResourceBag {
   private readonly closers: Array<{ name: string; close: () => Promise<void> | void }> = [];
   private draining: Promise<void> | null = null;
-  /** 单独一个标志:draining 要等 dispose 的同步前缀跑完才赋上,那段窗口里也得算已关闭 */
+  /** draining 在 dispose 的同步部分完成后赋值；此前由此标记阻止新资源登记。 */
   private closed = false;
 
   constructor(private readonly log: Logger) {}
@@ -213,16 +187,11 @@ export class Bridge {
   /** 已经作废的最高世代；世代单调作废，一代结束才有下一代。 */
   private disposedThrough = -1;
   private readonly bags = new Map<number, ResourceBag>();
-  /** 在途的资源回收;新一代绑端口前先等它们落地 */
   private readonly disposing = new Set<Promise<void>>();
-  /** 当前 viewer 属于哪一代;viewerUrl 是它的派生量,不再另存布尔标志 */
   private viewer: { gen: number; url: string } | null = null;
   private _invSynced = false;
-  /** scaffoldBlocks 配置的上一轮告警全文;retune 高频跑,同样的抱怨只说一次 */
   private scaffoldComplained = '';
-  /** 连续被本机端口拒连了几次;连上一次归零 */
   private refusedStreak = 0;
-  /** 当前连接的 movements;风格热改(retune)在它身上就地生效 */
   private liveMovements: Movements | null = null;
 
   /**
@@ -252,7 +221,6 @@ export class Bridge {
     return this.started;
   }
 
-  /** 连上一次就归零。控制台据此把"正在重连"与"反复连不上"分开报。 */
   get reconnects(): number {
     return this.reconnectAttempt;
   }
@@ -261,10 +229,7 @@ export class Bridge {
     return this.viewer !== null && this.viewer.gen === this.generation ? this.viewer.url : null;
   }
 
-  /**
-   * 这一代的资源袋。袋子不存在就现建;世代已经作废的,袋子生下来就是关闭态,
-   * 于是迟到的注册会被就地关掉(见 ResourceBag 的注释)。
-   */
+  /** 已作废代次使用关闭状态的 ResourceBag，迟到资源登记时立即关闭。 */
   private bagFor(gen: number): ResourceBag {
     const existing = this.bags.get(gen);
     if (existing) return existing;
@@ -274,7 +239,7 @@ export class Bridge {
     return bag;
   }
 
-  /** 这一代作废:资源逆序关掉。返回的 Promise 只覆盖发起时已在袋里的那些 */
+  /** 逆序关闭资源；返回值只等待调用时已登记的资源。 */
   private disposeGeneration(gen: number): Promise<void> {
     const bag = this.bags.get(gen);
     this.disposedThrough = Math.max(this.disposedThrough, gen);
@@ -319,9 +284,6 @@ export class Bridge {
         /* 已断开 */
       }
     }
-    // viewer 不随 bot 的 'end' 自行关闭(上游没有那条接线),端口只能在这里让出。
-    // 这个 await 覆盖的是发起时已经在袋里的资源;此刻还没拿到句柄的异步启动流程
-    // 回来时会撞上已 dispose 的袋子,就地自关,那一份不在本次等待范围内。
     this.disposedThrough = Math.max(this.disposedThrough, this.generation);
     for (const gen of [...this.bags.keys()].sort((a, b) => b - a)) {
       await this.disposeGeneration(gen);
@@ -338,7 +300,6 @@ export class Bridge {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    // 端口上已经有人听了:拒连连击归零,这一次万一没连上也从短退避重来
     this.refusedStreak = 0;
     this.opts.log.info(`minecraft 立刻重连: ${reason}`);
     this.connect();
@@ -348,8 +309,6 @@ export class Bridge {
     if (this.stopped || this.opts.shuttingDown?.()) return;
     const { host, port, username, version, log } = this.opts;
     const gen = ++this.generation;
-    // 上一代的资源不许跨代活着:viewer 的 http server 还在监听时,这一代的端口
-    // 探测撞的就是自己的旧 server
     for (const old of [...this.bags.keys()]) {
       if (old < gen) void this.disposeGeneration(old);
     }
@@ -365,8 +324,7 @@ export class Bridge {
     }
     this._bot = bot;
     this._invSynced = false;
-    // 必须当插件装:mineflayer 自己的插件要等 inject_allowed 才注入,在这里直接改
-    // bot.craft 改的是个还不存在的方法,随后会被内建的 craft.js 原样覆盖掉
+    /** 修补须通过插件注入，等待 Mineflayer 的 inject_allowed。 */
     bot.loadPlugin((b) => installMineflayerFixes(b, log, this.opts.diag, this.opts.showTempo));
     bot.loadPlugin(pathfinder);
     installPathfinderPerf(log);
@@ -383,10 +341,8 @@ export class Bridge {
       this.refusedStreak = 0;
       this.installSpawnGear(bot, gen);
       this.opts.onSpawn();
-      // mineflayer 的 'spawn' 不只发一次:血量由 0 回正时(health.js)会再发一次,
-      // 那正是同一条连接里的死亡重生。装配走 once,重生通知走这条持续监听 ——
-      // 在 once 回调里注册不会被本次 emit 收到(EventEmitter 在 emit 前已取好监听表)。
-      // 不用 'respawn' 事件:它跟着 respawn 包走,换维度也发,与死亡重生分不开。
+      /** spawn 在死亡重生时也触发，连接装配使用 once；持续监听处理同连接重生。 */
+      /** respawn 包也用于维度切换，不能单独识别死亡重生。 */
       bot.on('spawn', () => {
         if (this.stopped || this._bot !== bot || this.generation !== gen) return;
         this.opts.onRespawn?.();
@@ -394,14 +350,12 @@ export class Bridge {
     });
 
     const onGone = (reason: string) => {
-      if (this._bot !== bot || this.generation !== gen) return; // 迟到回调不得改状态
+      if (this._bot !== bot || this.generation !== gen) return;
       this._bot = null;
       this._invSynced = false;
       this.viewer = null;
-      // 重连前必须先把端口让出来,否则下一代的探测必然报「已被占用」
       void this.disposeGeneration(gen);
       this.liveMovements = null;
-      // 退避账跟着这条连接走:重连之后世界可能已经变了,旧的挖不动不作数
       this.digFails.clear();
       const willReconnect = !this.stopped;
       this.opts.onDisconnect(reason, willReconnect, this.reconnectAttempt);
@@ -410,16 +364,12 @@ export class Bridge {
     bot.once('end', (reason) => onGone(String(reason)));
     bot.once('kicked', (reason) => onGone(`kicked: ${JSON.stringify(reason)}`));
     bot.on('error', (err) => {
-      // 连接期错误跟着 'end' 走重连,不外溢;拒连要单独数——它与"网络抖动"不是一回事
       log.warn(`minecraft 连接错误: ${err.message}`);
       this.noteConnectError(err);
     });
   }
 
-  /**
-   * 拒连计数与告警。ECONNREFUSED = 那个端口上没有进程在听,重连再密也不会变。
-   * 数到阈值推一条明确告警(去面板把服务器启动起来),并把重连拉稀。
-   */
+  /** 连续 ECONNREFUSED 达到阈值时告警，并延长重连间隔。其他错误重置计数。 */
   private noteConnectError(err: Error): void {
     const code = (err as NodeJS.ErrnoException).code ?? '';
     if (code !== 'ECONNREFUSED' && !err.message.includes('ECONNREFUSED')) {
@@ -430,7 +380,7 @@ export class Bridge {
     const n = this.refusedStreak;
     if (n < REFUSED_ALARM_AT || (n - REFUSED_ALARM_AT) % REFUSED_ALARM_EVERY !== 0) return;
     const where = `${this.opts.host}:${this.opts.port}`;
-    this.opts.log.error(`minecraft 连续 ${n} 次被 ${where} 拒连:服务器进程多半没在跑`);
+    this.opts.log.error(`minecraft 连续 ${n} 次被 ${where} 拒连:连接被拒绝`);
     this.opts.onAlarm?.(
       isLocalHost(this.opts.host)
         ? `连着 ${n} 次连不上 ${where},端口上根本没有进程在听 —— MC 服务器没在跑,去控制台的 Minecraft 面板把它启动起来;` +
@@ -449,9 +399,6 @@ export class Bridge {
     this.applyTuning(bot, movements);
     this.liveMovements = movements;
     bot.pathfinder.setMovements(movements);
-    // A* 每物理 tick 的同步计算预算。canDig 下单节点成本高(邻居都要算挖掘
-    // 耗时),20ms 只够搜约 50 节点,挖掘型路径在"搜三步-挖一块-方块变化重置"
-    // 里永远算不完整。mc 已在独立子进程,不再影响演出注入。
     bot.pathfinder.tickTimeout = 60;
     suppressSprintNearWater(bot, movements);
     this.installDigBackoff(bot);
@@ -463,14 +410,10 @@ export class Bridge {
   private applyTuning(bot: mineflayer.Bot, movements: Movements): void {
     const log = this.opts.log;
 
-    // 一次落差只允许下降一格。默认值会把三格坠落当普通步伐，路径执行稍有偏差
-    // 就会越过落脚面；连续寻路还能沿悬崖逐级把人带到远低于出发点的位置。
+    /** 寻路单次落差限制为一格。 */
     movements.maxDropDown = 2;
 
-    // 岩浆在上游是"可挖方块":diggable=true、boundingBox=empty,只被 blocksToAvoid
-    // 挡住 safe。今天不被挖穿全靠 dontCreateFlow 撞见液体邻居——可孤立的一格岩浆
-    // 五面都不是液体,那道检查一条都不命中,A* 会照样把它排进 toBreak 走过去。
-    // 钉进 blocksCantBreak 才是照实说"这一格不是能挖开走过去的东西"。
+    /** 上游 lava 的 diggable=true；额外加入 blocksCantBreak 禁止寻路挖掘。 */
     const lava = (bot.registry.blocksByName as Record<string, { id: number } | undefined>).lava;
     if (lava) movements.blocksCantBreak.add(lava.id);
 
@@ -503,14 +446,7 @@ export class Bridge {
       if (b) movements.blocksCantBreak.add(b.id);
     }
 
-    // 门:开着的门今天照样过不去,而且会被当墙挖掉。
-    //
-    // 上游把 boundingBox 当作方块类型的属性,门无论开着关着都是 `block` —— 于是
-    // 开着的门在寻路器眼里与石墙无异(safe=false),路线要么绕开,要么把门挖了;
-    // `canOpenDoors` 又默认关着,而且它的 openable 名单只收栅栏门,不收门。
-    // 逐状态的判词在 pathfinder-perf(applyDoorState):开着的可穿过、关着的木门
-    // 「用一下再过去」、铁门当墙。这里只做两件事:把那条开门开关打开,
-    // 并把门钉进不许挖的名单 —— 门是别人家的建筑,而且现在根本不需要挖它。
+    /** 启用开门并禁止挖门；状态通行判据由 pathfinder-perf 的 applyDoorState 提供。 */
     movements.canOpenDoors = true;
     for (const name of Object.keys(blocksByName)) {
       if (!name.endsWith('_door') && !name.endsWith('_fence_gate')) continue;
@@ -527,8 +463,7 @@ export class Bridge {
 
     const wanted = this.opts.scaffoldBlocks?.();
     if (wanted) {
-      // 寻路器把 scafoldingBlocks 当物品 id 用(与背包 item.type 比对),
-      // 1.20.6 里方块与物品 id 空间不同(圆石 方块12/物品35),必须走 itemsByName
+      /** scafoldingBlocks 使用物品 ID；1.20.6 的物品和方块 ID 不同，须查询 itemsByName。 */
       const byName = bot.registry.itemsByName as Record<string, { id: number } | undefined>;
       // 重力方块失去支撑后会下落，不能作为寻路器按固定落点记账的垫脚料。
       const heavy = wanted.filter((n) => isGravityBlock(n));
@@ -541,7 +476,6 @@ export class Bridge {
       const unknown = usable.filter((n) => byName[n] === undefined);
       if (unknown.length > 0) complaints.push(`scaffoldBlocks 里不认识的方块名被忽略: ${unknown.join('、')}`);
       if (ids.length > 0 || wanted.length === 0) {
-        // 顺序即优先级:寻路器垫脚时从数组头开始找包里有的;空数组 = 禁垫
         movements.scafoldingBlocks = ids;
       } else {
         complaints.push('scaffoldBlocks 全部无效,沿用寻路器默认(泥土、圆石)');
@@ -552,10 +486,8 @@ export class Bridge {
         for (const c of complaints) log.warn(c);
       }
     }
-    // 回调本身装上去(不是当下的取数):工地在两次 retune 之间照样会绑定、完工
     setSiteZones(movements, this.opts.blueprintZones ?? null);
     setNoPlaceCells(movements, this.opts.workCell ?? null);
-    // 试算的三份 movements 一并装上:菜单上的三种走法要与实际会走的路同一套判据
     setDigBackoff(movements, (x, y, z) => this.digBackedOff(x, y, z));
     const costs = this.opts.movementCosts?.();
     if (costs) {
@@ -579,7 +511,6 @@ export class Bridge {
     const now = Date.now();
     const key = cellKey(p);
     const rec = this.digFails.get(key);
-    // 上一次失败已经过了时效:那是另一轮,重新计数(判据是「连续」)
     if (rec === undefined || now - rec.lastAt > DIG_BACKOFF_MS) {
       this.pruneDigFails(now);
       this.digFails.set(key, {
@@ -636,10 +567,7 @@ export class Bridge {
     bot.pathfinder.setMovements(this.liveMovements);
   }
 
-  /**
-   * 三份代价配置各试算一条路(当前风格/只挖不垫/只靠走),不动身、不打扰在飞寻路。
-   * 走 getPathFromTo 生成器:getPathTo 会覆写寻路器内部的 astar 上下文。
-   */
+  /** getPathFromTo 生成器用于路线试算，避免 getPathTo 覆盖当前寻路的 A* 上下文。 */
   probeRoutes(
     target: { x: number; y: number; z: number },
     /** 试算与执行须使用同一目标。省略时使用以 target 为中心、半径 1 的 GoalNear；水平寻路显式传入 GoalNearXZ。 */
@@ -697,11 +625,7 @@ export class Bridge {
     return out;
   }
 
-  /**
-   * 目标点分诊(探路误诊断的另一半):A* 对"目标本身进不去"只会 timeout,
-   * 10 格外的树冠会被说成"太远或太绕"。落脚预检 O(27) + 死角灌水 ≤128 格读数,
-   * 给试算菜单一句定性;区块未加载时不下结论。
-   */
+  /** 检查目标附近落脚格与最多 128 格的空间连通性；未加载区域不作封闭结论。 */
   probeTarget(target: { x: number; y: number; z: number }): TargetDiag | null {
     const bot = this._bot;
     if (!bot?.entity) return null;
@@ -716,10 +640,7 @@ export class Bridge {
     return size === null ? { kind: 'open' } : { kind: 'sealed', size };
   }
 
-  /**
-   * 寻路进展进 path 泳道。partial 循环重算是"原地抽搐"的典型形态,
-   * 每种记录各有一个 5 秒窗口,窗口内只计数,窗口外落一条并带上本类的抑制计数。
-   */
+  /** 每类寻路记录使用独立的五秒窗口；期间重复项计数，下一次输出附抑制数量。 */
   private installPathDiag(bot: mineflayer.Bot): void {
     const diag = this.opts.diag;
     if (!diag) return;
@@ -760,10 +681,7 @@ export class Bridge {
     });
   }
 
-  /**
-   * viewer 模块的加载口。单独一个方法是为了测试能换成不依赖 three/canvas 的假模块;
-   * 生产始终走这里的动态 import(viewer 依赖较重,不开画面的部署不加载它)。
-   */
+  /** 按需动态加载 viewer。 */
   private loadViewer(): Promise<ViewerModule> {
     return import('prismarine-viewer') as unknown as Promise<ViewerModule>;
   }
@@ -771,9 +689,7 @@ export class Bridge {
   private startViewer(bot: mineflayer.Bot, gen: number): void {
     if (this.opts.viewerPort <= 0 || this.viewerUrl !== null) return;
     const port = this.opts.viewerPort;
-    // viewer 内部的 http server 不暴露 error 事件(上游没挂,句柄也不外露),端口被占
-    // 会直接崩进程——先自己探一次。探测与真正 bind 之间隔着 import,严格说仍是 TOCTOU;
-    // 真正让它不发生的是"绑之前旧代资源已经关干净",探测只是最后一道机械保险。
+    /** 上游 viewer 不暴露 http server 的 error 处理接口，启动前先探测端口；探测与绑定之间仍有竞争窗口。 */
     void (async () => {
       try {
         await this.settleDisposals();
@@ -799,11 +715,7 @@ export class Bridge {
     })();
   }
 
-  /**
-   * 关掉一代的 viewer 并等端口真正让出。上游的 `bot.viewer.close` 只做 http.close()
-   * 加逐 socket disconnect,不返回 Promise、也不关 socket.io,所以"关完了没有"这件事
-   * 只有端口本身能回答。
-   */
+  /** viewer.close() 不返回 Promise，关闭后通过端口绑定探测确认释放。 */
   private async releaseViewer(gen: number, port: number, close?: () => void): Promise<void> {
     if (this.viewer?.gen === gen) this.viewer = null;
     if (!close) {
@@ -824,7 +736,6 @@ export class Bridge {
 
   private scheduleReconnect(reason: string): void {
     if (this.stopped || this.opts.shuttingDown?.() || this.reconnectTimer) return;
-    // 已经确认端口上没进程在听:密集重连只是刷屏,拉长到两分钟一次等人去启动
     const delay = this.refusedStreak >= REFUSED_ALARM_AT
       ? REFUSED_DELAY_MS
       : RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)];

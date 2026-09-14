@@ -525,7 +525,7 @@ describe('MinecraftServerManager:跨维度 gamerule 对齐', () => {
     const warns = await warnsAfterReady(dir);
     const hit = warns.find((w) => w.includes('gamerule'));
     expect(hit).toContain('w_nether 的 keepInventory=false,主世界是 true');
-    expect(hit).toContain('已按主世界对齐');
+    expect(hit).toContain('已发送 1 条 gamerule 修改指令');
     // 末地本来就一致,不该被点名
     expect(hit).not.toContain('w_the_end');
     rmSync(dir, { recursive: true, force: true });

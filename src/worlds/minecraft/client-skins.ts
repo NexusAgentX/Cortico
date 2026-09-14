@@ -1,38 +1,22 @@
 /**
- * 皮肤:离线服务器的玩家档案里没有材质,皮肤只能在客户端一侧解决。
- *
- * CustomSkinLoader(客户端 mod,服务端不装)按被渲染玩家的**账号名**去
- * `<gameDir>/CustomSkinLoader/LocalSkin/skins/<账号名>.png` 读图,与服务器、
- * Mojang 都无关。于是"给她和玩家各选一张皮肤"落到文件上就是:把选中的 PNG
- * 按账号名铺进每一份客户端的游戏目录。铺进摄像机那份决定直播画面里她长什么样,
- * 铺进玩家那份决定人自己看到的——两份客户端各渲染各的,所以两个名字的皮肤在
- * 两份目录里都要有。
- *
- * 选皮肤走文件选择器,选中的字节由 World 在这份部署的 `data/` 里按角色名留底。
- * 留底用于重铺:游戏目录或账号名可能在两次启动之间改变,而那时选图的人不在。
- * 它属这份部署,不属那几份游戏目录——换一台机器重装客户端,皮肤跟着部署走。
- *
- * 皮肤是 classic 还是 slim 不在这里判:配置项写 `model: "auto"`,CustomSkinLoader
- * 逐张按材质自己认。
+ * 通过 CustomSkinLoader 的 LocalSkin 按账号名读取本地 PNG。
+ * 所选图片保存在部署 data/ 下，启动前写入每个客户端 gameDir 的 CustomSkinLoader/LocalSkin/skins/。
+ * model 设置为 auto，由 CustomSkinLoader 识别 classic 或 slim。
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Logger } from '../../core/types.ts';
 
-/** 皮肤按账号名读取,两份客户端各渲染各的,所以两个角色在两份目录里都要铺 */
 export type SkinRole = 'bot' | 'player';
 
-/** 一个角色当下选着的那张皮肤 */
 export interface SkinInfo {
   /** 材质尺寸;64x64 是现行格式,64x32 是 1.8 之前的老皮肤(没有第二层与左臂左腿) */
   width: number;
   height: number;
   bytes: number;
-  /** 选中的时刻(ISO) */
   at: string;
 }
 
-/** CustomSkinLoader 在游戏目录下的自留地 */
 const CSL_DIR = 'CustomSkinLoader';
 const CSL_CONFIG = 'CustomSkinLoader.json';
 const LOCAL_SKIN_PATTERN = 'LocalSkin/skins/{USERNAME}.png';
@@ -48,10 +32,7 @@ const LOCAL_SKIN_ENTRY = {
   elytra: 'LocalSkin/elytras/{USERNAME}.png',
 };
 
-/**
- * PNG 头解出宽高;不是 PNG 或截断了给 null。
- * 皮肤材质的尺寸是判据(64x64 / 64x32),而这两个数就写在 IHDR 的头 8 字节里。
- */
+/** 读取 PNG IHDR 的宽高；文件头不完整或格式不符时返回 null。 */
 export function pngSize(bytes: Uint8Array): { width: number; height: number } | null {
   const SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
   if (bytes.length < 24) return null;
@@ -71,7 +52,6 @@ export function checkSkinBytes(bytes: Uint8Array): { width: number; height: numb
   return size;
 }
 
-/** World 给某个角色留的那份底;与同目录的 `minecraft-*.json` 几本账同一套命名 */
 function storedSkinPath(storeDir: string, role: SkinRole): string {
   return join(storeDir, `minecraft-skin-${role}.png`);
 }
@@ -91,7 +71,6 @@ export function storedSkinInfo(storeDir: string, role: SkinRole): SkinInfo | nul
   return { ...size, bytes: bytes.length, at: stat.mtime.toISOString() };
 }
 
-/** 收下选中的那张;尺寸不合格就报错,不落盘 */
 export function setStoredSkin(storeDir: string, role: SkinRole, bytes: Uint8Array): SkinInfo | { error: string } {
   if (!storeDir) return { error: '没有留底的地方:这份部署没有 data/ 目录' };
   const checked = checkSkinBytes(bytes);
@@ -101,20 +80,14 @@ export function setStoredSkin(storeDir: string, role: SkinRole, bytes: Uint8Arra
   return { ...checked, bytes: bytes.length, at: new Date().toISOString() };
 }
 
-/** 撤下留底,并把刚撤下的字节交回去——调用方拿它认出各游戏目录里哪份是本 World 铺的 */
+/** 删除保存的皮肤并返回原字节，供调用方核对客户端文件内容。 */
 export function clearStoredSkin(storeDir: string, role: SkinRole): Buffer | null {
   const prev = readStoredSkin(storeDir, role);
   if (prev) rmSync(storedSkinPath(storeDir, role));
   return prev;
 }
 
-/**
- * 合并 `CustomSkinLoader.json`:保证本地皮肤那条 loader 在,且排在最前。
- *
- * 排最前是必需的:默认清单里 Mojang 那几条在前,而离线账号的名字在正版那边
- * 可能真有主,轮不到本地文件就已经取到别人的皮肤了(取不到也要先等一次网络)。
- * 其余条目原样保留——这份文件也可能是人自己配过的。
- */
+/** 将本地皮肤 loader 排在首位，优先于远端来源；其余配置保持原样。 */
 export function mergeSkinLoaderConfig(prev: string): string {
   let obj: Record<string, unknown> = {};
   if (prev.trim()) {
@@ -133,32 +106,24 @@ export function mergeSkinLoaderConfig(prev: string): string {
   return `${JSON.stringify(obj, null, 2)}\n`;
 }
 
-/** mod 装了没:装不了 mod 的游戏目录里,皮肤文件铺得再对也不会被读 */
+/** 检测游戏目录中的 CustomSkinLoader 模组。 */
 export function hasSkinMod(gameDir: string): boolean {
   const mods = join(gameDir, 'mods');
   if (!gameDir || !existsSync(mods)) return false;
   return readdirSync(mods).some((f) => /^customskinloader.*\.jar$/i.test(f));
 }
 
-/** 某个账号的皮肤在这份游戏目录里落在哪 */
 export function installedSkinPath(gameDir: string, username: string): string {
   return join(gameDir, CSL_DIR, 'LocalSkin', 'skins', `${username}.png`);
 }
 
-/** 该账号当下铺着的就是这份字节 */
 export function installedMatches(gameDir: string, username: string, bytes: Buffer | null): boolean {
   if (!gameDir || !username || !bytes) return false;
   const path = installedSkinPath(gameDir, username);
   return existsSync(path) && readFileSync(path).equals(bytes);
 }
 
-/**
- * 把选中的皮肤铺进一份游戏目录:按账号名放 PNG,并保证 loader 配置里有本地那条。
- *
- * 每次启动客户端之前都跑一遍(与 options.txt 同一个道理:游戏只在启动时读,
- * 而游戏目录、账号名都可能在两次启动之间改过)。没选皮肤的角色不在名单里,
- * 于是那份游戏目录里也不会平白多出 CustomSkinLoader 的配置。
- */
+/** 启动前按账号名写入所选 PNG，并合并本地 loader 配置；未选择皮肤时不写配置。 */
 export function applySkins(
   gameDir: string,
   entries: Array<{ username: string; bytes: Buffer }>,
@@ -191,10 +156,7 @@ export function applySkins(
   }
 }
 
-/**
- * 撤走某个账号已铺的皮肤,但只撤内容与 `expect` 一致的那份——认不回来的是人自己
- * 放进去的文件,不动它。
- */
+/** 仅删除内容与 expect 相同的账号皮肤文件。 */
 export function removeInstalledSkin(gameDir: string, username: string, expect: Buffer | null): boolean {
   if (!installedMatches(gameDir, username, expect)) return false;
   rmSync(installedSkinPath(gameDir, username));

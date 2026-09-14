@@ -1,8 +1,4 @@
-/**
- * 探索覆盖账本：按世界与维度分别记录 8 个方向的历史最远距离与末端群系。
- *
- * 只回答“这张世界的这一维度哪边去过、去到多远”。
- */
+/** 按世界与维度分别记录 8 个方向的历史最远距离与末端群系。 */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { normalizeDimension } from './escape.ts';
@@ -27,7 +23,7 @@ const COMPASS_ORDER: Direction[] = [
   'north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest',
 ];
 
-/** 一张维度地图 → 环境提示词；一处没去过返回空串。 */
+/** 无探索记录时返回空串。 */
 export function renderExploredSummary(map: ExploreMap): string {
   const seen: string[] = [];
   const unseen: string[] = [];
@@ -41,7 +37,7 @@ export function renderExploredSummary(map: ExploreMap): string {
   return unseen.length > 0 ? `${head};${unseen.join('、')}没去过` : head;
 }
 
-/** 冷代理不知道游戏当前在哪个维度，因此把当前世界有记录的维度逐一标明。 */
+/** 代理尚无当前维度时，列出当前世界有记录的全部维度。 */
 export function renderExploredLedger(ledger: ExploreLedger): string {
   const realm = ledger.realms[ledger.currentRealm] ?? {};
   return Object.entries(realm)
@@ -70,7 +66,7 @@ function cleanMap(data: unknown): ExploreMap {
   return map;
 }
 
-/** 落盘文件 → 账本；读不出 v2 的形状就当空账本。 */
+/** 无法读取 v2 格式时使用空记录。 */
 export function loadExplored(file: string | null): ExploreLedger {
   const empty = (): ExploreLedger => ({ version: 2, currentRealm: '', realms: {} });
   if (!file || !existsSync(file)) return empty();

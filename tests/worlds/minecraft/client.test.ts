@@ -44,13 +44,11 @@ describe('explainExit', () => {
   });
 
 
-  it('0xC0000005 先指向显卡驱动与 stdout 里的凭据,java/LWJGL 退居其次', () => {
+  it('0xC0000005 报告原生访问违例，不推断具体原因', () => {
     const text = explainExit(0xc0000005);
-    expect(text).toContain('DxPresent');
-    expect(text.indexOf('显卡驱动')).toBeLessThan(text.indexOf('java'));
-    expect(text).toContain('LWJGL'); // 本机有 Java21 先例,这一半不能删
+    expect(text).toContain('原生访问违例');
+    expect(text).not.toMatch(/显卡|Java|LWJGL/i);
   });
-
   it('普通退出码原样报,不硬套原生崩溃表', () => {
     expect(explainExit(1)).toBe('code=1');
     expect(explainExit(null)).toContain('没有退出码');
