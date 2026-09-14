@@ -31,7 +31,7 @@ const MODULES: Array<() => World> = [
 
 describe('环境提示词模板契约', () => {
   it.each(MODULES.map((make) => [make().id, make] as const))(
-    '%s:模板的洞、vars 声明、运行时报的值三者一致',
+    '%s:模板占位符、vars 声明与运行时值一致',
     async (_id, make) => {
       const mod = make();
       const doc = envPromptDocOf(mod);
@@ -41,9 +41,9 @@ describe('环境提示词模板契约', () => {
       const inTemplate = templateVarNames(readFileSync(doc!.path, 'utf8')).sort();
       const reported = Object.keys((await mod.envPromptVars()) ?? {}).sort();
 
-      // 模板里的洞必须都有人声明,否则前缀里会留下裸 {{…}}
+
       expect(inTemplate, '模板用到的占位符都要在 vars 里声明').toEqual(declared);
-      // 声明的洞必须都有人报值,否则控制台的旁注指向一个填不上的洞
+
       expect(reported, 'vars 声明的占位符都要有运行时值').toEqual(declared);
     },
   );
@@ -56,7 +56,7 @@ describe('环境提示词模板契约', () => {
     },
   );
 
-  it('World 自己关掉半边功能时整段不进前缀,连模板都不读', async () => {
+  it('World 的 envPromptVars 返回 null 时省略该段且不读取模板', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'nullprompt-'));
     const path = join(dir, 'ENV_PROMPT.md');
     const mod: World = {

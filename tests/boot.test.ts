@@ -24,7 +24,7 @@ function tempDir(): string {
   return dir;
 }
 
-/** 借用 process.send 收几条消息,用完还回去。 */
+
 function captureMessages(run: () => void): unknown[] {
   const sent: unknown[] = [];
   const original = process.send;
@@ -67,7 +67,7 @@ describe('报出 data 目录', () => {
     expect(sent).toEqual([{ type: READY_MESSAGE, dataDir: '/deploy/data' }]);
   });
 
-  it('别的宿主用 fork 起我们时一声不吭:那条通道是它自己的协议', () => {
+  it('未设置受监管环境变量时不发送 IPC 消息', () => {
     expect(captureMessages(() => announceDataDir('/deploy/data', {}))).toEqual([]);
   });
 });

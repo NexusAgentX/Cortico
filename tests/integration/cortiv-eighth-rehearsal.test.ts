@@ -17,7 +17,7 @@ import type { LiveStatus } from '../../src/worlds/bilibili/client.ts';
 import { panelStreamRoute } from '../../src/web/shared/console-protocol.ts';
 import { FakeLLM, makeTmpDir, sleep, toolReply } from '../core/helpers.ts';
 
-/** 与启动器同一条线:仓内全部实现并进定义,扩展不装。 */
+
 const definition = withWorlds(cortiv, BUILTIN_WORLDS);
 
 async function waitFor(condition: () => boolean, timeoutMs = 8_000): Promise<void> {
@@ -41,14 +41,14 @@ const LIVE_STATUS: LiveStatus = {
   phase: 'connected',
   roomId: 6,
   realRoomId: 7734200,
-  title: '第八场试播',
+  title: 'CortiV 集成',
   living: true,
   liveStartedAt: null,
   selfUid: 1039523363,
   lastError: null,
 };
 
-describe.sequential('CortiV 第八场 mock 试播', () => {
+describe.sequential('CortiV 集成测试', () => {
   const tmp = makeTmpDir();
   const llm = new FakeLLM();
   let bot: Bot<CortiVConfig>;
@@ -93,7 +93,7 @@ describe.sequential('CortiV 第八场 mock 试播', () => {
           current: () => LIVE_STATUS,
           shutdownVerification: () => [{
             key: 'mock.bilibili',
-            label: '第八场 mock B 站源',
+            label: 'B 站测试源',
             status: 'verified-ended' as const,
             detail: '测试替身已确认结束',
             manualAction: '',
@@ -104,7 +104,7 @@ describe.sequential('CortiV 第八场 mock 试播', () => {
 
     bot = createBot(loaded, {
       ...definition,
-      // 直播间那个槽位换成测试替身:定义不变,只换造实例的那一步
+
       worlds: (definition.worlds ?? []).map((def) =>
         def.id === 'bilibili' ? { ...def, create: () => fakeBilibili } : def),
       build: (deployment, worlds) => ({ ...definition.build(deployment, worlds), llm }),
@@ -203,7 +203,7 @@ describe.sequential('CortiV 第八场 mock 试播', () => {
     expect(await history.text()).toContain('试播记录.md');
   });
 
-  it('第八场新增的上下文与认知开关可热改并准确落盘', async () => {
+  it('上下文与认知配置可热改并保存', async () => {
     const groups = await (await fetch(`http://127.0.0.1:${port}/api/config`)).json() as {
       groups: Array<{ group: { id: string } }>;
     };
@@ -229,9 +229,9 @@ describe.sequential('CortiV 第八场 mock 试播', () => {
     expect(onDisk.cognition.enabled).toBe(false);
   });
 
-  it('规范关机会按顺序走完并留下逐步回执', async () => {
+  it('关机按序执行并返回各步骤结果', async () => {
     ws.close();
-    const report = await bot.shutdown('第八场 mock 试播完成');
+    const report = await bot.shutdown('集成测试完成');
     expect(report.complete).toBe(true);
     expect(report.steps.map((step) => step.key)).toEqual(['pause', 'worlds', 'core', 'llm', 'flush', 'web']);
     expect(report.steps.every((step) => step.ok)).toBe(true);

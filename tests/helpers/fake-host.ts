@@ -1,4 +1,4 @@
-/** World 测试共用的 fake host:记录推送的事件与唤醒口径,其余宿主接口都是空实现。 */
+/** World 测试宿主,记录事件及投递选项,其余接口使用空实现。 */
 import type { EventEnvelope, WorldHost, PushOptions } from '../../src/core/types.ts';
 
 export class FakeHost implements WorldHost {
@@ -25,7 +25,7 @@ export class FakeHost implements WorldHost {
     emit() {},
   } as unknown as WorldHost['log'];
 
-  /** 与 events 逐条对齐:唤醒/攒批的口径也要能断言 */
+  /** 与 events 逐条对应。 */
   pushOpts: Array<PushOptions | undefined> = [];
 
   async pushEvent(e: Omit<EventEnvelope, 'cursor'>, opts?: PushOptions): Promise<EventEnvelope> {

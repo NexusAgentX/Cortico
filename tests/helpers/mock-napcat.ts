@@ -1,10 +1,4 @@
-/**
- * MockNapCat — 假协议端(OneBot v11 over 正向WS 的服务端)。
- *
- * 用途:tests/worlds/qq/ 的回路测试。
- * 实现最小动作集:get_login_info / get_group_info / get_group_member_info /
- * send_group_msg(记录到outbox);未知action回retcode 1404。
- */
+/** 本地 OneBot v11 WebSocket 测试服务。支持群聊、私聊与消息查询,未知动作返回 1404。 */
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Segment } from '../../src/worlds/qq/normalize.ts';
 
@@ -229,7 +223,7 @@ export class MockNapCat {
     return message_id;
   }
 
-  /** 推一条私聊消息(测试严格单群丢弃用) */
+  /** 推送私聊消息。 */
   emitPrivateMessage(args: {
     user_id: number;
     text: string;
