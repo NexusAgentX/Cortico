@@ -109,7 +109,7 @@ npm 包,补一个 World、provider 或 bot。装在 `extensions/` 下,控制台�
 ## 环境变量
 
 `CORTICO_HOME`、`CORTICO_BOT`、`CORTICO_LOG`、`CORTICO_LANGUAGE`、`CORTICO_START_PAUSED`、
-`CORTICO_OPEN_BROWSER`、`CORTICO_SUPERVISED`,以及密钥的三处 `.env`。
+`CORTICO_OPEN_BROWSER`、`CORTICO_SUPERVISED`,以及三处 `.env` 的用途。
 [docs/environment-variables.md](docs/environment-variables.md)
 
 ## Windows

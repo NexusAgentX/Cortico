@@ -240,9 +240,7 @@ function isSensitivePath(path: string): string | null {
   }
   if (/\.(jks|key|keystore|p12|pfx)$/.test(base)) return '私钥或证书容器';
   if (/^grok-oauth-.*\.json$/.test(base)) return 'OAuth token 文件';
-  // 部署根整片拦住,不按文件名逐条认:一份部署里同时装着真凭证(config.json 里的
-  // sessdata / 房间号)、她的 Memory 与真人档案。原先分散的六条 ignore 规则合成
-  // `/deployments/` 一条之后,一次 `git add -f` 就是一次全泄,爆炸半径比以前大。
+  // 部署目录包含私有数据,即使文件名或内容未命中其他规则也要排除。
   if (lower === 'deployments' || lower.startsWith('deployments/')) return '部署根不得进入版本控制';
   if (/^bots\/[^/]+\/config\.json$/.test(lower)) return 'bot 部署配置';
   return null;

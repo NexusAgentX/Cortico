@@ -52,7 +52,7 @@ function partsText(content: string | readonly unknown[] | null | undefined): str
   }).join('');
 }
 
-/** Human-readable text is a projection; the standard item remains authoritative. */
+/** Extract readable text from the Item without changing its stored shape. */
 export function itemText(item: Item): string {
   if (item.type === 'message') return partsText(item.content);
   if (item.type === 'function_call_output') return partsText(item.output);
@@ -73,7 +73,7 @@ export function responseRecords(response: Response, origin: ItemOrigin, context:
   }));
 }
 
-/** Standard request projection. Output reasoning content remains available in the provider's context records. */
+/** Build a standard request Item; provider context records retain output reasoning content. */
 export function inputItem(entry: ContextRecord): InputItem {
   const item = entry.item;
   if (item.type === 'reasoning') {

@@ -1,65 +1,58 @@
+<!-- Owner: src/paths.ts, src/deploy.ts, src/bot.ts -->
+
 # bots/
 
-Owner: `src/paths.ts`, `src/deploy.ts`, `src/bot.ts`
-
-每个子目录是一个 **bot 代码包**:Persona代码、建议配置、装配、以及提示词与
-演出资产。**这里没有任何一份部署**——config.json、密钥、她的记忆、运行数据都在
-部署根(默认 `deployments/`,位置由 `CORTICO_HOME` 决定,见仓库根 `.env.example`)。
-
-一份部署用 `deployment.json` 声明它引用哪个包,所以同一个包可以有多份部署
-(`deployments/cortiv/` 与 `deployments/cortiv-测试/` 都可以 `{ "bot": "cortiv" }`)。
-启动器列的是部署,不是包。
+每个子目录是一个 bot 代码包，包含 Persona、配置默认值、装配代码、提示词和演出配置。
+部署保存配置、密钥、Memory 与运行数据，默认位于 `deployments/`，可用 `CORTICO_HOME` 更改位置。
+`deployment.json` 的 `bot` 字段指定代码包；多份部署可以使用同一个包。启动器按部署列出入口。
 
 ```bash
-pnpm start <名字>     # 或者双击 start.bat，从菜单里选
-pnpm start --list     # 列出可启动的
+pnpm start <部署名>
+pnpm start --list
 ```
 
-## 包里有什么(全部进版本控制)
+Windows 也可通过 `start.bat` 选择部署。
 
-| | |
+## 代码包
+
+| 路径 | 内容 |
 |---|---|
-| `index.ts` | `BotDefinition`:Persona怎么造、声明哪些渠道(`declares`)、层2 建议配置、控制台增量。**唯一**知道"这是哪个包"的文件。World 实现不在这里列:仓内目录与扩展由启动器并成一张表;哪些真挂上由部署的 `config.json` 里 `worlds.<id>.enabled` 决定,控制台可热激活 / 停用 / 重启。 |
-| `persona/` | Persona 代码。 |
-| `vtuber-pack/` | 挂 `cortico-world-vtuber` 的包才有:演出词表、曲线与参数集,人格资产。目录在,World 就用它;`worlds.vtuber.packDir` 可指到别处;都没有用 World 自带的范例包。 |
-| `worlds/<id>/ENV_PROMPT.md` | 这个人格对某个 World 环境提示词模板的覆盖(**层 2**,整份替换,占位符照常插值)。文件不在就用 World 自带的 `src/worlds/<id>/ENV_PROMPT.md`。 |
+| `index.ts` | `BotDefinition`：创建 Persona、声明 World、提供配置默认值和控制台贡献。启动器合并内建与扩展 World，按 `worlds.<id>.enabled` 挂载；控制台支持激活、停用和重启。 |
+| `persona/` | Persona 代码与默认模板。 |
+| `vtuber-pack/` | `cortico-world-vtuber` 使用的演出词表、曲线与参数。可通过 `worlds.vtuber.packDir` 指定目录；未提供演出包时使用 World 的示例包。 |
+| `worlds/<id>/ENV_PROMPT.md` | bot 对 World 环境模板的覆盖，整份替换并保留占位符插值；缺失时使用 World 自带模板。 |
 
-## 部署里有什么(全部不进版本控制)
+## 部署
 
-在 `<CORTICO_HOME>/<部署名>/` 下:
+下列路径相对于 `<CORTICO_HOME>/<部署名>/`，部署内容不纳入仓库版本控制。
 
-| | |
+| 路径 | 内容 |
 |---|---|
-| `deployment.json` | 这份部署引用哪个包:`{ "bot": "cortiv" }`。 |
-| `config.json` | 层 3 部署配置:换一台机器就要改的东西 + 操作者的选择。 |
-| `.env` | 这份部署的 World 密钥。provider 的密钥不在这里,在部署根的 `providers/<端点名>/` 下。 |
-| `memory/`（或 `workspace/`） | Memory 内容,带独立 git 历史。目录名由 Persona 的 `paths.memory` 决定。 |
-| `worlds/<id>/ENV_PROMPT.md` | **层 3**:部署者自己微调的那一份,压过包里的层 2。控制台上改环境提示词只写这里,包里那份不动;「恢复默认」即删掉它,回落层 2。 |
-| `prompts/` | Persona文本的部署侧那份:`ORIENTATION.md` 存在即压过包里的自述;`FIRST_TURN_{USER,THINKING,REPLY}.md` 是合成首轮对话(风格锚),**只有这一层**,包里不带,开关 `context.firstTurn` 默认关。 |
-| `vtuber-pack/` | 层 3 演出包覆盖(可选)。 |
-| `avatar.png` / `voices/` | 头像与参考声线,部署者持有的素材。 |
-| `data/` | 事件库、session、用量流水、Core 状态。判据:**删掉之后还能不能起来**——能才放这里。 |
+| `deployment.json` | 引用的代码包，例如 `{ "bot": "cortiv" }`。 |
+| `config.json` | 部署配置，覆盖代码包默认值。 |
+| `.env` | World 密钥。Provider 密钥由端点管理，保存在部署根共享的 `providers/<端点名>/` 中。 |
+| `memory/` 或 `workspace/` | Memory 内容；路径由 Persona 的 `paths.memory` 决定，Git 历史由 Persona 实现提供。 |
+| `worlds/<id>/ENV_PROMPT.md` | 部署对 World 模板的覆盖。控制台保存写此文件；恢复默认会删除此覆盖，重新使用 bot 或 World 模板。 |
+| `prompts/` | Persona 模板覆盖，例如 `ORIENTATION.md`。合成首轮从部署的 `FIRST_TURN_{USER,THINKING,REPLY}.md` 读取，开关 `context.firstTurn` 默认关闭。 |
+| `vtuber-pack/` | 可选的部署演出包。 |
+| `avatar.png`、`voices/` | 头像与参考声线素材。 |
+| `data/` | 事件库、session、用量记录和 Core 状态。 |
 
-三样东西(提示词、 World 配置、演出包)都是同一套三层:**逐层深合并,同名文件整份替换,后一层赢**。
+配置优先级为组件默认值、bot 默认值、部署配置，按层深合并。
+提示词与演出文件按 World、bot、部署的顺序覆盖，同名文件整份替换。
 
-## 现有的
+## 内建 bot
 
-三个 bot,三个独立的Persona类:
+| 代码包 id | Persona 类 | 显示名 | 能力 | 默认控制台端口 |
+|---|---|---|---|---|
+| `corti-soulmate` | `CortiSoulmate` | Yukima | 分层 Memory、潜意识三路、QQ 起草与确认、提案和宪法。 | 7777 |
+| `cormini` | `Cormini` | 可缇mini | 工作区 Memory、宪法前缀、主 session 和终端。 | 7788 |
+| `cortiv` | `CortiV` | 可缇Corti | 继承 Cormini，增加观众档案、交接后台整理，以及直播相关 World。 | 7789 |
 
-| 目录 / 启动 id | 类 | bot 名 | 是什么 |
-|---|---|---|---|
-| `corti-soulmate` | `CortiSoulmate` | Yukima | 演化型人格伙伴。分层记忆、潜意识三路、QQ 起草-确认门、提案与宪法。默认端口 7777。 |
-| `cormini` | `Cormini` | 可缇mini | 最小完整实现。工作区即记忆、宪法即前缀、一个 session、只有终端。默认端口 7788。 |
-| `cortiv` | `CortiV` | 可缇Corti | AI VTuber 实时系统。继承 Cormini,内建直播 memory(观众档案首见唤起/交接并行梦);终端、VTuber、B站直播间与 Minecraft。默认端口 7789。 |
+## 新建 bot
 
-## 加一个新的
+行为变体可继承现有 Persona，覆写钩子、前缀或交接策略。不同 Memory 结构或 session 组织可从
+`cormini` 复制后修改。变体通过独立类实现，基类不增加用于选择变体的构造开关。
 
-两条路,按分叉深浅选:
-
-- **继承**:像 `cortiv` 那样 `class CortiV extends Cormini`,把差异写成**独立类的行为**
-  (覆写时机钩子/前缀段/交接策略)。不要给基类加构造开关——变体是类,不是参数组合。
-- **复制**:要改记忆结构、session 形态这类骨架时,复制 `cormini` 整个目录再改 `persona/`。
-
-两条路都要改掉 `index.ts` 里的 `id` 与 `web.port` 建议值,并给它建一份部署
-(部署根下新开一个目录,写 `deployment.json` 指向这个包)。控制台不需要你写——
-`createBot` 从 Core 派生框架级的那一整套,你只在 `console` 里补它派生不出来的东西。
+设置 `index.ts` 的 `id` 与 `web.port`，创建部署目录并用 `deployment.json` 引用该包。
+`createBot()` 提供框架控制台页；bot 的 `console` 声明补充其专有功能。
