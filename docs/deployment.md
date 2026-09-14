@@ -8,9 +8,9 @@
 ## 部署根
 
 所有部署的父目录。解析链:进程环境 `CORTICO_HOME` > 仓库根 `.env` 里的 `CORTICO_HOME` >
-`<主仓库根>/deployments/`。相对路径按主仓库根解析;git worktree 共享主仓库的这一份。
+`<主仓库根>/deployments/`。相对路径按主仓库根解析;未设置覆盖值的 git worktree 使用主仓库的部署根。
 
-部署根下与各部署平级的还有三个机器级目录,一台机器一份,几份部署共用。它们没有
+部署根下与各部署平级的还有三个共享目录,供该部署根下的部署共用。它们没有
 `deployment.json`,启动器列不出它们:
 
 | 目录 | 是什么 |
@@ -37,7 +37,7 @@ pnpm start mybot
 | `memory/` | Memory。目录名由 Persona 的 `paths.memory` 定(Cormini 与 CortiV 用 `workspace/`) |
 | `data/` | 事件、会话、用量和进程状态等运行数据；删除后可重新启动，但原有记录无法恢复 |
 | `prompts/` | Persona 文本的部署侧覆盖:`ORIENTATION.md`;`FIRST_TURN_{USER,THINKING,REPLY}.md` 只有这一层 |
-| `worlds/<id>/ENV_PROMPT.md` | 某个 World 环境提示词的部署侧覆盖,整份替换。控制台上改就写这里,「恢复默认」即删它 |
+| `worlds/<id>/ENV_PROMPT.md` | 某个 World 环境提示词的部署侧覆盖,整份替换。控制台编辑写入此文件,「移除部署覆盖」删除此文件 |
 | `avatar.png`、`voices/` | 头像与参考声线 |
 
 `data/` 里:`runs/index.jsonl` 与 `runs/<run>/`(见 [runs.md](runs.md))、`session-main.jsonl`

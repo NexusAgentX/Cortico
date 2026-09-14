@@ -24,5 +24,4 @@
 
 - 外部程序可能受到 Smart App Control 限制;诊断与运行时目录设置见 [runtimes.md](runtimes.md)。
 - Minecraft 的 Java 版本约定与客户端兼容限制见 [Minecraft README](../src/worlds/minecraft/README.md)。
-- RtAudio 自动选择的 ASIO 后端曾在开发机器上崩溃;声卡扩展应显式使用 WASAPI,具体依赖由扩展说明。
 - 在 `extensions/` 下跑 pnpm 必须带 `--ignore-workspace`,否则根 lockfile 会多出一个 importer。

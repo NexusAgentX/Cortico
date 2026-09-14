@@ -52,7 +52,7 @@ async function loadBotDefinition(
   };
 }
 
-/** 用系统默认浏览器打开url(跨平台;失败静默——地址已打印) */
+/** 浏览器启动失败时保留终端已输出的地址。 */
 function openBrowser(url: string): void {
   try {
     const p = process.platform;
@@ -61,7 +61,7 @@ function openBrowser(url: string): void {
       : p === 'darwin' ? ['open', [url]]
       : ['xdg-open', [url]];
     spawn(cmd as string, args as string[], { detached: true, stdio: 'ignore' }).unref();
-  } catch { /* 打不开就算了 */ }
+  } catch { /* 地址已在终端输出。 */ }
 }
 
 function pickBotName(): string {
@@ -71,10 +71,10 @@ function pickBotName(): string {
   if (available.length === 0) throw new Error(`${deploymentRoot()} 下没有含 deployment.json 的部署目录`);
   if (!name) {
     if (available.length === 1) return available[0];
-    throw new Error(`请指定要启动哪个 bot:npm start -- <${available.join(' | ')}>`);
+    throw new Error(`请指定部署:pnpm start <${available.join(' | ')}>`);
   }
   if (!available.includes(name)) {
-    throw new Error(`没有这个 bot: ${name}。可选:${available.join(' / ')}`);
+    throw new Error(`没有这个部署: ${name}。可选:${available.join(' / ')}`);
   }
   return name;
 }
@@ -106,7 +106,7 @@ async function main(): Promise<void> {
   const levelArg = process.argv.find((a) => a.startsWith('--log-level='))?.slice('--log-level='.length) ?? process.env.CORTICO_LOG;
   if (levelArg) {
     if (!(levelArg in LOG_LEVEL_RANK)) {
-      console.error(`日志级别不认识: ${levelArg}(可选 ${Object.keys(LOG_LEVEL_RANK).join(' / ')})`);
+      console.error(`无效日志级别: ${levelArg}(可选 ${Object.keys(LOG_LEVEL_RANK).join(' / ')})`);
       process.exit(1);
     }
     cfg.logging.file = levelArg as LogLevel;
@@ -148,14 +148,14 @@ async function main(): Promise<void> {
     console.log(slot.mounted ? `  World:    ${slot.id}` : `  World:    ${slot.id} · 未激活`);
   }
   for (const entry of bot.assembly.missing) {
-    console.log(`  World:    ${entry.id} ⚠ 未装上 — ${entry.reason}`);
+    console.log(`  World:    ${entry.id} 不可用: ${entry.reason}`);
   }
   for (const ext of extensions.records) {
     console.log(ext.loaded
       ? `  扩展:      ${ext.name}@${ext.version} → ${ext.kind === 'provider' ? 'provider' : ext.kind === 'bot' ? 'bot' : 'World'} ${ext.worldId}`
       : ext.idle
         ? `  扩展:      ${ext.name}@${ext.version} · bot 包,本部署未引用`
-        : `  扩展:      ${ext.name} ⚠ 未加载 — ${ext.reason}`);
+        : `  扩展:      ${ext.name} 未加载: ${ext.reason}`);
   }
   console.log(`  主模型:    ${bot.core.mainSessionSpec().model}`);
   if (startPaused) {
@@ -208,7 +208,7 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
-  // Windows 关窗对应 CTRL_CLOSE_EVENT → SIGHUP，Ctrl+Break 对应 SIGBREAK。两者触发收尾，但系统给予的期限可能不足以存盘；完整关机使用控制台入口。
+  // Windows 关闭窗口触发 SIGHUP,Ctrl+Break 触发 SIGBREAK;系统的退出时限可能短于关机流程。
   process.on('SIGHUP', () => void shutdown('SIGHUP(窗口被关闭)'));
   if (process.platform === 'win32') {
     process.on('SIGBREAK', () => void shutdown('SIGBREAK(Ctrl+Break)'));

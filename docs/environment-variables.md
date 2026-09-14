@@ -21,7 +21,8 @@
 | `<部署>/.env` | World 的密钥:`SESSDATA`、`BRAVE_API_KEY`、`OPENROUTER_API_KEY`、`VTS_AUTH_TOKEN`… |
 | `<部署根>/providers/<端点名>/.env` | 该端点的密钥,名字由端点条目的 `secret` 字段定 |
 
-`.env` 一行一个 `NAME=value`,值不能含空格。控制台写密钥只写不读回。
+密钥文件一行一个 `NAME=value`,值不能含空格。仓库根 `.env` 的 `CORTICO_HOME` 可用引号包住含空格的路径。
+控制台写密钥只写不读回。
 
 安装扩展时向子进程传入 `COREPACK_ENABLE_DOWNLOAD_PROMPT=0`;本机路径选择器使用
 `CORTICO_PICKER_*` 传参。`CORTICO_DEV_MINIMAL=1` 使 `pnpm dev:console` 只挂载终端 World,`CORTICO_PORT` 设置开发控制台端口

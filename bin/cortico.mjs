@@ -21,10 +21,6 @@ export const RESTART_FLAG_FILE = '.restart-request';
 
 const MIN_NODE_MAJOR = 22;
 
-// ---------------------------------------------------------------------------
-// 纯判断(可测,不碰进程)
-// ---------------------------------------------------------------------------
-
 /**
  * 收到重启 IPC 消息或检测到重启标志文件时重新启动；其他退出不自动重启。
  * 标志文件用于 IPC 通知中断时保留请求。
@@ -51,9 +47,7 @@ export function parseArgs(argv) {
 }
 
 /**
- * 名字、清单、这是不是个交互终端 → 到底启动哪一个。
- *
- * `{ kind: 'ask' }` 表示要弹菜单;非交互时不弹,把可选项写进错误里,让人在命令行上指定。
+ * 未指定部署且有多个可选项时,交互终端返回 ask,非交互终端返回错误与可选项。
  *
  * @param {{ bot: string | null, available: readonly string[], interactive: boolean }} input
  * @returns {{ kind: 'run', bot: string } | { kind: 'ask' } | { kind: 'error', message: string }}
@@ -61,11 +55,11 @@ export function parseArgs(argv) {
 export function chooseBot(input) {
   const { bot, available, interactive } = input;
   if (available.length === 0) {
-    return { kind: 'error', message: '部署根下没有可启动的 bot。一份部署 = 一个含 deployment.json 的目录。' };
+    return { kind: 'error', message: '部署根下没有含 deployment.json 的部署目录。' };
   }
   if (bot) {
     if (available.includes(bot)) return { kind: 'run', bot };
-    return { kind: 'error', message: `没有这个 bot: ${bot}。可选:${available.join(' / ')}` };
+    return { kind: 'error', message: `没有这个部署: ${bot}。可选:${available.join(' / ')}` };
   }
   if (available.length === 1) return { kind: 'run', bot: available[0] };
   if (interactive) return { kind: 'ask' };
@@ -92,10 +86,6 @@ export function pnpmMissingMessage(nodeMajor = Number(process.versions.node.spli
   return '找不到 pnpm。请安装：npm i -g pnpm';
 }
 
-// ---------------------------------------------------------------------------
-// 跑起来
-// ---------------------------------------------------------------------------
-
 /** @param {string} cmd */
 function onPath(cmd) {
   const probe = process.platform === 'win32'
@@ -105,7 +95,7 @@ function onPath(cmd) {
 }
 
 /**
- * 同步跑一条 pnpm 命令,输出直接落到本窗口。
+ * 同步执行 pnpm 命令并继承终端输入输出。
  * @param {{ command: string, prefix: string[] }} pnpm
  * @param {string[]} args
  */
@@ -113,7 +103,7 @@ function runPnpm(pnpm, args) {
   const result = spawnSync(pnpm.command, [...pnpm.prefix, ...args], {
     cwd: REPO_ROOT,
     stdio: 'inherit',
-    // Windows 上 corepack 与 pnpm 都是 .cmd 垫片,只能经 shell 起。
+    // Windows 上的 .cmd 启动文件需要经 shell 执行。
     shell: process.platform === 'win32',
     env: { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' },
   });
@@ -121,7 +111,7 @@ function runPnpm(pnpm, args) {
 }
 
 /**
- * 跑一条 pnpm 命令并把 stdout 收回来(菜单要的部署清单走这条)。
+ * 执行 pnpm 命令并返回 stdout。
  * @param {{ command: string, prefix: string[] }} pnpm
  * @param {string[]} args
  */
@@ -172,7 +162,7 @@ export function promptChoice(items, out = process.stdout, input = process.stdin)
     };
     input.on('keypress', onKey);
     input.resume();
-    out.write('\n  可启动的 bot:  ↑↓ 移动  Enter 确认  Esc 取消\n\n');
+    out.write('\n  可启动的部署:  ↑↓ 移动  Enter 确认  Esc 取消\n\n');
     draw(true);
   });
 }
@@ -248,14 +238,14 @@ async function main() {
   }
 
   if (!existsSync(join(REPO_ROOT, 'node_modules'))) {
-    console.log('[首次运行] 正在安装依赖 pnpm install ...\n');
+    console.log('正在安装依赖: pnpm install ...\n');
     const code = runPnpm(pnpm, ['install']);
     if (code !== 0) return code;
   }
 
   // 控制台产物不纳入版本控制。
   if (!existsSync(join(REPO_ROOT, 'dist', 'web', 'asset-manifest.json'))) {
-    console.log('[首次运行] 正在构建控制台 pnpm build:web ...\n');
+    console.log('正在构建控制台: pnpm build:web ...\n');
     const code = runPnpm(pnpm, ['build:web']);
     if (code !== 0) return code;
   }
