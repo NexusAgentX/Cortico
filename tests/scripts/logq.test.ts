@@ -1,6 +1,4 @@
-/**
- * scripts/logq.ts 的行为钉子:一个假 data 目录,两个 run,五条流的记录带同一套 round / call。
- */
+/** 用两个 run 与关联字段验证日志筛选、时间线、诊断和导出。 */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,7 +30,7 @@ let root: string;
 let dataDir: string;
 
 function buildFixture(): void {
-  // root 是**部署根**:一份部署一个子目录(resolveDataDir 的第二参就是它)。
+
   root = mkdtempSync(join(tmpdir(), 'logq-test-'));
   const botDir = join(root, 'tb');
   dataDir = join(botDir, 'data');
@@ -57,7 +55,7 @@ function buildFixture(): void {
     { ts: `2026-09-08T10:00:01.000${OFFSET}`, run: R1, seq: 1, level: 'info', area: 'core.boot', msg: '旧场开机' },
   ]));
 
-  // R2:log.1.jsonl 是滚出去的旧一代,log.jsonl 是新的
+
   writeFileSync(join(runsDir, R2, 'log.1.jsonl'), jsonl([
     { ts: at(1000), run: R2, seq: 1, level: 'info', area: 'core.boot', msg: '开机' },
     { ts: at(2000), run: R2, seq: 2, level: 'warn', area: 'worlds.vtuber.inject', event: 'reconnect', msg: 'VTS 排定重连', data: { delayMs: 500 } },
@@ -129,7 +127,7 @@ describe('run 选择', () => {
     expect(() => resolveRunId(dataDir, 'zzz')).toThrow(UsageError);
   });
 
-  it('--bot 缺省取唯一带 data/runs 的 bot', () => {
+  it('--bot 缺省取唯一带 data/runs 的部署', () => {
     expect(resolveDataDir({}, root)).toBe(dataDir);
     expect(resolveDataDir({ bot: 'tb' }, root)).toBe(dataDir);
     expect(() => resolveDataDir({ bot: 'nope' }, root)).toThrow(UsageError);
@@ -165,7 +163,7 @@ describe('时刻', () => {
     expect(parseWhen('01:15:30', ctx)).toBe(Date.parse(`2026-09-10T01:15:30${OFFSET}`));
     expect(parseWhen('21:00', ctx)).toBe(Date.parse(`2026-09-09T21:00:00${OFFSET}`));
   });
-  it('缺时区的 ISO 按 run 时区,看不懂的报错', () => {
+  it('缺时区的 ISO 按 run 时区解析,无效时间报错', () => {
     expect(parseWhen('2026-09-09T23:00', ctx)).toBe(Date.parse(`2026-09-09T23:00${OFFSET}`));
     expect(parseWhen('2026-09-09T15:00:00Z', ctx)).toBe(Date.parse('2026-09-09T15:00:00Z'));
     expect(() => parseWhen('昨天', ctx)).toThrow(UsageError);
@@ -202,7 +200,7 @@ describe('log', () => {
     expect(tail.map((r) => r.event)).toEqual(['death', 'place-rejected']);
   });
 
-  it('文本行:时钟、级别、area/event、msg、×N、data、err、锚点', () => {
+  it('文本行包含时间、级别、区域、事件、重复数与关联字段', () => {
     const line = formatLogLine({ ts: at(3000), run: R2, seq: 3, level: 'warn', area: 'worlds.vtuber.inject', event: 'reconnect', msg: 'VTS 排定重连', repeat: 4, data: { delayMs: 500 }, err: { name: 'E', message: '拒连' }, round: 7, call: 'c9' });
     expect(line).toBe('10:00:03.000 WARN  worlds.vtuber.inject/reconnect  VTS 排定重连 ×5  {"delayMs":500}  err: 拒连 [r=7 c=c9]');
   });
@@ -253,7 +251,7 @@ describe('doctor', () => {
     const md = await doctor(locateRun(dataDir, R2));
     expect(md).toContain('| core.loop/llm-failed | 2 |');
     expect(md).toContain('| worlds.minecraft.bridge | 1 |');
-    // 折叠汇总行 repeat=4 加窗口首条 1 = 5
+
     expect(md).toContain('| worlds.vtuber.inject/reconnect | 5 |');
     expect(md).toContain('尝试 3 次,失败 1,丢弃 0');
     expect(md).toContain('elapsedMs p50 2000 / p90 3000');
@@ -261,7 +259,7 @@ describe('doctor', () => {
     expect(md).toContain('相关日志 2 条');
     expect(md).toContain('| vtuber_act | 5 | 0 | 10 | 10 |');
     expect(md).toContain('| mc_queue | 1 | 1 | 20 | 20 |');
-    // 有调用的轮次 3/4/5/6/7,只有 end_turn 的是 7
+
     expect(md).toContain('只有 end_turn 的轮次:1 / 5(20%)');
     expect(md).toContain('vtuber_act 5 次,空台本 1(20%)');
     expect(md).toContain('p50 300 ms / p90 500 ms(5 样本)');

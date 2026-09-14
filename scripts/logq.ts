@@ -1,7 +1,8 @@
 /**
- * logq:一份部署的 `data/runs/` 的只读查询命令。子命令 runs(run 清单)、log(过滤运行日志)、
- * timeline(跨流按 ts 归并)、turn(单轮回放)、doctor(体检)、bundle(打包)。记录布局与字段的
- * 权威在写入侧:`src/core/run.ts`(run 目录与 index)、`log-context.ts`(信封锚点)、
+ * logq:查询部署的 `data/runs/`,不修改源记录;bundle 将副本写入指定目录。
+ * 子命令 runs(run 清单)、log(过滤运行日志)、timeline(跨流归并)、turn(单轮回放)、
+ * doctor(诊断)、bundle(打包)。记录布局由写入侧定义:
+ * `src/core/run.ts`(run 目录与 index)、`log-context.ts`(日志关联字段)、
  * `tool-log.ts`、`transcript.ts`、`usage-log.ts`。
  *
  * 时刻一律 Date.parse 后按毫秒比较。相对时刻(`10m`)从 run 结束刻(未关机则此刻)往回数;
@@ -23,13 +24,13 @@ export const USAGE = `用法: pnpm logq [子命令] [选项]
   runs                 run 清单(runs/index.jsonl 的开机行与关机行合并)
   log                  过滤运行日志(缺省子命令;按 log.N.jsonl 旧→新再 log.jsonl 读)
   timeline             按 ts 归并 log / toolcalls / transcript / events / usage 为一条时间线
-  turn <N>             回放第 N 轮:投递事件、推理、台词、每次工具调用及同 call 的 World 记录、用量
-  doctor               固定体检项,输出 markdown
+  turn <N>             回放第 N 轮:投递事件、推理、assistant 正文、工具调用及同 call 的 World 记录、用量
+  doctor               运行固定诊断项,输出 markdown
   bundle --out <dir>   把 run 目录、本 run 的 usage 行与 index 行、脱敏 config.json、doctor.md
                        拷到 <dir>/<run>/
 
 选择
-  --bot <name>         部署根下 <name>/data;缺省取唯一带 data/runs 的 bot
+  --bot <name>         部署根下 <name>/data;缺省取唯一带 data/runs 的部署
   --data <dir>         直接指定 data 目录
   --run latest|<id>|<id 前缀>    缺省 latest
 
@@ -101,7 +102,7 @@ function intOpt(a: Argv, key: string): number | undefined {
 // 数据目录与 run
 // ---------------------------------------------------------------------------
 
-/** `root` 是**部署根**(不是仓库根),缺省由 src/paths.ts 按 CORTICO_HOME 解析。 */
+/** root 为部署根,缺省由 src/paths.ts 按 CORTICO_HOME 解析。 */
 export function resolveDataDir(opts: { bot?: string; data?: string }, root = deploymentRoot()): string {
   if (opts.data) return resolve(opts.data);
   if (opts.bot) {
@@ -176,7 +177,7 @@ export interface RunContext {
   offset: string;
 }
 
-/** 崩溃的 run 没有 index 行,开机刻取最早一条日志的 ts,再没有就从 id 反推(按 UTC) */
+/** 缺少开机行时取最早日志的 ts,再缺失则从 run id 按 UTC 解析。 */
 function startedAtOf(run: string, runDir: string, row: RunRow | undefined): string {
   if (row?.startedAt) return row.startedAt;
   const first = logFiles(runDir)[0];
@@ -237,7 +238,7 @@ export function parseWhen(
   let iso = /^\d{4}-\d{2}-\d{2}$/.test(spec) ? `${spec}T00:00:00` : spec;
   if (!/(Z|[+-]\d{2}:\d{2})$/.test(iso)) iso += ctx.offset;
   const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) throw new UsageError(`看不懂的时刻:${spec}`);
+  if (Number.isNaN(ms)) throw new UsageError(`无效时间:${spec}`);
   return ms;
 }
 
@@ -692,7 +693,7 @@ export function quantile(values: readonly number[], q: number): number {
 const LLM_EVENTS = new Set(['llm-failed', 'stall', 'watermark-stall']);
 const LLM_MSG = ['连续失败', '水位停滞'];
 const TTS_EVENTS = new Set(['stream-received', 'synth']);
-/** 重连之间超过这个间隔就算下一个风暴窗口 */
+/** 相邻重连超过此间隔时分组统计。 */
 const VTS_WINDOW_GAP_MS = 60_000;
 const WARN_TOP = 15;
 const MIN_DELAY_SAMPLES = 5;
