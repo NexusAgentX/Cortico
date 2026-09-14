@@ -1,11 +1,11 @@
 /**
- * 真机检查(手动跑,联网):把钉住的 llama.cpp release 装进一个部署根,以 router 模式起 llama-server,
- * 拉一个小模型,经 LlamaCppProvider 打一发带工具的流式 Chat,再打一发开思维链的。不起 bot。
+ * 手动联网检查:安装指定 llama.cpp release,以 router 模式启动 llama-server 并下载模型,
+ * 经 LlamaCppProvider 验证流式工具调用与思维链;不启动 bot。
  *
  *   tsx scripts/check-llamacpp.ts [--home <部署根>] [--backend cuda-13.3] [--release b10930]
  *                                 [--model ggml-org/Qwen3-0.6B-GGUF:Q8_0] [--port 8097] [--keep]
  *
- * 默认部署根是 scratch/llamacpp-check/(gitignored),不碰真部署;`--keep` 跑完不停 server。
+ * 默认部署根为 scratch/llamacpp-check/;`--home` 可覆盖。`--keep` 在检查结束后保留服务进程。
  */
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
@@ -122,18 +122,18 @@ async function main(): Promise<void> {
     },
     { nativeSpec: { model, thinking: false, maxTokens: 256 }, onEvent: (event) => { if (event.type === 'response.output_text.delta') text += event.delta; } },
   );
-  console.log('第一发(思维链关,带工具):', first.response.output.map((item) => item.type === 'function_call' ? `function_call ${item.name}(${item.arguments})` : item.type), '流式正文:', JSON.stringify(text));
+  console.log('工具调用检查(思维链关闭):', first.response.output.map((item) => item.type === 'function_call' ? `function_call ${item.name}(${item.arguments})` : item.type), '流式正文:', JSON.stringify(text));
   console.log('计量', first.attempts.at(-1)?.meters);
 
   const second = await provider.respond(
     { model, input: [{ type: 'message', role: 'user', content: 'In one sentence: why is the sky blue?' }], max_output_tokens: 512 },
     { nativeSpec: { model, thinking: true, maxTokens: 512 } },
   );
-  console.log('第二发(思维链开):', second.response.output.map((item) => `${item.type}:${'content' in item && Array.isArray(item.content) ? JSON.stringify(item.content).slice(0, 160) : ''}`));
+  console.log('思维链检查:', second.response.output.map((item) => `${item.type}:${'content' in item && Array.isArray(item.content) ? JSON.stringify(item.content).slice(0, 160) : ''}`));
   console.log('计量', second.attempts.at(-1)?.meters);
 
   if (!keep) await manager.stop();
-  else console.log(`--keep:server 留着,${baseUrl}`);
+  else console.log(`--keep:保留服务进程,${baseUrl}`);
 }
 
 main().catch((error) => {
