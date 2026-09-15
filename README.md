@@ -39,8 +39,7 @@ companionship and much more. Cortico's goal: bring your AI to the world!
 
 1. 🆓 Free and open source!
 2. 🤖 A native agent harness: everything is designed around the agent.
-3. 🔌 Modular LLM provider components. The Responses protocol inside; many upstream LLM APIs
-   outside, locally deployed models included.
+3. 🔌 Modular LLM provider components: Can connect to many LLM APIs as well as locally deployed servers.
 4. 🧠 Unconstrained internal context management, giving much freedom for the design of agent behaviour
    patterns and Memory system.
 6. 🧩 An extension system (Cortico World), isolated from the inside, with event delivery and tool
