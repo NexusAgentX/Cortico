@@ -88,6 +88,8 @@ The console is at `http://127.0.0.1:7788/`.
 console bundle if absent, offers a deployment menu, and restarts the process when the console
 asks for it.
 
+## The Four Layers
+
 | Layer | Owns | Lives in |
 |---|---|---|
 | **Core** | The lifecycle of sessions, the event stream and model calls. No semantics of its own | `src/core/` |
