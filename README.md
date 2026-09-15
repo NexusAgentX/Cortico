@@ -52,8 +52,6 @@ games, even the physical environment. Cortico's goal: bring your AI to the world
    ([Cortina](https://github.com/Pal-AI-Lab/Cortina)): a non-developer can use an AI agent to
    build the extension they want, or move an existing implementation onto Cortico!
 
-[PHILOSOPHY.md](PHILOSOPHY.md) states the design stance every change is held to.
-
 ## Quick Start
 
 Node 22+.
@@ -62,30 +60,28 @@ Node 22+.
 corepack pnpm install
 ```
 
-Create a deployment that uses the reference bot `cormini`. It enables only terminal
-conversation by default:
+A deployment is a directory naming one bot. The reference bot `cormini` starts with terminal
+conversation alone:
 
 ```bash
 mkdir -p deployments/mybot && echo '{ "bot": "cormini" }' > deployments/mybot/deployment.json
 ```
 
-The default endpoint reaches DeepSeek through `openai-responses-compat` and needs a key:
+Its default endpoint reaches DeepSeek through `openai-responses-compat`:
 
 ```bash
 mkdir -p deployments/providers/deepseek && echo "DEEPSEEK_API_KEY=your-key" > deployments/providers/deepseek/.env
 ```
 
-Other endpoints are created on the console's model page; a key can also be filled in after
-startup and takes effect when saved. Start the deployment:
-
 ```bash
 pnpm start mybot
 ```
 
-The console is at `http://127.0.0.1:7788/`.
+The console is at `http://127.0.0.1:7788/`. Endpoints, keys and every other knob are edited
+there and take effect on save.
 
-`./start.sh` (on Windows, double-click `start.bat`) installs missing dependencies, builds the
-console bundle if absent, offers a deployment menu, and restarts the process when the console
+`./start.sh`, or `start.bat` on Windows, installs missing dependencies, builds the console
+bundle when it is absent, offers a deployment menu, and restarts the process when the console
 asks for it.
 
 ## The Four Layers
@@ -126,10 +122,9 @@ asks for it.
 | Minecraft | `minecraft` | A mineflayer client on a vanilla server: game state as text observations, high-level intent as game actions |
 | Web search | `websearch` | The Brave Search API |
 
-Everything else ships as an extension: `cortico-world-vtuber`, `cortico-world-asr`,
-`cortico-world-pvz`, `cortico-world-canvas`, `cortico-provider-grok`.
-`templates/extension/` holds a minimal installable package for each of the three kinds, and
-[Cortina](https://github.com/Pal-AI-Lab/Cortina) generates one.
+Published extensions: `cortico-world-vtuber`, `cortico-world-asr`, `cortico-world-pvz`,
+`cortico-world-canvas`, `cortico-provider-grok`. `templates/extension/` holds one minimal
+package per kind, and [Cortina](https://github.com/Pal-AI-Lab/Cortina) generates one.
 
 ## Model Providers
 
@@ -138,16 +133,13 @@ Everything else ships as an extension: `cortico-world-vtuber`, `cortico-world-as
 | `openai-responses-compat` | Model services that expose the Responses API |
 | `llamacpp` | A local llama-server, including release download and process supervision |
 
-Other protocols arrive as extensions. Endpoints are shared by every deployment under the same
-deployment root; `providers/<endpoint>/` holds that endpoint's model, sampling, key and price
-configuration.
+Other protocols arrive as extensions.
 
 ## Contributing
 
-Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first: it states
-what is accepted, what belongs in an extension instead, and the one rule — contributors must be
-able to explain all submitted code, including code written with a coding agent.
-[AGENTS.md](AGENTS.md) is the review checklist.
+A contributor must be able to explain all submitted code, including code written with a coding
+agent. [CONTRIBUTING.md](CONTRIBUTING.md) says what belongs in this repository and what belongs
+in an extension; [AGENTS.md](AGENTS.md) is the review checklist.
 
 ```bash
 pnpm test

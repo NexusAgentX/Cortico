@@ -48,8 +48,6 @@ Cortico 是基于事件流系统设计的 Agent Harness，用于自主响应、�
 7. 提供专用于 AI 开发的 Extension Creator 系统（[Cortina](https://github.com/Pal-AI-Lab/Cortina)），
    非专业开发者也可以使用 AI Agent 快速创建想要的扩展，或迁移现有的实现到 Cortico！
 
-设计说明见 [PHILOSOPHY.md](PHILOSOPHY.md)。
-
 ## 快速开始
 
 Node 22+。
@@ -58,25 +56,23 @@ Node 22+。
 corepack pnpm install
 ```
 
-创建一份使用参考 bot `cormini` 的部署。该 bot 默认只启用终端对话：
+一份部署是一个目录，指定一个 bot。参考 bot `cormini` 初始只启用终端对话：
 
 ```bash
 mkdir -p deployments/mybot && echo '{ "bot": "cormini" }' > deployments/mybot/deployment.json
 ```
 
-默认端点通过 `openai-responses-compat` 连接 DeepSeek，需要配置密钥：
+它的默认端点经 `openai-responses-compat` 连接 DeepSeek：
 
 ```bash
 mkdir -p deployments/providers/deepseek && echo "DEEPSEEK_API_KEY=你的key" > deployments/providers/deepseek/.env
 ```
 
-其他端点可在控制台「语言模型」页创建；密钥也可以启动后填写，保存即生效，不必重启。启动部署：
-
 ```bash
 pnpm start mybot
 ```
 
-控制台在 `http://127.0.0.1:7788/`。
+控制台在 `http://127.0.0.1:7788/`。端点、密钥和其余参数都在控制台里改，保存即生效。
 
 `./start.sh`（Windows 上双击 `start.bat`）会安装缺失的依赖、构建缺失的控制台产物，提供部署选择
 菜单，并在控制台请求重启后重新启动进程。
@@ -119,9 +115,9 @@ pnpm start mybot
 | Minecraft | `minecraft` | mineflayer 玩家客户端连原版服务器，游戏状态转文字观察，高层意图转游戏操作 |
 | 网页搜索 | `websearch` | Brave 搜索接口 |
 
-其余都以扩展形式提供：`cortico-world-vtuber`、`cortico-world-asr`、`cortico-world-pvz`、
-`cortico-world-canvas`、`cortico-provider-grok`。`templates/extension/` 为三类扩展各提供一个能装
-的最小包，[Cortina](https://github.com/Pal-AI-Lab/Cortina) 可以生成一个。
+已发布的扩展：`cortico-world-vtuber`、`cortico-world-asr`、`cortico-world-pvz`、
+`cortico-world-canvas`、`cortico-provider-grok`。`templates/extension/` 为三类扩展各提供一个最小
+包，[Cortina](https://github.com/Pal-AI-Lab/Cortina) 可以生成一个。
 
 ## 模型端点
 
@@ -130,13 +126,12 @@ pnpm start mybot
 | `openai-responses-compat` | 提供 Responses API 的模型服务 |
 | `llamacpp` | 本机 llama-server，含官方 release 的下载与进程托管 |
 
-其他协议通过扩展安装。端点由同一部署根下的各部署共用，每个 `providers/<端点名>/` 目录存放该端点
-的模型、采样、密钥和价格配置。
+其他协议通过扩展安装。
 
 ## 贡献
 
-欢迎 issue 与 pull request。先读 [CONTRIBUTING.md](CONTRIBUTING.md)：它写明什么会被接受、什么应该
-做成扩展，以及唯一的硬要求——贡献者必须能解释自己提交的全部代码，用编码 agent 写的也一样。
+贡献者必须能解释自己提交的全部代码，用编码 agent 写的也一样。
+[CONTRIBUTING.md](CONTRIBUTING.md) 写明什么属于本仓库、什么应该做成扩展，
 [AGENTS.md](AGENTS.md) 是评审清单。
 
 ```bash
