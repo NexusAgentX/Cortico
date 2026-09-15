@@ -39,16 +39,16 @@ games, even the physical environment. Cortico's goal: bring your AI to the world
 
 ## Features
 
-1. Free and open source!
-2. A native agent harness: everything is designed around the agent.
-3. Modular LLM provider components. The Responses protocol inside; many upstream LLM APIs
+1. 🆓 Free and open source!
+2. 🤖 A native agent harness: everything is designed around the agent.
+3. 🔌 Modular LLM provider components. The Responses protocol inside; many upstream LLM APIs
    outside, locally deployed models included.
-4. Unconstrained internal context management, for different agent behaviour patterns and many
+4. 🧠 Unconstrained internal context management, for different agent behaviour patterns and many
    designs of Memory system.
-5. An extension system (Cortico World), isolated from the inside, with event delivery and tool
+5. 🧩 An extension system (Cortico World), isolated from the inside, with event delivery and tool
    calls as its input and output: excellent compatibility and nearly unlimited extensibility.
-6. A WebUI that is straightforward to operate.
-7. An Extension Creator system built for AI development
+6. 🖥️ A WebUI that is straightforward to operate.
+7. 🪄 An Extension Creator system built for AI development
    ([Cortina](https://github.com/Pal-AI-Lab/Cortina)): a non-developer can use an AI agent to
    build the extension they want, or move an existing implementation onto Cortico!
 

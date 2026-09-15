@@ -37,15 +37,15 @@ Cortico 是基于事件流系统设计的 Agent Harness，用于自主响应、�
 
 ## 特性
 
-1. 免费开源！
-2. 源生 Agent Harness，一切围绕 Agent 设计。
-3. 模块化的 LLM Provider 组件，内部使用 Responses 协议，对外支持多种上游 LLM API，并支持使用本
+1. 🆓 免费开源！
+2. 🤖 源生 Agent Harness，一切围绕 Agent 设计。
+3. 🔌 模块化的 LLM Provider 组件，内部使用 Responses 协议，对外支持多种上游 LLM API，并支持使用本
    地部署模型。
-4. 自由的内部上下文管理，支持不同的 AI 智能体行为模式，兼容多种 Memory 系统设计。
-5. 插件系统（Cortico World）与内部隔离，采用事件投递／工具调用作为输入／输出，提供优秀的兼容性
+4. 🧠 自由的内部上下文管理，支持不同的 AI 智能体行为模式，兼容多种 Memory 系统设计。
+5. 🧩 插件系统（Cortico World）与内部隔离，采用事件投递／工具调用作为输入／输出，提供优秀的兼容性
    和近乎无限的可扩展能力。
-6. 提供便于操作的 WebUI 支持。
-7. 提供专用于 AI 开发的 Extension Creator 系统（[Cortina](https://github.com/Pal-AI-Lab/Cortina)），
+6. 🖥️ 提供便于操作的 WebUI 支持。
+7. 🪄 提供专用于 AI 开发的 Extension Creator 系统（[Cortina](https://github.com/Pal-AI-Lab/Cortina)），
    非专业开发者也可以使用 AI Agent 快速创建想要的扩展，或迁移现有的实现到 Cortico！
 
 ## 快速开始
