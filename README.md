@@ -29,14 +29,6 @@
   <a href="https://github.com/Pal-AI-Lab/Cortico/issues">Issue Tracker</a>
 </p>
 
-| Layer | Owns | Lives in |
-|---|---|---|
-| **Core** | The lifecycle of sessions, the event stream and model calls. No semantics of its own | `src/core/` |
-| **Persona** | The semantics of one class of bot: context, cognitive flow, the Memory protocol | `bots/<name>/persona/` |
-| **Memory** | The only authoritative carrier of a bot's internal state; its form is the Persona's choice | `<deployment>/memory/` |
-| **World** | The only boundary to one external environment: events, tools, environment prompt | `src/worlds/<id>/` |
-| **Bot** | The assembly: one Persona, a set of Worlds | `bots/<name>/index.ts` |
-
 Cortico is an agent harness designed around an event stream, for building agents that respond on
 their own, run continuously, and take mixed real-time input — persona bots, AI streamers,
 roleplay, companionship and other downstream tasks. A Cortico bot is far more than a chat bot:
@@ -95,6 +87,14 @@ The console is at `http://127.0.0.1:7788/`.
 `./start.sh` (on Windows, double-click `start.bat`) installs missing dependencies, builds the
 console bundle if absent, offers a deployment menu, and restarts the process when the console
 asks for it.
+
+| Layer | Owns | Lives in |
+|---|---|---|
+| **Core** | The lifecycle of sessions, the event stream and model calls. No semantics of its own | `src/core/` |
+| **Persona** | The semantics of one class of bot: context, cognitive flow, the Memory protocol | `bots/<name>/persona/` |
+| **Memory** | The only authoritative carrier of a bot's internal state; its form is the Persona's choice | `<deployment>/memory/` |
+| **World** | The only boundary to one external environment: events, tools, environment prompt | `src/worlds/<id>/` |
+| **Bot** | The assembly: one Persona, a set of Worlds | `bots/<name>/index.ts` |
 
 ## Documentation
 

@@ -29,14 +29,6 @@
   <a href="https://github.com/Pal-AI-Lab/Cortico/issues">Issues</a>
 </p>
 
-| 层 | 职责 | 位置 |
-|---|---|---|
-| **Core** | session、事件流与模型调用的生命周期，不拥有任何语义 | `src/core/` |
-| **Persona** | 一类 Bot 的语义：上下文构造、认知流程、对 Memory 的解释 | `bots/<名>/persona/` |
-| **Memory** | Bot 内部状态的唯一权威载体，形式由 Persona 决定 | `<部署>/memory/` |
-| **World** | 与一个外部环境之间的唯一边界：事件、工具、环境提示词 | `src/worlds/<id>/` |
-| **Bot** | 装配定义：选一个 Persona，声明一组 World | `bots/<名>/index.ts` |
-
 Cortico 是基于事件流系统设计的 Agent Harness，用于自主响应、持续运行、混合实时输入场景的智能体
 开发，适用于人格 Bot、AI 主播、角色扮演、聊天陪伴等多种下游任务。Cortico Bot 远不只是聊天 Bot：
 得益于围绕事件流设计的 Agent 系统，Cortico 可以帮助构建长期持续存在、适用于复杂输入的 AI 智能
@@ -88,6 +80,14 @@ pnpm start mybot
 
 `./start.sh`（Windows 上双击 `start.bat`）会安装缺失的依赖、构建缺失的控制台产物，提供部署选择
 菜单，并在控制台请求重启后重新启动进程。
+
+| 层 | 职责 | 位置 |
+|---|---|---|
+| **Core** | session、事件流与模型调用的生命周期，不拥有任何语义 | `src/core/` |
+| **Persona** | 一类 Bot 的语义：上下文构造、认知流程、对 Memory 的解释 | `bots/<名>/persona/` |
+| **Memory** | Bot 内部状态的唯一权威载体，形式由 Persona 决定 | `<部署>/memory/` |
+| **World** | 与一个外部环境之间的唯一边界：事件、工具、环境提示词 | `src/worlds/<id>/` |
+| **Bot** | 装配定义：选一个 Persona，声明一组 World | `bots/<名>/index.ts` |
 
 ## 文档
 
