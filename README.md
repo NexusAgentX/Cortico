@@ -29,13 +29,11 @@
   <a href="https://github.com/Pal-AI-Lab/Cortico/issues">Issue Tracker</a>
 </p>
 
-Cortico is an agent harness designed around an event stream, for building agents that respond on
-their own, run continuously, and take mixed real-time input — persona bots, AI streamers,
-roleplay, companionship and other downstream tasks. A Cortico bot is far more than a chat bot:
-with an agent system designed around the event stream, Cortico helps you build agents that
-persist over the long term and hold up under complicated input. Extensions are yours to write,
-and one bot can watch and act on several external environments at once — chat platforms, live
-games, even the physical environment. Cortico's goal: bring your AI to the world!
+A Cortico bot is far more than a chat bot: with an extensible agent system designed around the event stream, 
+Cortico helps you build agents that respond on their own, run continuously, and take mixed real-time input.
+One bot can watch and act on several external environments at once: chat platforms, live games, even the 
+physical environment. It is perfect for downstream tasks such as persona bots, AI streamers, roleplay, 
+companionship and much more. Cortico's goal: bring your AI to the world!
 
 ## Features
 
@@ -43,18 +41,18 @@ games, even the physical environment. Cortico's goal: bring your AI to the world
 2. 🤖 A native agent harness: everything is designed around the agent.
 3. 🔌 Modular LLM provider components. The Responses protocol inside; many upstream LLM APIs
    outside, locally deployed models included.
-4. 🧠 Unconstrained internal context management, for different agent behaviour patterns and many
-   designs of Memory system.
-5. 🧩 An extension system (Cortico World), isolated from the inside, with event delivery and tool
+4. 🧠 Unconstrained internal context management, giving much freedom for the design of agent behaviour
+   patterns and Memory system.
+6. 🧩 An extension system (Cortico World), isolated from the inside, with event delivery and tool
    calls as its input and output: excellent compatibility and nearly unlimited extensibility.
-6. 🖥️ A WebUI that is straightforward to operate.
-7. 🪄 An Extension Creator system built for AI development
+7. 🖥️ A WebUI that is straightforward to operate.
+8. 🪄 An Extension Creator system built for AI development
    ([Cortina](https://github.com/Pal-AI-Lab/Cortina)): a non-developer can use an AI agent to
    build the extension they want, or move an existing implementation onto Cortico!
 
 ## Quick Start
 
-Node 22+.
+Requires Node 22+.
 
 ```bash
 corepack pnpm install
@@ -77,7 +75,7 @@ mkdir -p deployments/providers/deepseek && echo "DEEPSEEK_API_KEY=your-key" > de
 pnpm start mybot
 ```
 
-The console is at `http://127.0.0.1:7788/`. Endpoints, keys and every other knob are edited
+The console is at `http://127.0.0.1:7788/`. Endpoints, keys, and every other knob are edited
 there and take effect on save.
 
 `./start.sh`, or `start.bat` on Windows, installs missing dependencies, builds the console
@@ -133,13 +131,16 @@ package per kind, and [Cortina](https://github.com/Pal-AI-Lab/Cortina) generates
 | `openai-responses-compat` | Model services that expose the Responses API |
 | `llamacpp` | A local llama-server, including release download and process supervision |
 
-Other protocols arrive as extensions.
+Other providers can be added as extensions.
 
 ## Contributing
+* [CONTRIBUTING.md](CONTRIBUTING.md) says what belongs in this repository and what belongs
+in an extension.
+* [AGENTS.md](AGENTS.md) is the review checklist.
 
-A contributor must be able to explain all submitted code, including code written with a coding
-agent. [CONTRIBUTING.md](CONTRIBUTING.md) says what belongs in this repository and what belongs
-in an extension; [AGENTS.md](AGENTS.md) is the review checklist.
+A contributor may submit AI-generated code but they must be able to explain all submitted code. 
+
+Run the following two commands before submitting pull request:
 
 ```bash
 pnpm test
@@ -153,6 +154,7 @@ Browser changes also require `pnpm typecheck:web`, and `pnpm build:web` rebuilds
 bundle.
 
 ## Built With Cortico
+If you build something with Cortico, make a pull request to add to this list!
 
-[@可缇Corti](https://space.bilibili.com/3707044056009191), an AI VTuber from the future, is built
-with Cortico!
+* [@可缇Corti](https://space.bilibili.com/3707044056009191), an AI VTuber from the future
+* ...and more!
