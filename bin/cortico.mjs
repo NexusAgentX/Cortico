@@ -48,6 +48,19 @@ export function parseArgs(argv) {
 }
 
 /**
+ * 这一趟要做什么:列出部署,还是启动某一份。不给名字时用 `CORTICO_BOT`。
+ *
+ * @param {readonly string[]} argv 已去掉 node 与脚本自身的那一段
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {{ kind: 'list' } | { kind: 'run', bot: string | null, passthrough: string[] }}
+ */
+export function parseRequest(argv, env) {
+  const { bot, passthrough } = parseArgs(argv);
+  if (passthrough.includes('--list')) return { kind: 'list' };
+  return { kind: 'run', bot: bot ?? env.CORTICO_BOT ?? null, passthrough };
+}
+
+/**
  * 未指定部署且有多个可选项时,交互终端返回 ask,非交互终端返回错误与可选项。
  *
  * @param {{ bot: string | null, available: readonly string[], interactive: boolean }} input
@@ -147,8 +160,12 @@ export function promptChoice(items, out = process.stdout, input = process.stdin)
         out.write(`  ${mark} ${name}\u001b[0m\u001b[K\n`);
       }
     };
+    // 每条退出路径都要退出 raw 模式,包括不经 finish 的那些。
+    const restore = () => { if (input.isTTY) input.setRawMode(false); };
+    process.once('exit', restore);
     const finish = (/** @type {string | null} */ value) => {
-      if (input.isTTY) input.setRawMode(false);
+      restore();
+      process.off('exit', restore);
       input.removeListener('keypress', onKey);
       input.pause();
       done(value);
@@ -230,7 +247,7 @@ export async function supervise(bot, passthrough, firstRunOpensBrowser, opts = {
 }
 
 async function main() {
-  const { bot: requested, passthrough } = parseArgs(process.argv.slice(2));
+  const request = parseRequest(process.argv.slice(2), process.env);
 
   const pnpm = resolvePnpm(onPath);
   if (!pnpm) {
@@ -253,7 +270,12 @@ async function main() {
   }
 
   const available = readPnpm(pnpm, ['--silent', 'bots']).split('\n').map((s) => s.trim()).filter(Boolean);
-  let choice = chooseBot({ bot: requested, available, interactive: process.stdin.isTTY === true });
+  if (request.kind === 'list') {
+    console.log(available.join('\n'));
+    return 0;
+  }
+
+  let choice = chooseBot({ bot: request.bot, available, interactive: process.stdin.isTTY === true });
   if (choice.kind === 'ask') {
     const picked = await promptChoice(available);
     if (picked === null) {
@@ -268,7 +290,7 @@ async function main() {
   }
 
   console.log(`\n  启动: ${choice.bot}`);
-  return supervise(choice.bot, passthrough, process.env.CORTICO_OPEN_BROWSER !== '0');
+  return supervise(choice.bot, request.passthrough, process.env.CORTICO_OPEN_BROWSER !== '0');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
