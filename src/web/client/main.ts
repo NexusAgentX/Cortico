@@ -30,7 +30,7 @@ import type { ConsoleMemo } from '../shared/client-panel.ts';
 /**
  * 控制台自己的页面。与贡献方的页无关——那一路完全由 manifest 驱动。
  *
- * 顺序即左栏顺序。`hidden` 的页面(运行参数、系统提示词、存储、外观)不进左栏,
+ * 顺序即左栏顺序。`hidden` 的页面(运行参数、存储、外观)不进左栏,
  * 但仍要在这张表里:路由分派只认这张表,设置页里嵌着它们的同时,直达链接也要能开。
  */
 export const FEATURES: readonly FrameworkFeature[] = [
@@ -184,6 +184,7 @@ export function boot(doc: Document = document): { dispose(): void } {
         const out = await feature.mount({
           root: slot, lifecycle, signal: lifecycle.signal, ui, router, route,
           capabilities, onError, consolePageHost,
+          refreshNav: () => host.refresh(),
         });
         if (gen !== generation) {
           if (out && typeof out.dispose === 'function') out.dispose();

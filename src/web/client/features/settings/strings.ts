@@ -1,6 +1,7 @@
 import { pick } from '../../core/language.ts';
 
 const zh = {
+  navGroup: '系统',
   general: '通用',
   generalDesc: '控制台语言偏好。',
   language: '界面语言 / Language',
@@ -11,10 +12,6 @@ const zh = {
   appearanceDesc: '控制台主题、明暗模式与自定义配色。',
   runtime: '运行参数',
   runtimeDesc: 'Core 运行参数。',
-  prompts: '系统提示词',
-  promptsDesc: '系统提示词模板。',
-  firstturn: '首轮对话',
-  firstturnDesc: '请求中附带的示例对话。',
   storage: '存储',
   storageDesc: '存储用量与清理。',
   pageTitle: '设置',
@@ -23,6 +20,7 @@ const zh = {
 };
 
 const en: typeof zh = {
+  navGroup: 'System',
   general: 'General',
   generalDesc: 'Console language preferences.',
   language: '界面语言 / Language',
@@ -33,10 +31,6 @@ const en: typeof zh = {
   appearanceDesc: 'Console theme, light/dark mode and custom palettes.',
   runtime: 'Runtime parameters',
   runtimeDesc: 'Core runtime parameters.',
-  prompts: 'System prompt',
-  promptsDesc: 'System prompt templates.',
-  firstturn: 'First turn',
-  firstturnDesc: 'Example conversation included in requests.',
   storage: 'Storage',
   storageDesc: 'Storage usage and cleanup.',
   pageTitle: 'Settings',

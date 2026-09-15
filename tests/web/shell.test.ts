@@ -252,30 +252,38 @@ describe('框架页那一段', () => {
     expect(groups.map((g) => labels(g))).toEqual([['终端', '用量'], ['配置']]);
   });
 
-  it('终端是一级入口， World 总览是实例树入口，配置页面只由底部设置键进入', async () => {
+  it('终端是一级入口， World 总览是实例树入口；系统提示词与设置排在「系统」组最下面', async () => {
     stubStatus({});
-    const { el, nav, navigated } = await mkShell({
+    const { nav, navigated } = await mkShell({
       features: [
         feature('live', '终端', undefined, undefined, 'primary'),
+        feature('core', '核心状态', undefined, '系统'),
+        feature('usage', '用量', undefined, '系统'),
+        feature('providers', '语言模型', undefined, '系统'),
         feature('world', 'World 总览', ['worlds'], undefined, 'world-root'),
-        feature('prompts', '系统提示词', undefined, undefined, 'hidden'),
+        feature('extensions', '扩展', undefined, '系统'),
+        feature('prompts', '系统提示词', undefined, '系统'),
         feature('pricing', '定价', undefined, undefined, 'hidden'),
         feature('config', '运行参数', undefined, undefined, 'hidden'),
         feature('storage', '存储', undefined, undefined, 'hidden'),
         feature('appearance', '外观', undefined, undefined, 'hidden'),
-        feature('settings', '设置', undefined, undefined, 'hidden'),
+        feature('settings', '设置', undefined, '系统'),
       ],
       capabilities: { worlds: true },
     });
 
-    expect(nav.children.length).toBe(2);
+    expect(nav.children.length).toBe(3);
     expect(nav.children[0].classList.contains('navgroup-primary')).toBe(true);
     expect(labels(nav.children[0])).toEqual(['终端']);
-    expect(nav.children[1].classList.contains('navgroup-world-tree')).toBe(true);
-    expect(nav.children[1].find('stacklabel')!.textContent).toBe('World');
-    expect(labels(nav.children[1])).toEqual(['World 总览']);
-    expect(labels(nav)).toEqual(['终端', 'World 总览']);
-    click(el.findAll('rail-action')[1]);
+    const system = nav.children[1];
+    expect(system.find('stacklabel')!.textContent).toBe('系统');
+    // 组内按声明顺序;系统提示词与设置声明在最末,所以压组底
+    expect(labels(system)).toEqual(['核心状态', '用量', '语言模型', '扩展', '系统提示词', '设置']);
+    expect(nav.children[2].classList.contains('navgroup-world-tree')).toBe(true);
+    expect(labels(nav)).toEqual([
+      '终端', '核心状态', '用量', '语言模型', '扩展', '系统提示词', '设置', 'World 总览',
+    ]);
+    click(system.findAll('navitem')[5]);
     expect(navigated).toEqual([['settings']]);
   });
 
