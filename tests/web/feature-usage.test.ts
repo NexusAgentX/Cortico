@@ -241,6 +241,8 @@ class FakeDoc {
     this.defaultView = view;
   }
   createElement(tag: string): FakeEl { return new FakeEl(tag, this); }
+  /** 首页注入的主题记录在这套假 DOM 里不存在。 */
+  getElementById(_id: string): null { return null; }
   createElementNS(_ns: string, tag: string): FakeEl { return new FakeEl(tag, this); }
   addEventListener(type: string, fn: Listener, opts?: ListenOptions): void {
     this.listeners.add(type, fn, opts);
@@ -983,12 +985,13 @@ describe('用量页挂载', () => {
   it('主题工作室换肤也重画（长期只剩这一条来路，不能只接 legacy 事件）', async () => {
     stubFetch({ '/api/usage': sample() });
     const { ctx, root, doc, lifecycle } = await mkCtx({ usage: true });
+    const { getThemeStudio } = (await import(THEME)) as Any;
+    getThemeStudio({ doc, save: async (): Promise<void> => {} });
     const { mountUsage } = (await import(USAGE)) as Any;
     mountUsage(ctx);
     await flush();
     seen.length = 0;
 
-    const { getThemeStudio } = (await import(THEME)) as Any;
     const studio = getThemeStudio({ doc });
     const before = root.findAllTag('svg')[0];
     studio.setMode('dark');

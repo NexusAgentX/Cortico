@@ -24,7 +24,7 @@
 | `providers` | `deepseek` 端点 | 共享端点配置,从部署根 `providers/` 读取(见 [providers.md](providers.md)) |
 | `activeProvider` | `deepseek` | 当前端点 |
 | `web.port` | `7777` | 控制台端口;三个参考 bot 各自改成 7777 / 7788 / 7789 |
-| `web.theme` | `mint` | 控制台默认配色方案 id(`mint` / `navigator` / `crab-daisy`);浏览器在外观页选过就用自己那份 |
+| `web.theme` | `mint` | 控制台默认配色方案 id(`mint` / `navigator` / `crab-daisy`);外观页选过一次之后以 `theme.json` 为准 |
 | `paths.memory`、`paths.data` | `memory`、`data` | Memory 与运行数据目录,相对部署目录 |
 | `batching` | `quietGapMs 2500`、`minBatchAgeMs 0`、`maxBatchAgeMs 15000`、`maxBatchSize 100` | 事件合批投递 |
 | `context` | `keepPastThinking true` | 发给模型前的处理;阶段预算与首轮对话开关归 Persona 的段 |

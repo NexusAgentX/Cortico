@@ -56,7 +56,7 @@ const zh = {
   schemeCrabDaisy: '螃蟹和雏菊',
   schemeCrabDaisyNote: '赤陶、灰玫瑰与 Claude 网页灰阶',
   customScheme: '自定义方案',
-  customNote: '本机自定义配色',
+  customNote: '自定义配色',
   copyOf: (name: string) => `${name} 副本`,
 };
 
@@ -116,7 +116,7 @@ const en: typeof zh = {
   schemeCrabDaisy: 'Crab & Daisy',
   schemeCrabDaisyNote: 'Terracotta and dusty rose over Claude web greys',
   customScheme: 'Custom scheme',
-  customNote: 'Custom palette on this machine',
+  customNote: 'Custom palette',
   copyOf: (name: string) => `${name} copy`,
 };
 

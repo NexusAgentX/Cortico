@@ -3,26 +3,24 @@
 import { toDisposable, type Disposable } from '../../shared/client-panel.ts';
 import {
   THEME_MODES,
+  builtinSchemes,
   clonePalette,
   cloneScheme,
+  defaultStoredTheme,
   fallbackPalette,
   normalizePalette,
   resolveDefaultSchemeId,
   schemeSwatches,
+  schemeText,
+  type InjectedTheme,
+  type StoredTheme,
   type ThemeAppearance,
   type ThemeMode,
   type ThemePalette,
   type ThemeScheme,
 } from './registry.ts';
 import { applyPalette } from './palette.ts';
-import {
-  browserThemeStorage,
-  builtinSchemes,
-  readStoredTheme,
-  writeStoredTheme,
-  type StoredTheme,
-  type ThemeStorageLike,
-} from './storage.ts';
+import { readInjectedTheme, readLegacyLocalTheme, saveDeploymentTheme } from './storage.ts';
 import { S } from './strings.ts';
 
 /** 方案的元信息（不含调色板本身）。 */
@@ -49,6 +47,8 @@ export interface ThemeSnapshot {
   schemes: ThemeSchemeCard[];
   /** 当前生效的调色板；预览期间是那份草稿。 */
   palette: ThemePalette;
+  /** 最近一次回写部署的失败原因；成功后为 null。当前选择在本页仍然生效。 */
+  saveError: string | null;
 }
 
 export interface ThemeChange {
@@ -68,12 +68,14 @@ export interface MediaQueryLike {
 
 export interface ThemeStudioDeps {
   doc: Document;
-  /** 不给则取 `doc.defaultView.localStorage`；显式给 `null` = 只在内存里活一轮。 */
-  storage?: ThemeStorageLike | null;
+  /** 不给则读服务端注入的那段 JSON。 */
+  injected?: InjectedTheme;
+  /** 部署没有记录时可迁移的本机旧记录；不给则读 localStorage。 */
+  legacy?: StoredTheme | null;
+  /** 回写部署的主题记录；不给则 POST `/api/theme`。 */
+  save?(state: StoredTheme): Promise<void>;
   /** 不给则取 `doc.defaultView.matchMedia(...)`；显式给 `null` = 系统挡位当浅色。 */
   media?: MediaQueryLike | null;
-  /** 部署的默认方案 id；不给则读 `<html data-default-scheme>`。浏览器存过选择时不看它。 */
-  defaultSchemeId?: string;
   /** 订阅方回调里抛的错落这儿。默认吞掉——一张图重画失败不该拖垮换肤本身。 */
   onError?(err: unknown): void;
 }
@@ -89,14 +91,15 @@ function systemDarkQuery(doc: Document): MediaQueryLike | null {
 
 export class ThemeStudio {
   private readonly doc: Document;
-  private readonly storage: ThemeStorageLike | null;
+  private readonly save: (state: StoredTheme) => Promise<void>;
   private readonly media: MediaQueryLike | null;
   private readonly onError: (err: unknown) => void;
-  /** 存档里没有可用选择时选哪个方案；删掉自定义方案后也回到它。 */
+  /** 记录里没有可用选择时选哪个方案；删掉自定义方案后也回到它。 */
   private readonly defaultSchemeId: string;
   private readonly listeners = new Set<ThemeChangeListener>();
   private state: StoredTheme;
   private previewPalette: ThemePalette | null = null;
+  private saveError: string | null = null;
   private closed = false;
 
   /** 系统挡位下跟着系统走。方法引用存下来，`dispose()` 才摘得掉。 */
@@ -106,13 +109,19 @@ export class ThemeStudio {
 
   constructor(deps: ThemeStudioDeps) {
     this.doc = deps.doc;
-    this.storage = deps.storage === undefined ? browserThemeStorage(deps.doc) : deps.storage;
+    this.save = deps.save ?? saveDeploymentTheme;
     this.media = deps.media === undefined ? systemDarkQuery(deps.doc) : deps.media;
     this.onError = deps.onError ?? ((): void => {});
-    this.defaultSchemeId = resolveDefaultSchemeId(
-      deps.defaultSchemeId ?? deps.doc.documentElement?.dataset.defaultScheme,
-    );
-    this.state = readStoredTheme(this.storage, this.defaultSchemeId);
+    const injected = deps.injected ?? readInjectedTheme(deps.doc);
+    this.defaultSchemeId = resolveDefaultSchemeId(injected.defaultScheme);
+    if (injected.theme) {
+      this.state = injected.theme;
+    } else {
+      // 部署还没有记录:把这台机器上的旧记录交上去,此后它归部署。
+      const legacy = deps.legacy === undefined ? readLegacyLocalTheme(deps.doc) : deps.legacy;
+      this.state = legacy ?? { ...defaultStoredTheme(), selectedId: this.defaultSchemeId };
+      if (legacy) this.persist();
+    }
     this.media?.addEventListener('change', this.onMediaChange);
   }
 
@@ -123,7 +132,7 @@ export class ThemeStudio {
     return [...builtinSchemes(), ...this.state.custom.map((s) => ({ ...cloneScheme(s), custom: true }))];
   }
 
-  /** 当前方案。存档指向的 id 不存在（方案被别的标签页删了）就退回部署默认方案。 */
+  /** 当前方案。记录指向的 id 不存在（方案在别处被删了）就退回部署默认方案。 */
   currentScheme(): ThemeScheme {
     const all = this.schemes();
     return all.find((s) => s.id === this.state.selectedId)
@@ -150,6 +159,7 @@ export class ThemeStudio {
       scheme: info(scheme),
       schemes: this.schemes().map((item) => ({ ...info(item), swatches: schemeSwatches(item, appearance) })),
       palette: clonePalette(this.previewPalette ?? scheme.palettes[appearance]),
+      saveError: this.saveError,
     };
   }
 
@@ -159,7 +169,7 @@ export class ThemeStudio {
   apply(notify = true): void {
     this.previewPalette = null;
     const scheme = this.currentScheme();
-    // 选中的方案没了（别的标签页删的）→ 把纠正结果落回存档，别每次开页都纠一遍
+    // 选中的方案没了（记录里指向一个已删的自定义方案）→ 把纠正结果落回部署
     if (scheme.id !== this.state.selectedId) {
       this.state.selectedId = scheme.id;
       this.persist();
@@ -189,7 +199,7 @@ export class ThemeStudio {
     return true;
   }
 
-  /** 试色：刷到文档但**不写存档**。离开这一页或调 `resetPreview()` 就没了。 */
+  /** 试色：刷到文档但**不回写部署**。离开这一页或调 `resetPreview()` 就没了。 */
   preview(palette: ThemePalette): void {
     const scheme = this.currentScheme();
     const appearance = this.appearance;
@@ -272,8 +282,20 @@ export class ThemeStudio {
     this.listeners.clear();
   }
 
+  /** 回写部署。失败记在快照里,由外观页呈现;当前选择在本页仍然生效。 */
   private persist(): void {
-    writeStoredTheme(this.storage, this.state);
+    const sending = JSON.parse(JSON.stringify(this.state)) as StoredTheme;
+    void this.save(sending).then(
+      () => {
+        if (this.saveError === null) return;
+        this.saveError = null;
+        this.emit(false);
+      },
+      (err: unknown) => {
+        this.saveError = err instanceof Error ? err.message : String(err);
+        this.emit(false);
+      },
+    );
   }
 
   /** 逐个通知订阅者；单个回调失败不阻止其他回调。 */
@@ -291,10 +313,11 @@ export class ThemeStudio {
 }
 
 function info(scheme: ThemeScheme): ThemeSchemeInfo {
+  const text = schemeText(scheme);
   return {
     id: scheme.id,
-    name: scheme.name,
-    note: scheme.note,
+    name: text.name,
+    note: text.note,
     builtin: !!scheme.builtin,
     custom: !!scheme.custom,
   };
@@ -309,8 +332,8 @@ let shared: ThemeStudio | null = null;
 /**
  * 取（必要时新建）那个唯一的实例。
  *
- * `deps` 只在**第一次**（真正新建的那次）生效；之后再传会被忽略，因为半路换存储
- * 后端或换文档只会让两份状态对不上。测试要换一套 deps，先 `disposeThemeStudio()`。
+ * `deps` 只在**第一次**（真正新建的那次）生效；之后再传会被忽略，因为半路换回写
+ * 目标或换文档只会让两份状态对不上。测试要换一套 deps，先 `disposeThemeStudio()`。
  */
 export function getThemeStudio(deps?: Partial<ThemeStudioDeps>): ThemeStudio {
   if (shared) return shared;
@@ -321,9 +344,10 @@ export function getThemeStudio(deps?: Partial<ThemeStudioDeps>): ThemeStudio {
 }
 
 /**
- * **首屏第一件事**：读存档、把颜色刷到 `documentElement`。
+ * **首屏第一件事**：读服务端注入的部署主题记录、把颜色刷到 `documentElement`。
  *
- * 同步执行、不发任何请求、不等任何路由，所以内核入口可以在第一行直接调它。
+ * 同步执行、不等任何路由，所以内核入口可以在第一行直接调它。部署还没有记录且这台
+ * 机器存过旧记录时，构造函数会把旧记录回写一次。
  * 返回当前快照（想据此做点别的判断时用），不需要就丢掉。
  */
 export function applyStoredTheme(

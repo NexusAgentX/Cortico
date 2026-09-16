@@ -56,6 +56,8 @@ const SERVER_TEXT = {
 };
 import { logPredicate, readRunsIndex, readTailRecordsWhere } from './files.ts';
 import { ConsoleAssets, ConsolePageRegistry, type ConsolePageSource } from './console-pages.ts';
+import { THEME_FILE, readDeploymentTheme, writeDeploymentTheme } from './theme-store.ts';
+import { THEME_SCRIPT_ID, type InjectedTheme, type StoredTheme } from './shared/theme.ts';
 import { EXTENSION_ASSET_PREFIX, extensionAssetSegment, type ExtensionConsoleAsset } from '../extensions/manifest.ts';
 import {
   CONSOLE_LAMPS_ROUTE, CONSOLE_LANGUAGE_HEADER, CONSOLE_LANGUAGE_QUERY, CONSOLE_PROTOCOL_VERSION,
@@ -405,8 +407,7 @@ export interface ConsoleSurface {
    */
   language?: Language;
   /**
-   * 部署的默认配色方案 id,印在 `<html data-default-scheme>` 上。浏览器保存过自己的选择就用
-   * 保存的那个;认不出的 id 由控制台落到框架默认方案。
+   * 部署的默认配色方案 id。`theme.json` 还没有记录时用它；认不出的 id 由控制台落到框架默认方案。
    */
   defaultScheme?: string;
   /**
@@ -497,6 +498,9 @@ export type WebAppDeps = ConsoleSurface;
 
 const FILE_MAX_BYTES = 1024 * 1024; // 1MB
 const AVATAR_FILE = 'avatar.png';
+
+/** 主题记录的正文上限:三十多个 token 两份调色板,自定义方案再多也到不了这个量级。 */
+const THEME_MAX_BYTES = '256kb';
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -784,6 +788,13 @@ export class WebApp {
       fromQuery = new URL(req.url ?? '', 'http://localhost').searchParams.get(CONSOLE_LANGUAGE_QUERY);
     } catch { /* 坏 URL:当没带 */ }
     return isLanguage(fromQuery) ? fromQuery : this.language;
+  }
+
+  /** 部署的主题记录；文件读不成时记一条，按没有记录发给浏览器。 */
+  private readTheme(dir: string): StoredTheme | null {
+    const { state, error } = readDeploymentTheme(dir);
+    if (error) this.deps.log.warn(`${THEME_FILE} 读不成`, { error });
+    return state;
   }
 
   private frameworkCapabilities(): Record<string, boolean> {
@@ -1258,6 +1269,20 @@ export class WebApp {
       renameSync(temporary, file);
       this.deps.log.warn('bot 头像已更新', { file: AVATAR_FILE });
       res.json({ ok: true, file: AVATAR_FILE });
+    }));
+
+    app.get('/api/theme', wrap((_req, res) => {
+      const dir = this.deps.botDir;
+      if (!dir) { res.status(503).json({ error: '主题记录不可用' }); return; }
+      res.json({ defaultScheme: this.deps.defaultScheme ?? '', theme: this.readTheme(dir) });
+    }));
+
+    app.post('/api/theme', express.json({ limit: THEME_MAX_BYTES }), wrap((req, res) => {
+      const dir = this.deps.botDir;
+      if (!dir) { res.status(503).json({ error: '主题记录不可用' }); return; }
+      const theme = writeDeploymentTheme(dir, req.body);
+      this.deps.log.info('控制台配色已更新', { scheme: theme.selectedId, mode: theme.mode });
+      res.json({ ok: true, theme });
     }));
 
     // 能力清单只声明挂载情况，前端据此省略未挂载面板。
@@ -1825,16 +1850,21 @@ export class WebApp {
         res.status(500).send(String(err));
         return;
       }
-      /**
-       * 语言盖在 `<html lang>` 上:内核在 import 期就读它,框架页面能在模块顶层选串表。
-       * 默认配色方案跟它一起进开标签,主题在首次渲染前就读得到。方案 id 只收
-       * `[a-z0-9-]`,别的字符会从属性值里逃出去。
-       */
+      /** 语言盖在 `<html lang>` 上:内核在 import 期就读它,框架页面能在模块顶层选串表。 */
       const lang = this.language === 'en' ? 'en' : 'zh-CN';
-      const scheme = /^[a-z0-9-]{1,40}$/.test(this.deps.defaultScheme ?? '') ? this.deps.defaultScheme : '';
+      html = html.replace('<html lang="zh-CN">', `<html lang="${lang}">`);
+      /**
+       * 部署默认方案与已保存的记录随首页发出,首次渲染前就读得到;没有记录时发 null,
+       * 浏览器据此把本机旧记录交上来。转义 `<` 之后正文不可能提前闭合这个 script。
+       */
+      const injected: InjectedTheme = {
+        defaultScheme: this.deps.defaultScheme ?? '',
+        theme: this.deps.botDir ? this.readTheme(this.deps.botDir) : null,
+      };
+      const payload = JSON.stringify(injected).replaceAll('<', '\\u003c');
       html = html.replace(
-        '<html lang="zh-CN">',
-        `<html lang="${lang}"${scheme ? ` data-default-scheme="${scheme}"` : ''}>`,
+        '</head>',
+        `<script type="application/json" id="${THEME_SCRIPT_ID}">${payload}</script></head>`,
       );
       const core = this.assets.core();
       if (core) {

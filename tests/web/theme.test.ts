@@ -1,7 +1,7 @@
 /**
  * 变量形式的动态 import 避免根 tsconfig 纳入 DOM 代码；浏览器类型由 tsconfig.web.json 检查，行为测试使用迷你 DOM。
- * 保留 localStorage 记录形状,并用旧格式写入后读取,验证已有主题数据兼容;键名换过一次,旧键仍认。
- * 无存档时使用首个内置方案且不广播；另验证调色板到 CSS 变量的映射以及 onChange 订阅和退订。
+ * 主题记录归部署:验证首页注入的读取、本机旧记录的一次性迁移与回写失败的呈现。
+ * 没有记录时使用部署默认方案且不广播；另验证调色板到 CSS 变量的映射以及 onChange 订阅和退订。
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
@@ -39,6 +39,7 @@ class FakeStyle {
 
 class FakeEl {
   readonly tagName: string;
+  textContent = '';
   readonly children: FakeEl[] = [];
   readonly dataset: Record<string, string> = {};
   readonly style = new FakeStyle();
@@ -58,8 +59,21 @@ class FakeDoc {
   readonly documentElement = new FakeEl('html');
   readonly head = new FakeEl('head');
   defaultView: Any;
+  /** 服务端注入的那段 JSON；未设置 = 页面里没有这个节点。 */
+  private injected: FakeEl | null = null;
   constructor(view?: Any) {
     this.defaultView = view;
+  }
+  setInjected(value: unknown): void {
+    this.setInjectedRaw(JSON.stringify(value));
+  }
+  setInjectedRaw(raw: string): void {
+    const el = new FakeEl('script');
+    el.textContent = raw;
+    this.injected = el;
+  }
+  getElementById(id: string): FakeEl | null {
+    return id === THEME_SCRIPT_ID ? this.injected : null;
   }
   createElement(tag: string): FakeEl {
     return new FakeEl(tag);
@@ -109,10 +123,9 @@ class FakeMedia {
   }
 }
 
-const KEY = storageMod.THEME_STORAGE_KEY as string;
-const LEGACY_KEY = storageMod.LEGACY_THEME_STORAGE_KEY as string;
+const THEME_SCRIPT_ID: string = storageMod.THEME_SCRIPT_ID;
 
-/** 兼容的旧主题记录，包含一条自定义方案。 */
+/** 一份带自定义方案的主题记录，旧 localStorage 记录与首页注入共用这个形状。 */
 function legacyRecord(): string {
   return JSON.stringify({
     selectedId: 'custom-legacy',
@@ -328,83 +341,50 @@ describe('颜色换算', () => {
 // storage —— 旧格式与旧键兼容
 // ---------------------------------------------------------------------------
 
-describe('主题存档', () => {
-  it('两个键都是产品前缀的事:新键在 cortico. 下,旧键是改名前的那个', () => {
-    expect(KEY).toBe('cortico.theme.v1');
-    expect(LEGACY_KEY).toBe('xuewu.theme-studio.v1');
+describe('注入与迁移', () => {
+  it('首页注入的记录原样读回来（含自定义方案），十六进制统一小写', () => {
+    const doc = new FakeDoc();
+    doc.setInjected({ defaultScheme: THIRD, theme: JSON.parse(legacyRecord()) });
+    const injected = storageMod.readInjectedTheme(doc as Any);
+    expect(injected.defaultScheme).toBe(THIRD);
+    expect(injected.theme.selectedId).toBe('custom-legacy');
+    expect(injected.theme.mode).toBe('dark');
+    expect(injected.theme.custom[0].name).toBe('我的旧配色');
+    expect(injected.theme.custom[0].palettes.light.paper).toBe('#abcdef');
+    expect(injected.theme.custom[0].custom).toBe(true);
   });
 
-  it('只有旧键有记录:照旧键读出来,并搬到新键;旧记录留在原地(好回退)', () => {
-    const store = new FakeStorage();
-    store.map.set(LEGACY_KEY, legacyRecord());
-    const state = storageMod.readStoredTheme(store);
-    expect(state.selectedId).toBe('custom-legacy');
-    expect(state.mode).toBe('dark');
-    expect(JSON.parse(store.map.get(KEY) as string).selectedId).toBe('custom-legacy');
-    expect(store.map.has(LEGACY_KEY)).toBe(true);
+  it('部署还没有记录：theme 给 null,默认方案仍按注入的来', () => {
+    const doc = new FakeDoc();
+    doc.setInjected({ defaultScheme: SECOND, theme: null });
+    expect(storageMod.readInjectedTheme(doc as Any)).toEqual({ defaultScheme: SECOND, theme: null });
   });
 
-  it('两个键都有记录:新键赢,旧键不回灌', () => {
-    const store = new FakeStorage();
-    store.map.set(LEGACY_KEY, legacyRecord());
-    store.map.set(KEY, JSON.stringify({ selectedId: DEFAULT_ID, mode: 'light', custom: [] }));
-    const state = storageMod.readStoredTheme(store);
-    expect(state.selectedId).toBe(DEFAULT_ID);
-    expect(state.mode).toBe('light');
+  it('没有那段 script / 坏 JSON / 形状不对 → 框架默认方案 + 没有记录，绝不抛', () => {
+    const none: Any = { defaultScheme: DEFAULT_ID, theme: null };
+    expect(storageMod.readInjectedTheme(new FakeDoc() as Any)).toEqual(none);
+    for (const raw of ['', '   ', '{ 坏 JSON', 'null', '[1,2]', '{"defaultScheme":7}']) {
+      const doc = new FakeDoc();
+      doc.setInjectedRaw(raw);
+      expect(storageMod.readInjectedTheme(doc as Any)).toEqual(none);
+    }
   });
 
-  it('搬家时写不进去(无痕/配额满)不抛,这一轮仍用旧键读出来的那份', () => {
-    const store = new FakeStorage();
-    store.map.set(LEGACY_KEY, legacyRecord());
-    store.failWrite = true;
-    expect(storageMod.readStoredTheme(store).selectedId).toBe('custom-legacy');
-    expect(store.map.has(KEY)).toBe(false);
-  });
-
-  it('旧格式写一条进去，原样读得回来（选中项 / 挡位 / 自定义方案）', () => {
-    const store = new FakeStorage();
-    store.map.set(KEY, legacyRecord());
-    const state = storageMod.readStoredTheme(store);
-    expect(state.selectedId).toBe('custom-legacy');
-    expect(state.mode).toBe('dark');
-    expect(state.custom.length).toBe(1);
-    expect(state.custom[0].name).toBe('我的旧配色');
-    // 十六进制统一成小写，颜色本身不变
-    expect(state.custom[0].palettes.light.paper).toBe('#abcdef');
-    expect(state.custom[0].palettes.dark.paper).toBe('#123456');
-    expect(state.custom[0].custom).toBe(true);
-  });
-
-  it('写回的记录仍是旧 theme.js 读得懂的形状（三个字段，自定义方案带全套调色板）', () => {
-    const store = new FakeStorage();
-    storageMod.writeStoredTheme(store, storageMod.parseStoredTheme(legacyRecord()));
-    const raw = JSON.parse(store.map.get(KEY) as string);
-    expect(Object.keys(raw).sort()).toEqual(['custom', 'mode', 'selectedId']);
-    expect(raw.custom[0].palettes.light.paper).toBe('#abcdef');
-    expect(Object.keys(raw.custom[0].palettes.dark).length).toBe(registry.THEME_TOKENS.length);
-  });
-
-  it('没存过 / 坏 JSON / 字段类型不对 → 一律默认值，绝不抛', () => {
-    const dflt = { selectedId: DEFAULT_ID, mode: 'system', custom: [] };
-    expect(storageMod.parseStoredTheme(null)).toEqual(dflt);
-    expect(storageMod.parseStoredTheme('')).toEqual(dflt);
-    expect(storageMod.parseStoredTheme('{ 坏 JSON')).toEqual(dflt);
-    expect(storageMod.parseStoredTheme('null')).toEqual(dflt);
-    expect(storageMod.parseStoredTheme('[1,2]')).toEqual({ ...dflt, custom: [] });
-    expect(storageMod.parseStoredTheme('{"mode":"neon","selectedId":7,"custom":"x"}')).toEqual(dflt);
-  });
-
-  it('自定义方案：没 id 的丢掉，超长的名与说明截断，颜色缺格用内置补齐', () => {
-    const raw = JSON.stringify({
-      selectedId: 'x',
-      mode: 'light',
-      custom: [
-        { name: '没有 id' },
-        null,
-        { id: 'ok', name: '名'.repeat(60), note: '说'.repeat(200), palettes: { light: { paper: '#010203' } } },
-      ],
+  it('注入的自定义方案：没 id 的丢掉，超长的名与说明截断，颜色缺格用内置补齐', () => {
+    const doc = new FakeDoc();
+    doc.setInjected({
+      defaultScheme: DEFAULT_ID,
+      theme: {
+        selectedId: 'x',
+        mode: 'light',
+        custom: [
+          { name: '没有 id' },
+          null,
+          { id: 'ok', name: '名'.repeat(60), note: '说'.repeat(200), palettes: { light: { paper: '#010203' } } },
+        ],
+      },
     });
-    const state = storageMod.parseStoredTheme(raw);
+    const state = storageMod.readInjectedTheme(doc as Any).theme;
     expect(state.custom.length).toBe(1);
     expect(state.custom[0].name.length).toBe(40);
     expect(state.custom[0].note.length).toBe(80);
@@ -413,26 +393,31 @@ describe('主题存档', () => {
     expect(state.custom[0].palettes.dark).toEqual(registry.fallbackPalette('dark'));
   });
 
-  it('存储不可用（无痕 / 配额满）时读给默认、写返回 false，都不抛', () => {
+  it('本机旧记录：两个键都认,新键在前;读完不删', () => {
+    expect(storageMod.LEGACY_THEME_STORAGE_KEYS).toEqual(['cortico.theme.v1', 'xuewu.theme-studio.v1']);
+    const [KEY, LEGACY_KEY] = storageMod.LEGACY_THEME_STORAGE_KEYS;
     const store = new FakeStorage();
-    store.fail = true;
-    expect(storageMod.readStoredTheme(store).selectedId).toBe(DEFAULT_ID);
-    expect(storageMod.writeStoredTheme(store, storageMod.defaultStoredTheme())).toBe(false);
-    expect(storageMod.readStoredTheme(null).mode).toBe('system');
-    expect(storageMod.writeStoredTheme(null, storageMod.defaultStoredTheme())).toBe(false);
+    store.map.set(LEGACY_KEY, legacyRecord());
+    const doc = new FakeDoc({ localStorage: store });
+    expect(storageMod.readLegacyLocalTheme(doc as Any).selectedId).toBe('custom-legacy');
+    store.map.set(KEY, JSON.stringify({ selectedId: SECOND, mode: 'light', custom: [] }));
+    expect(storageMod.readLegacyLocalTheme(doc as Any).selectedId).toBe(SECOND);
+    expect(store.map.has(LEGACY_KEY)).toBe(true);
   });
 
-  it('browserThemeStorage：拿不到 localStorage（沙箱 iframe）给 null 而不是抛', () => {
-    expect(storageMod.browserThemeStorage(new FakeDoc() as Any)).toBe(null);
-    const store = new FakeStorage();
-    expect(storageMod.browserThemeStorage(new FakeDoc({ localStorage: store }) as Any)).toBe(store);
+  it('本机旧记录：没有、读不出、拿不到 localStorage（沙箱 iframe）一律 null', () => {
+    expect(storageMod.readLegacyLocalTheme(new FakeDoc() as Any)).toBe(null);
+    expect(storageMod.readLegacyLocalTheme(new FakeDoc({ localStorage: new FakeStorage() }) as Any)).toBe(null);
+    const denied = new FakeStorage();
+    denied.fail = true;
+    expect(storageMod.readLegacyLocalTheme(new FakeDoc({ localStorage: denied }) as Any)).toBe(null);
     const hostile = new FakeDoc();
     Object.defineProperty(hostile, 'defaultView', {
       get(): never {
         throw new Error('被沙箱挡了');
       },
     });
-    expect(storageMod.browserThemeStorage(hostile as Any)).toBe(null);
+    expect(storageMod.readLegacyLocalTheme(hostile as Any)).toBe(null);
   });
 });
 
@@ -442,17 +427,35 @@ describe('主题存档', () => {
 
 describe('主题工作室', () => {
   let doc: FakeDoc;
-  let store: FakeStorage;
   let media: FakeMedia;
+  /** 回写到部署的每一份记录，按先后顺序。 */
+  let saved: Any[];
+  /** 非空则回写失败，内容是失败原因。 */
+  let saveFails: string | null;
 
   beforeEach(() => {
     doc = new FakeDoc();
-    store = new FakeStorage();
     media = new FakeMedia(false);
+    saved = [];
+    saveFails = null;
   });
 
-  const apply = (): Any => studioMod.applyStoredTheme(doc as Any, { storage: store, media });
-  const studio = (): Any => studioMod.getThemeStudio({ doc: doc as Any, storage: store, media });
+  const save = async (state: Any): Promise<void> => {
+    if (saveFails !== null) throw new Error(saveFails);
+    saved.push(JSON.parse(JSON.stringify(state)));
+  };
+  const deps = (extra: Any = {}): Any => ({
+    media,
+    save,
+    legacy: null,
+    injected: { defaultScheme: DEFAULT_ID, theme: null },
+    ...extra,
+  });
+  const apply = (extra: Any = {}): Any => studioMod.applyStoredTheme(doc as Any, deps(extra));
+  const studio = (extra: Any = {}): Any => studioMod.getThemeStudio({ doc: doc as Any, ...deps(extra) });
+  const lastSaved = (): Any => saved[saved.length - 1];
+  /** 回写是异步的；等一轮微任务让结果落到快照上。 */
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
   it('applyStoredTheme：没存过主题时落到内置首个方案 + 跟随系统 + 浅色', () => {
     const snap = apply();
@@ -463,27 +466,56 @@ describe('主题工作室', () => {
     expect(doc.documentElement.style.getPropertyValue('--paper'))
       .toBe(registry.BUILTIN_SCHEMES[0].palettes.light.paper);
     expect(doc.documentElement.dataset.themeScheme).toBe(DEFAULT_ID);
-    // 只读不写：没存过就不该凭空写一条记录出来
-    expect(store.map.has(KEY)).toBe(false);
+    // 只读不写：部署还没有记录，也没有本机旧记录可交，就不该凭空写一份
+    expect(saved).toEqual([]);
   });
 
-  it('部署默认方案：没存过就用 `<html data-default-scheme>`,认不出的 id 落到框架默认', () => {
-    doc.documentElement.dataset.defaultScheme = THIRD;
-    expect(apply().selectedId).toBe(THIRD);
+  it('部署默认方案：还没有记录时用它,认不出的 id 落到框架默认', () => {
+    expect(apply({ injected: { defaultScheme: THIRD, theme: null } }).selectedId).toBe(THIRD);
     studioMod.disposeThemeStudio();
-    doc.documentElement.dataset.defaultScheme = '没这个方案';
-    expect(apply().selectedId).toBe(DEFAULT_ID);
+    expect(apply({ injected: { defaultScheme: '没这个方案', theme: null } }).selectedId).toBe(DEFAULT_ID);
   });
 
-  it('部署默认方案：存过的选择赢过它,删掉自定义方案后回到它', () => {
-    doc.documentElement.dataset.defaultScheme = THIRD;
-    store.map.set(KEY, JSON.stringify({ selectedId: SECOND, mode: 'light', custom: [] }));
-    const s = studio();
+  it('部署默认方案：已保存的选择赢过它,删掉自定义方案后回到它', () => {
+    const s = studio({
+      injected: { defaultScheme: THIRD, theme: { selectedId: SECOND, mode: 'light', custom: [] } },
+    });
     s.apply(false);
     expect(s.snapshot().selectedId).toBe(SECOND);
     s.saveAs('待删', s.snapshot().palette);
     expect(s.removeCurrent()).toBe(true);
     expect(s.snapshot().selectedId).toBe(THIRD);
+  });
+
+  it('部署还没有记录而本机存过：采用本机那份并回写一次', () => {
+    const legacy = JSON.parse(legacyRecord());
+    const snap = apply({ legacy, injected: { defaultScheme: SECOND, theme: null } });
+    expect(snap.selectedId).toBe('custom-legacy');
+    expect(saved.length).toBe(1);
+    expect(lastSaved().selectedId).toBe('custom-legacy');
+  });
+
+  it('部署已有记录：本机旧记录不再参与', () => {
+    const snap = apply({
+      legacy: JSON.parse(legacyRecord()),
+      injected: { defaultScheme: DEFAULT_ID, theme: { selectedId: SECOND, mode: 'light', custom: [] } },
+    });
+    expect(snap.selectedId).toBe(SECOND);
+    expect(saved).toEqual([]);
+  });
+
+  it('回写失败：当前选择照样生效，失败原因进快照；下一次成功后清掉', async () => {
+    apply();
+    const s = studio();
+    saveFails = '磁盘满了';
+    s.select(THIRD);
+    await settle();
+    expect(s.snapshot().selectedId).toBe(THIRD);
+    expect(s.snapshot().saveError).toBe('磁盘满了');
+    saveFails = null;
+    s.select(SECOND);
+    await settle();
+    expect(s.snapshot().saveError).toBe(null);
   });
 
   it('applyStoredTheme：系统偏好为深色时，system 挡位解析成 dark', () => {
@@ -495,9 +527,8 @@ describe('主题工作室', () => {
       .toBe(registry.BUILTIN_SCHEMES[0].palettes.dark.paper);
   });
 
-  it('applyStoredTheme：读得到旧存档就照存档来（含自定义方案）', () => {
-    store.map.set(KEY, legacyRecord());
-    const snap = apply();
+  it('applyStoredTheme：读得到部署记录就照它来（含自定义方案）', () => {
+    const snap = apply({ injected: { defaultScheme: DEFAULT_ID, theme: JSON.parse(legacyRecord()) } });
     expect(snap.selectedId).toBe('custom-legacy');
     expect(snap.mode).toBe('dark');
     expect(snap.appearance).toBe('dark');
@@ -517,21 +548,22 @@ describe('主题工作室', () => {
 
   it('applyStoredTheme：同一个进程里反复调只有一个实例，deps 以第一次为准', () => {
     apply();
-    const other = new FakeStorage();
-    studioMod.applyStoredTheme(doc as Any, { storage: other, media });
+    const other: Any[] = [];
+    studioMod.applyStoredTheme(doc as Any, deps({ save: async (s: Any) => { other.push(s); } }));
     studio().setMode('dark');
-    expect(other.map.has(KEY)).toBe(false);
-    expect(JSON.parse(store.map.get(KEY) as string).mode).toBe('dark');
+    expect(other).toEqual([]);
+    expect(lastSaved().mode).toBe('dark');
   });
 
-  it('存档里的方案没了（别的标签页删的）→ 退回默认方案并把纠正写回存档', () => {
-    store.map.set(KEY, JSON.stringify({ selectedId: 'ghost', mode: 'light', custom: [] }));
-    const snap = apply();
+  it('记录里的方案没了（在别处删的）→ 退回默认方案并把纠正回写部署', () => {
+    const snap = apply({
+      injected: { defaultScheme: DEFAULT_ID, theme: { selectedId: 'ghost', mode: 'light', custom: [] } },
+    });
     expect(snap.selectedId).toBe(DEFAULT_ID);
-    expect(JSON.parse(store.map.get(KEY) as string).selectedId).toBe(DEFAULT_ID);
+    expect(lastSaved().selectedId).toBe(DEFAULT_ID);
   });
 
-  it('select / setMode：认不出的值原样拒绝，认得的写存档并刷 CSS 变量', () => {
+  it('select / setMode：认不出的值原样拒绝，认得的回写部署并刷 CSS 变量', () => {
     apply();
     const s = studio();
     expect(s.select('不存在')).toBe(false);
@@ -542,8 +574,7 @@ describe('主题工作室', () => {
     expect(s.setMode('dark')).toBe(true);
     expect(doc.documentElement.style.getPropertyValue('--paper'))
       .toBe(registry.BUILTIN_SCHEMES[2].palettes.dark.paper);
-    const raw = JSON.parse(store.map.get(KEY) as string);
-    expect(raw).toEqual({ selectedId: THIRD, mode: 'dark', custom: [] });
+    expect(lastSaved()).toEqual({ selectedId: THIRD, mode: 'dark', custom: [] });
   });
 
   it('onChange：订阅收到快照，dispose 之后一条都不再收', () => {
@@ -563,7 +594,7 @@ describe('主题工作室', () => {
 
   it('onChange：同一个函数登记两次只算一次；一个订阅方抛错不挡住其余的', () => {
     const errs: unknown[] = [];
-    studioMod.applyStoredTheme(doc as Any, { storage: store, media, onError: (e: unknown) => errs.push(e) });
+    studioMod.applyStoredTheme(doc as Any, deps({ onError: (e: unknown) => errs.push(e) }));
     const s = studio();
     let hits = 0;
     const once = (): void => {
@@ -582,7 +613,7 @@ describe('主题工作室', () => {
     expect((errs[0] as Error).message).toBe('这张图重画失败了');
   });
 
-  it('preview：刷到文档、广播 preview:true，但**不写存档**；resetPreview 复原', () => {
+  it('preview：刷到文档、广播 preview:true，但**不回写部署**；resetPreview 复原', () => {
     apply();
     const s = studio();
     const seen: Any[] = [];
@@ -592,7 +623,7 @@ describe('主题工作室', () => {
     expect(doc.documentElement.style.getPropertyValue('--paper')).toBe('#010101');
     expect(seen[0].preview).toBe(true);
     expect(seen[0].snapshot.palette.paper).toBe('#010101');
-    expect(store.map.has(KEY)).toBe(false);
+    expect(saved).toEqual([]);
     s.resetPreview();
     expect(doc.documentElement.style.getPropertyValue('--paper'))
       .toBe(registry.BUILTIN_SCHEMES[0].palettes.light.paper);
@@ -609,7 +640,7 @@ describe('主题工作室', () => {
     expect(doc.documentElement.style.getPropertyValue('--evil-key')).toBe('');
   });
 
-  it('saveAs：只覆盖当前明暗变体，另一半原样拷贝；存档里多一条并切过去', () => {
+  it('saveAs：只覆盖当前明暗变体，另一半原样拷贝；记录里多一条并切过去', () => {
     apply();
     const s = studio();
     const id = s.saveAs('我的配色', { ...s.snapshot().palette, paper: '#030303' });
@@ -618,7 +649,7 @@ describe('主题工作室', () => {
     expect(snap.scheme.custom).toBe(true);
     expect(snap.scheme.name).toBe('我的配色');
     expect(snap.palette.paper).toBe('#030303');
-    const raw = JSON.parse(store.map.get(KEY) as string);
+    const raw = lastSaved();
     expect(raw.custom.length).toBe(1);
     expect(raw.custom[0].palettes.light.paper).toBe('#030303');
     // 黑夜变体没被浅色草稿污染
@@ -637,7 +668,7 @@ describe('主题工作室', () => {
     expect(s.snapshot().scheme.name.length).toBe(40);
   });
 
-  it('saveCurrent：内置方案上返回 false；自定义方案上改名改色并落存档', () => {
+  it('saveCurrent：内置方案上返回 false；自定义方案上改名改色并回写部署', () => {
     apply();
     const s = studio();
     expect(s.saveCurrent('随便', s.snapshot().palette)).toBe(false);
@@ -657,7 +688,7 @@ describe('主题工作室', () => {
     s.saveAs('待删', s.snapshot().palette);
     expect(s.removeCurrent()).toBe(true);
     expect(s.snapshot().selectedId).toBe(DEFAULT_ID);
-    expect(JSON.parse(store.map.get(KEY) as string).custom).toEqual([]);
+    expect(lastSaved().custom).toEqual([]);
   });
 
   it('系统偏好变了：system 挡位跟着换，钉死的挡位不为所动', () => {

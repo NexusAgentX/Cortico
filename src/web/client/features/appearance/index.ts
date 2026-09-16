@@ -254,7 +254,8 @@ export function mountAppearance(ctx: FeatureContext, opts: { embedded?: boolean 
     saveBtn.textContent = snap.scheme.custom ? S.saveCurrent : S.saveAsCustom;
     renderSchemes(snap);
     syncPalette(snap.palette);
-    setMsg(snap.scheme.builtin ? S.builtinHint : S.customHint);
+    if (snap.saveError) setMsg(S.saveFailed(snap.saveError), true);
+    else setMsg(snap.scheme.builtin ? S.builtinHint : S.customHint);
   }
 
   // 预览那一串变化不重画自己:值就是这一页刚写进去的,回填只会打断正在打字的输入框。
