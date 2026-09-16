@@ -1511,6 +1511,7 @@
   .liveband .sesscard.sel { background: var(--hover); border-color: var(--border); }
 
   .prompt-input-host { width: min(100%, var(--conversation-width)); margin: 18px auto 0; }
+  .prompt-input-host textarea:focus-visible { outline: none; }
   .liveview > .prompt-input-host {
     position: absolute;
     bottom: 0;
