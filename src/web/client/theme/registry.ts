@@ -109,25 +109,26 @@ const mintDark: ThemePalette = {
 };
 
 const navigatorLight: ThemePalette = {
-  paper: '#f3f4f6', 'paper-2': '#eaecef', sheet: '#fbfbfc', 'sheet-2': '#f1f2f5', 'sheet-3': '#e6e8ec',
-  ink: '#1c1f24', 'ink-soft': '#565c66', 'ink-dim': '#868c95', line: '#e2e4e8', 'line-2': '#ced2d8', 'line-strong': '#aab0b9',
-  accent: '#2f5d94', 'accent-2': '#b8862f', 'on-accent': '#ffffff', ok: '#2f8f7a', warn: '#b8862f', danger: '#c2544f',
-  'ink-blue': '#356e9d', violet: '#87601e', 'agent-surface': '#f3f4f6', 'world-bg': '#eff0f3', 'world-ink': '#474c55',
-  'bubble-bg': '#e5e7ec', 'bubble-ink': '#1d2026', 'tool-result': '#2f5d94',
-  'chart-hit': '#2f8f7a', 'chart-miss': '#b8862f', 'chart-output': '#2f5d94',
-  'chart-1': '#2f5d94', 'chart-2': '#4aa3d8', 'chart-3': '#b8862f', 'chart-4': '#2f8f7a',
-  'chart-5': '#6591c3', 'chart-6': '#a8628f', 'chart-7': '#5e6b7d', 'chart-8': '#3fa8b8',
+  paper: '#f5f7fa', 'paper-2': '#e9eef4', sheet: '#ffffff', 'sheet-2': '#f1f4f8', 'sheet-3': '#e3eaf2',
+  ink: '#383d43', 'ink-soft': '#536174', 'ink-dim': '#7d8a9c', line: '#dce3eb', 'line-2': '#c6d1df', 'line-strong': '#9dacc0',
+  accent: '#6591c3', 'accent-2': '#383d43', 'on-accent': '#111820', ok: '#357389', warn: '#865963', danger: '#a34f63',
+  'ink-blue': '#426c99', violet: '#383d43', 'agent-surface': '#f5f7fa', 'world-bg': '#edf3f8', 'world-ink': '#485665',
+  'bubble-bg': '#e4eef8', 'bubble-ink': '#383d43', 'tool-result': '#355c84',
+  'chart-hit': '#529bbd', 'chart-miss': '#383d43', 'chart-output': '#6591c3',
+  'chart-1': '#6591c3', 'chart-2': '#383d43', 'chart-3': '#81c9ef', 'chart-4': '#a9bed6',
+  'chart-5': '#bc8f9a', 'chart-6': '#637489', 'chart-7': '#4f91ad', 'chart-8': '#c6d3e2',
 };
 
+/** 深色背景上的海军蓝边线与文字使用提亮的同色系蓝色。 */
 const navigatorDark: ThemePalette = {
-  paper: '#111316', 'paper-2': '#16191d', sheet: '#1b1f23', 'sheet-2': '#22262c', 'sheet-3': '#2a2f36',
-  ink: '#e8eaee', 'ink-soft': '#adb3bb', 'ink-dim': '#80878f', line: '#272b31', 'line-2': '#363c44', 'line-strong': '#505760',
-  accent: '#81c9ef', 'accent-2': '#d8aa5d', 'on-accent': '#0a1826', ok: '#5fc9a8', warn: '#d8aa5d', danger: '#e58a84',
-  'ink-blue': '#81c9ef', violet: '#d8aa5d', 'agent-surface': '#16191d', 'world-bg': '#1c2024', 'world-ink': '#abb1b9',
-  'bubble-bg': '#2a2f36', 'bubble-ink': '#e8eaee', 'tool-result': '#81c9ef',
-  'chart-hit': '#5fc9a8', 'chart-miss': '#d8aa5d', 'chart-output': '#81c9ef',
-  'chart-1': '#81c9ef', 'chart-2': '#d8aa5d', 'chart-3': '#6591c3', 'chart-4': '#5fc9a8',
-  'chart-5': '#f0b8bf', 'chart-6': '#a79ed6', 'chart-7': '#8fa8bf', 'chart-8': '#5fd0d8',
+  paper: '#12171d', 'paper-2': '#171d24', sheet: '#202730', 'sheet-2': '#28313c', 'sheet-3': '#323d4a',
+  ink: '#f2f5fa', 'ink-soft': '#b8c5d6', 'ink-dim': '#8594a7', line: '#2d3743', 'line-2': '#3c4959', 'line-strong': '#596b80',
+  accent: '#81c9ef', 'accent-2': '#6591c3', 'on-accent': '#162331', ok: '#85c8dc', warn: '#d6aeb8', danger: '#e99bae',
+  'ink-blue': '#81c9ef', violet: '#a9bed6', 'agent-surface': '#171d24', 'world-bg': '#202b38', 'world-ink': '#b8c5d6',
+  'bubble-bg': '#2e3d50', 'bubble-ink': '#f2f5fa', 'tool-result': '#9dbfe2',
+  'chart-hit': '#81c9ef', 'chart-miss': '#6591c3', 'chart-output': '#adc7e4',
+  'chart-1': '#81c9ef', 'chart-2': '#6591c3', 'chart-3': '#9dbfe2', 'chart-4': '#b8c5d6',
+  'chart-5': '#fae6e8', 'chart-6': '#8e9fb5', 'chart-7': '#73aec9', 'chart-8': '#cbd6e4',
 };
 
 /** Claude 灰阶配赤陶与灰玫瑰强调色；浅色文字使用同色系的深色。 */
