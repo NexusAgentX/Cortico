@@ -102,6 +102,8 @@
   .brand { padding: 20px 20px 14px; border-bottom: 1px solid var(--line); }
   /* 字标是一整块笔画,颜色由 currentColor 取,所以只需要给高度。 */
   .brand .wordmark { display: block; width: auto; height: 30px; color: var(--ink); }
+  /* 两只眼睛与两个字母 o 跟主题的强调色走,横幅上它们本来就是另一个颜色。 */
+  .brand .wordmark .accent { stroke: var(--accent); }
 
   nav.stack { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 24px; }
   .stacklabel { font-size: 10.5px; letter-spacing: .18em; color: var(--ink-dim); margin: 14px 8px 7px; text-transform: uppercase; }
