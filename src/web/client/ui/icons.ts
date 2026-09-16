@@ -177,7 +177,7 @@ export function icon(doc: Document, name: ConsoleIconName, cls = 'icon'): SVGSVG
   svg.setAttribute('stroke-linecap', 'round');
   svg.setAttribute('stroke-linejoin', 'round');
   svg.setAttribute('aria-hidden', 'true');
-  svg.classList.add(cls);
+  svg.setAttribute('class', cls);
   shapesInto(doc, svg, SHAPES[name]);
   return svg;
 }

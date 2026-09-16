@@ -1705,5 +1705,10 @@
   .ob-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
   .ob-who { font: 600 12px/1 var(--sans); color: var(--muted-foreground); }
   .ob-state { margin-top: 6px; font: 12.5px/1.4 var(--mono); color: color-mix(in srgb, var(--bubble-ink) 62%, transparent); }
+  .ob-state.ok { color: var(--ok); }
+  .ob-state.bad { color: var(--danger); }
   .ob-acts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
   .onboarding .monolog { max-width: 100%; }
+  .ob-btn { display: inline-flex; align-items: center; gap: 6px; }
+  .ob-btn .icon { width: 14px; height: 14px; }
+  .ob-btn:disabled { opacity: .55; cursor: not-allowed; }

@@ -6,7 +6,7 @@
 
 import type { ConsoleUi } from '../../../shared/client-panel.ts';
 import { get } from '../../core/api.ts';
-import { brandMark } from '../../ui/icons.ts';
+import { brandMark, icon, type ConsoleIconName } from '../../ui/icons.ts';
 import { S } from './strings.ts';
 
 /** 这一页用得到的 `/api/worlds` 字段。 */
@@ -31,9 +31,11 @@ export interface OnboardingView {
   setProvider(ready: boolean): void;
 }
 
+/** 状态行的语气：成不成事各有各的颜色，不报读数时收起这一行。 */
+type Tone = 'ok' | 'bad';
+
 interface Bubble {
-  /** 状态行；`null` 收起这一行。 */
-  setState(text: string | null): void;
+  setState(text: string | null, tone?: Tone): void;
   button: HTMLButtonElement;
 }
 
@@ -51,19 +53,24 @@ export function createOnboarding(deps: OnboardingDeps): OnboardingView {
   grid.append(gutter, col);
   el.appendChild(grid);
 
-  const bubble = (line: string, action: { label: string; onClick(): void }): Bubble => {
+  const bubble = (line: string, action: { label: string; icon?: ConsoleIconName; onClick(): void }): Bubble => {
     const box = ui.h('div', 'monolog');
     box.appendChild(ui.h('div', 'monolog-body', line));
     const state = ui.h('div', 'ob-state hidden');
-    const button = ui.button(action.label, { size: 'sm', onClick: () => action.onClick() });
+    // 外观取子页签那颗按钮（`.seg`），`ob-btn` 只挂本页的微调。
+    const button = ui.h('button', 'seg active ob-btn');
+    button.type = 'button';
+    if (action.icon) button.appendChild(icon(doc, action.icon));
+    button.appendChild(ui.h('span', null, action.label));
+    button.addEventListener('click', () => action.onClick(), { signal });
     const acts = ui.h('div', 'ob-acts');
     acts.appendChild(button);
     box.append(state, acts);
     body.appendChild(box);
     return {
       button,
-      setState(text) {
-        state.className = text === null ? 'ob-state hidden' : 'ob-state';
+      setState(text, tone) {
+        state.className = text === null ? 'ob-state hidden' : `ob-state ${tone ?? ''}`.trim();
         state.textContent = text ?? '';
       },
     };
@@ -74,7 +81,8 @@ export function createOnboarding(deps: OnboardingDeps): OnboardingView {
   bubble(S.obPrompts, { label: S.obGoEdit, onClick: () => deps.go(['prompts']) });
 
   const startLabel = S.obStart;
-  const ready = bubble(S.obReady, { label: startLabel, onClick: () => deps.start(startLabel) });
+  // 最后那颗按的是「开始跑」，图标与左下角运行控制里的继续是同一个。
+  const ready = bubble(S.obReady, { label: startLabel, icon: 'play', onClick: () => deps.start(startLabel) });
 
   // 读不到就让这一行空着：引导区少一行读数，不该变成错误卡。
   void get<{ worlds?: WorldRow[] }>('/api/worlds', { signal }).then((data) => {
@@ -87,9 +95,9 @@ export function createOnboarding(deps: OnboardingDeps): OnboardingView {
   return {
     el,
     setProvider(available) {
-      provider.setState(available ? S.obProviderReady : S.obProviderNone);
+      provider.setState(available ? S.obProviderReady : S.obProviderNone, available ? 'ok' : 'bad');
       // 最后一条只在还缺端点时说话：配好了就只剩那颗按钮。
-      ready.setState(available ? null : S.obProviderNone);
+      ready.setState(available ? null : S.obProviderNone, 'bad');
       ready.button.disabled = !available;
     },
   };
