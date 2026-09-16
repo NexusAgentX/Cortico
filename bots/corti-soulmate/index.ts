@@ -9,7 +9,7 @@ import type { WebAppCheckpointDeps } from 'cortico/web/server.ts';
 
 import { CortiSoulmate } from './persona/index.ts';
 import {
-  CORTI_OPS_PAGE_NAME, cortiConsolePages,
+  cortiConsolePages,
   type CortiResetDeps,
 } from './console-page.ts';
 import { AUTHOR_OPERATOR } from '../cormini/persona/workspaceGit.ts';
@@ -192,8 +192,8 @@ function consoleContribution(loaded: LoadedConfig<BotConfig>, p: ConsoleParts): 
      * (`CortiSoulmate.console()`)。
      */
     consolePages: (ctx) => cortiConsolePages({
-      name: CORTI_OPS_PAGE_NAME,
-      label: `${cfg.displayName || 'corti-soulmate'} · 部署`,
+      name: definition.id,
+      label: `${cfg.displayName || definition.id} · 部署`,
       checkpoints: checkpointDeps,
       status: () => persona.git.status(),
       reset: resetDeps,
@@ -209,7 +209,6 @@ function consoleContribution(loaded: LoadedConfig<BotConfig>, p: ConsoleParts): 
 
 const definition: BotDefinition<BotConfig> = {
   id: 'corti-soulmate',
-  description: '雪午Yukima:分层记忆、交接后并行梦、QQ 起草-确认门、宪法归梦修订',
   // 记忆系统与 Cormini 同一套(工作区即记忆,Git 记账),分层记忆建在它上面。
   memoryName: 'GitMem',
   declares: DECLARES,
