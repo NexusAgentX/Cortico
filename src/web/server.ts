@@ -405,6 +405,11 @@ export interface ConsoleSurface {
    */
   language?: Language;
   /**
+   * 部署的默认配色方案 id,印在 `<html data-default-scheme>` 上。浏览器保存过自己的选择就用
+   * 保存的那个;认不出的 id 由控制台落到框架默认方案。
+   */
+  defaultScheme?: string;
+  /**
    * 监听地址。缺省 `127.0.0.1`:控制台没有身份认证,默认不对局域网露面。
    * 要放到反向代理后面或有意让别的机器访问,才显式换成 `0.0.0.0`。
    */
@@ -1806,8 +1811,17 @@ export class WebApp {
         res.status(500).send(String(err));
         return;
       }
-      // 语言盖在 <html lang> 上:内核在 import 期就读它,框架页面能在模块顶层选串表。
-      if (this.language === 'en') html = html.replace('<html lang="zh-CN">', '<html lang="en">');
+      /**
+       * 语言盖在 `<html lang>` 上:内核在 import 期就读它,框架页面能在模块顶层选串表。
+       * 默认配色方案跟它一起进开标签,主题在首次渲染前就读得到。方案 id 只收
+       * `[a-z0-9-]`,别的字符会从属性值里逃出去。
+       */
+      const lang = this.language === 'en' ? 'en' : 'zh-CN';
+      const scheme = /^[a-z0-9-]{1,40}$/.test(this.deps.defaultScheme ?? '') ? this.deps.defaultScheme : '';
+      html = html.replace(
+        '<html lang="zh-CN">',
+        `<html lang="${lang}"${scheme ? ` data-default-scheme="${scheme}"` : ''}>`,
+      );
       const core = this.assets.core();
       if (core) {
         /**

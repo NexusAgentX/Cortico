@@ -15,42 +15,42 @@
 
 :root {
     /* 无脚本时的回退值；运行时由统一方案注册表写入。 */
-    --paper:   #f7f5ef;
-    --paper-2: #efede6;
-    --sheet:   #fbfaf6;
-    --sheet-2: #f2f0e9;
-    --sheet-3: #ebe8df;
-    --ink:     #33312d;
-    --ink-soft:#6f6b63;
-    --ink-dim: #918c82;
-    --line:    #e5e1d8;
-    --line-2:  #d7d2c8;
-    --line-strong: #bdb6aa;
-    --accent:  #c15f3c;
-    --accent-2:#9b5035;
-    --ink-blue:#383834;
-    --ok:  #292925;
-    --warn:#5c5c55;
-    --danger:#1c1c1a;
-    --violet:#474741;
-    --on-accent:#fff8f0;
-    --agent-surface:#f7f5ef;
-    --world-bg:#f5eee9;
-    --world-ink:#583927;
-    --bubble-bg:#ded5c5;
-    --bubble-ink:#302b22;
-    --tool-result:#49643b;
-    --chart-hit:#5f7a4c;
-    --chart-miss:#a9772a;
-    --chart-output:#ab5c30;
-    --chart-1:#ab5c30;
-    --chart-2:#4c6672;
-    --chart-3:#7a5b86;
-    --chart-4:#5f7a4c;
-    --chart-5:#c6845a;
-    --chart-6:#a9772a;
-    --chart-7:#7d7048;
-    --chart-8:#6b8e9e;
+    --paper:   #f4f5f4;
+    --paper-2: #ecedec;
+    --sheet:   #fbfbfb;
+    --sheet-2: #f2f3f2;
+    --sheet-3: #e8e9e8;
+    --ink:     #1b1a1e;
+    --ink-soft:#5c5c60;
+    --ink-dim: #8b8b8f;
+    --line:    #e3e4e3;
+    --line-2:  #d0d2d0;
+    --line-strong: #aeb0ae;
+    --accent:  #00a870;
+    --accent-2:#00815a;
+    --ink-blue:#41727a;
+    --ok:  #1f7a57;
+    --warn:#a0762a;
+    --danger:#bc4f43;
+    --violet:#6b5a8c;
+    --on-accent:#ffffff;
+    --agent-surface:#f4f5f4;
+    --world-bg:#f0f1f0;
+    --world-ink:#4a4a4e;
+    --bubble-bg:#e6e9e7;
+    --bubble-ink:#1f2221;
+    --tool-result:#1f7a57;
+    --chart-hit:#00a870;
+    --chart-miss:#a0762a;
+    --chart-output:#41727a;
+    --chart-1:#00a870;
+    --chart-2:#41727a;
+    --chart-3:#6b5a8c;
+    --chart-4:#4c8f3e;
+    --chart-5:#c2803c;
+    --chart-6:#b04f6a;
+    --chart-7:#3f8f8a;
+    --chart-8:#7a8b2f;
     --shadow-soft: color-mix(in srgb, var(--ink) 7%, transparent);
     --shadow-strong: color-mix(in srgb, var(--ink) 20%, transparent);
     --overlay: color-mix(in srgb, var(--ink) 44%, transparent);
@@ -1680,3 +1680,24 @@
     .statgrid,
     .usagecards { grid-template-columns: minmax(0, 1fr); }
   }
+
+  /* 开场引导:终端页时间线上方那一组 Cortico 气泡。 */
+  .onboarding { padding: 20px 32px 0; }
+  .ob-grid {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    column-gap: 10px;
+    align-items: start;
+    width: min(100%, var(--conversation-width));
+    margin: 0 auto;
+  }
+  .ob-mark { color: var(--accent); }
+  .ob-mark .brandmark { width: 19px; height: 19px; }
+  .ob-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .ob-who { font: 600 12px/1 var(--sans); color: var(--muted-foreground); }
+  .ob-bubble { display: flex; flex-direction: column; gap: 8px; }
+  .ob-line { font: 14.5px/1.62 var(--sans); color: var(--foreground); }
+  .ob-acts { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .ob-state { font: 12.5px/1.4 var(--mono); color: var(--muted-foreground); }
+  .ob-state.bad { color: var(--danger); }
+  .ob-start { margin-top: 2px; }

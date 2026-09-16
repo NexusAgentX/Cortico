@@ -1017,6 +1017,7 @@ const app = new WebApp({
   memoryDir: tmpPersona,
   dataDir: tmpData,
   botDir: tmpPersona,
+  defaultScheme: cfg.web.theme,
   getStatus: () => ({
     loop: { estTokens: 90200, messageCount: session.length, roundsLastBatch: 3, batchesHandled: 37, paused, truncating: false, softNoticeSent: false, lastUsage: { promptTokens: 358000, cacheHitTokens: 322000, cacheMissTokens: 36000, completionTokens: 420, reasoningTokens: 180 } },
     chips: devDreaming ? [{ label: '梦中', tone: 'accent' }] : [],

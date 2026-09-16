@@ -143,7 +143,7 @@ const definition: BotDefinition<CortiVConfig> = {
       // 模型归 provider:这条端点默认跑哪个模型是部署事实,Persona不参与。
       deepseek: { ...structuredClone(CORE_DEFAULTS.providers.deepseek), spec: { ...DEEPSEEK_SPEC } },
     },
-    web: { port: 7789 },
+    web: { port: 7789, theme: 'navigator' },
     paths: { memory: 'workspace', data: 'data' },
     batching: { ...CORE_DEFAULTS.batching },
     // 交接阈值(塞满多少就交接)。这只是**层 2 建议值** —— config.json 的 context 段

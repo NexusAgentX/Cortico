@@ -75,7 +75,7 @@ const definition: BotDefinition<CorminiConfig> = {
       // 模型归 provider:这条端点默认跑哪个模型是部署事实,Persona不参与。
       deepseek: { ...structuredClone(CORE_DEFAULTS.providers.deepseek), spec: { ...DEEPSEEK_SPEC } },
     },
-    web: { port: 7788 },
+    web: { port: 7788, theme: 'mint' },
     paths: { memory: 'workspace', data: 'data' },
     batching: { ...CORE_DEFAULTS.batching },
     // session 阶段长度属于人格配置。

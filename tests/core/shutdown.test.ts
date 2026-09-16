@@ -76,7 +76,7 @@ function makeEnv(worlds: World[]): {
   const dir = mkdtempSync(join(tmpdir(), 'shutdown-'));
   const config: TestConfig = {
     ...CORE_DEFAULTS,
-    web: { port: 0 },
+    web: { ...CORE_DEFAULTS.web, port: 0 },
     paths: { memory: 'workspace', data: 'data' },
     context: { ...CORE_DEFAULTS.context },
     loop: { softCap: 8, hardCap: 16 },

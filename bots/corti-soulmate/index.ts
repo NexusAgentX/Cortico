@@ -63,7 +63,7 @@ export function composeDefaults(): BotConfig {
       deepseek: { ...structuredClone(CORE_DEFAULTS.providers.deepseek), spec: { ...DEEPSEEK_SPEC } },
     },
     displayName: '雪午Yukima',
-    web: { ...CORE_DEFAULTS.web },
+    web: { ...CORE_DEFAULTS.web, theme: 'crab-daisy' },
     paths: { ...CORE_DEFAULTS.paths },
     batching: { ...CORE_DEFAULTS.batching },
     // context 分属两方:阶段长度三项归Persona,摘思维链两项归 core 的 LLM 层

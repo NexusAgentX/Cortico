@@ -32,8 +32,8 @@ export interface StoredTheme {
   custom: ThemeScheme[];
 }
 
-export function defaultStoredTheme(): StoredTheme {
-  return { selectedId: DEFAULT_SCHEME_ID, mode: 'system', custom: [] };
+export function defaultStoredTheme(defaultSchemeId: string = DEFAULT_SCHEME_ID): StoredTheme {
+  return { selectedId: defaultSchemeId, mode: 'system', custom: [] };
 }
 
 /** 规范化自定义方案；名称上限 40 字、说明上限 80 字，非法记录返回 null。 */
@@ -55,37 +55,43 @@ function normalizeCustomScheme(raw: unknown): ThemeScheme | null {
 }
 
 /** 解析 StoredTheme；非法数据返回默认值，不抛错。 */
-export function parseStoredTheme(raw: string | null | undefined): StoredTheme {
-  if (raw == null || raw === '') return defaultStoredTheme();
+export function parseStoredTheme(
+  raw: string | null | undefined,
+  defaultSchemeId: string = DEFAULT_SCHEME_ID,
+): StoredTheme {
+  if (raw == null || raw === '') return defaultStoredTheme(defaultSchemeId);
   try {
     const parsed = JSON.parse(raw) as Partial<StoredTheme> | null;
-    if (!parsed || typeof parsed !== 'object') return defaultStoredTheme();
+    if (!parsed || typeof parsed !== 'object') return defaultStoredTheme(defaultSchemeId);
     return {
-      selectedId: typeof parsed.selectedId === 'string' ? parsed.selectedId : DEFAULT_SCHEME_ID,
+      selectedId: typeof parsed.selectedId === 'string' ? parsed.selectedId : defaultSchemeId,
       mode: THEME_MODES.includes(parsed.mode as ThemeMode) ? (parsed.mode as ThemeMode) : 'system',
       custom: Array.isArray(parsed.custom)
         ? parsed.custom.map(normalizeCustomScheme).filter((s): s is ThemeScheme => s !== null)
         : [],
     };
   } catch {
-    return defaultStoredTheme();
+    return defaultStoredTheme(defaultSchemeId);
   }
 }
 
-export function readStoredTheme(storage: ThemeStorageLike | null | undefined): StoredTheme {
-  if (!storage) return defaultStoredTheme();
+export function readStoredTheme(
+  storage: ThemeStorageLike | null | undefined,
+  defaultSchemeId: string = DEFAULT_SCHEME_ID,
+): StoredTheme {
+  if (!storage) return defaultStoredTheme(defaultSchemeId);
   try {
     const raw = storage.getItem(THEME_STORAGE_KEY);
-    if (raw != null && raw !== '') return parseStoredTheme(raw);
+    if (raw != null && raw !== '') return parseStoredTheme(raw, defaultSchemeId);
     const legacy = storage.getItem(LEGACY_THEME_STORAGE_KEY);
-    if (legacy == null || legacy === '') return defaultStoredTheme();
+    if (legacy == null || legacy === '') return defaultStoredTheme(defaultSchemeId);
     // 写入新键失败时仍返回已读取的记录。
-    const state = parseStoredTheme(legacy);
+    const state = parseStoredTheme(legacy, defaultSchemeId);
     writeStoredTheme(storage, state);
     return state;
   } catch {
     // 存储访问可能被拒绝。
-    return defaultStoredTheme();
+    return defaultStoredTheme(defaultSchemeId);
   }
 }
 

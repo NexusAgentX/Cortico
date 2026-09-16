@@ -1057,6 +1057,7 @@ export function createBot<C extends CoreConfig>(
       dataDir: loaded.dataDir,
       botDir: loaded.rootDir,
       language,
+      defaultScheme: cfg.web.theme,
       sessions: core.sessions,
       storage: consoleStorage,
       usage: { aggregate: (opts) => aggregateUsage(core.usageLog.readAll(), opts), status: () => core.usageLog.status() },

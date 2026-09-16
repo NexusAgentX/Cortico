@@ -187,7 +187,7 @@ export const CORE_DEFAULTS = {
     },
   },
   activeProvider: 'deepseek',
-  web: { port: 7777 },
+  web: { port: 7777, theme: 'mint' },
   paths: { memory: 'memory', data: 'data' },
   batching: { quietGapMs: 2500, minBatchAgeMs: 0, maxBatchAgeMs: 15000, maxBatchSize: 100 },
   context: { keepPastThinking: true },

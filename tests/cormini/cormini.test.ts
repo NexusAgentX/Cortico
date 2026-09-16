@@ -31,7 +31,7 @@ beforeAll(async () => {
   const config: CoreConfig = {
     ...CORE_DEFAULTS,
     displayName: 'Cormini',
-    web: { port: 0 },
+    web: { ...CORE_DEFAULTS.web, port: 0 },
     paths: { memory: 'workspace', data: 'data' },
     batching: { quietGapMs: 30, minBatchAgeMs: 0, maxBatchAgeMs: 300, maxBatchSize: 100 },
     context: { ...CORE_DEFAULTS.context },

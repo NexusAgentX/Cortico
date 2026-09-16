@@ -37,7 +37,7 @@ const definition: BotDefinition<ExampleConfig> = {
   defaults: () => ({
     ...structuredClone(CORE_DEFAULTS),
     displayName: 'Example',
-    web: { port: 7790 },
+    web: { ...CORE_DEFAULTS.web, port: 7790 },
     paths: { memory: 'memory', data: 'data' },
     rounds: { soft: 6, hard: 12 },
   }),

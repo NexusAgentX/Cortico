@@ -1118,7 +1118,11 @@ export interface CoreConfig {
     /** 积压外部即时事件和候选达到此数时立即投递；不计 piggyback 项。 */
     maxBatchSize: number;
   };
-  web: { port: number };
+  web: {
+    port: number;
+    /** 控制台配色方案 id；浏览器没有保存过选择时用它，认不出的 id 落到框架默认方案。 */
+    theme: string;
+  };
   paths: {
     /** 相对部署目录或绝对路径；目录名由 Persona 指定。 */
     memory: string;

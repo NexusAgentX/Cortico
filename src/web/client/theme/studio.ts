@@ -2,12 +2,12 @@
 
 import { toDisposable, type Disposable } from '../../shared/client-panel.ts';
 import {
-  DEFAULT_SCHEME_ID,
   THEME_MODES,
   clonePalette,
   cloneScheme,
   fallbackPalette,
   normalizePalette,
+  resolveDefaultSchemeId,
   schemeSwatches,
   type ThemeAppearance,
   type ThemeMode,
@@ -72,6 +72,8 @@ export interface ThemeStudioDeps {
   storage?: ThemeStorageLike | null;
   /** 不给则取 `doc.defaultView.matchMedia(...)`；显式给 `null` = 系统挡位当浅色。 */
   media?: MediaQueryLike | null;
+  /** 部署的默认方案 id；不给则读 `<html data-default-scheme>`。浏览器存过选择时不看它。 */
+  defaultSchemeId?: string;
   /** 订阅方回调里抛的错落这儿。默认吞掉——一张图重画失败不该拖垮换肤本身。 */
   onError?(err: unknown): void;
 }
@@ -90,6 +92,8 @@ export class ThemeStudio {
   private readonly storage: ThemeStorageLike | null;
   private readonly media: MediaQueryLike | null;
   private readonly onError: (err: unknown) => void;
+  /** 存档里没有可用选择时选哪个方案；删掉自定义方案后也回到它。 */
+  private readonly defaultSchemeId: string;
   private readonly listeners = new Set<ThemeChangeListener>();
   private state: StoredTheme;
   private previewPalette: ThemePalette | null = null;
@@ -105,7 +109,10 @@ export class ThemeStudio {
     this.storage = deps.storage === undefined ? browserThemeStorage(deps.doc) : deps.storage;
     this.media = deps.media === undefined ? systemDarkQuery(deps.doc) : deps.media;
     this.onError = deps.onError ?? ((): void => {});
-    this.state = readStoredTheme(this.storage);
+    this.defaultSchemeId = resolveDefaultSchemeId(
+      deps.defaultSchemeId ?? deps.doc.documentElement?.dataset.defaultScheme,
+    );
+    this.state = readStoredTheme(this.storage, this.defaultSchemeId);
     this.media?.addEventListener('change', this.onMediaChange);
   }
 
@@ -116,10 +123,12 @@ export class ThemeStudio {
     return [...builtinSchemes(), ...this.state.custom.map((s) => ({ ...cloneScheme(s), custom: true }))];
   }
 
-  /** 当前方案。存档指向的 id 不存在（方案被别的标签页删了）就退回第一个。 */
+  /** 当前方案。存档指向的 id 不存在（方案被别的标签页删了）就退回部署默认方案。 */
   currentScheme(): ThemeScheme {
     const all = this.schemes();
-    return all.find((s) => s.id === this.state.selectedId) ?? all[0];
+    return all.find((s) => s.id === this.state.selectedId)
+      ?? all.find((s) => s.id === this.defaultSchemeId)
+      ?? all[0];
   }
 
   get appearance(): ThemeAppearance {
@@ -234,7 +243,7 @@ export class ThemeStudio {
     const before = this.state.custom.length;
     this.state.custom = this.state.custom.filter((s) => s.id !== this.state.selectedId);
     if (this.state.custom.length === before) return false;
-    this.state.selectedId = DEFAULT_SCHEME_ID;
+    this.state.selectedId = this.defaultSchemeId;
     this.persist();
     this.apply();
     return true;

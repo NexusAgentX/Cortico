@@ -18,6 +18,10 @@ const storageMod = (await import(STORAGE)) as Any;
 const palette = (await import(PALETTE)) as Any;
 const studioMod = (await import(STUDIO)) as Any;
 
+const DEFAULT_ID: string = registry.DEFAULT_SCHEME_ID;
+const SECOND: string = registry.BUILTIN_SCHEMES[1].id;
+const THIRD: string = registry.BUILTIN_SCHEMES[2].id;
+
 // ---------------------------------------------------------------------------
 // 迷你 DOM 桩：只实现主题真正用到的那几样
 // ---------------------------------------------------------------------------
@@ -250,13 +254,13 @@ describe('调色板落到 CSS 变量', () => {
   it('applyPalette：变量刷到 documentElement，并带上两个 data 标记与 color-scheme', () => {
     const doc = new FakeDoc();
     const p = registry.fallbackPalette('dark');
-    palette.applyPalette(doc as Any, p, { appearance: 'dark', schemeId: 'mineral' });
+    palette.applyPalette(doc as Any, p, { appearance: 'dark', schemeId: SECOND });
     const root = doc.documentElement;
     expect(root.style.getPropertyValue('--paper')).toBe(p.paper);
     expect(root.style.getPropertyValue('--chart-8')).toBe(p['chart-8']);
     expect(root.style.props.size).toBe(registry.THEME_TOKENS.length);
     expect(root.dataset.colorMode).toBe('dark');
-    expect(root.dataset.themeScheme).toBe('mineral');
+    expect(root.dataset.themeScheme).toBe(SECOND);
     expect(root.style.colorScheme).toBe('dark');
   });
 
@@ -272,9 +276,9 @@ describe('调色板落到 CSS 变量', () => {
 
   it('applyPalette：不给 schemeId 就不动 data-theme-scheme（预览不该改方案标记）', () => {
     const doc = new FakeDoc();
-    palette.applyPalette(doc as Any, registry.fallbackPalette('light'), { appearance: 'light', schemeId: 'sepia' });
+    palette.applyPalette(doc as Any, registry.fallbackPalette('light'), { appearance: 'light', schemeId: THIRD });
     palette.applyPalette(doc as Any, registry.fallbackPalette('light'), { appearance: 'light' });
-    expect(doc.documentElement.dataset.themeScheme).toBe('sepia');
+    expect(doc.documentElement.dataset.themeScheme).toBe(THIRD);
   });
 
   it('readThemeColor：读不出合法颜色时退回 --ink-dim', () => {
@@ -343,9 +347,9 @@ describe('主题存档', () => {
   it('两个键都有记录:新键赢,旧键不回灌', () => {
     const store = new FakeStorage();
     store.map.set(LEGACY_KEY, legacyRecord());
-    store.map.set(KEY, JSON.stringify({ selectedId: 'archive', mode: 'light', custom: [] }));
+    store.map.set(KEY, JSON.stringify({ selectedId: DEFAULT_ID, mode: 'light', custom: [] }));
     const state = storageMod.readStoredTheme(store);
-    expect(state.selectedId).toBe('archive');
+    expect(state.selectedId).toBe(DEFAULT_ID);
     expect(state.mode).toBe('light');
   });
 
@@ -381,7 +385,7 @@ describe('主题存档', () => {
   });
 
   it('没存过 / 坏 JSON / 字段类型不对 → 一律默认值，绝不抛', () => {
-    const dflt = { selectedId: 'archive', mode: 'system', custom: [] };
+    const dflt = { selectedId: DEFAULT_ID, mode: 'system', custom: [] };
     expect(storageMod.parseStoredTheme(null)).toEqual(dflt);
     expect(storageMod.parseStoredTheme('')).toEqual(dflt);
     expect(storageMod.parseStoredTheme('{ 坏 JSON')).toEqual(dflt);
@@ -412,7 +416,7 @@ describe('主题存档', () => {
   it('存储不可用（无痕 / 配额满）时读给默认、写返回 false，都不抛', () => {
     const store = new FakeStorage();
     store.fail = true;
-    expect(storageMod.readStoredTheme(store).selectedId).toBe('archive');
+    expect(storageMod.readStoredTheme(store).selectedId).toBe(DEFAULT_ID);
     expect(storageMod.writeStoredTheme(store, storageMod.defaultStoredTheme())).toBe(false);
     expect(storageMod.readStoredTheme(null).mode).toBe('system');
     expect(storageMod.writeStoredTheme(null, storageMod.defaultStoredTheme())).toBe(false);
@@ -452,15 +456,34 @@ describe('主题工作室', () => {
 
   it('applyStoredTheme：没存过主题时落到内置首个方案 + 跟随系统 + 浅色', () => {
     const snap = apply();
-    expect(snap.selectedId).toBe('archive');
+    expect(snap.selectedId).toBe(DEFAULT_ID);
     expect(snap.mode).toBe('system');
     expect(snap.appearance).toBe('light');
     expect(snap.scheme.builtin).toBe(true);
     expect(doc.documentElement.style.getPropertyValue('--paper'))
       .toBe(registry.BUILTIN_SCHEMES[0].palettes.light.paper);
-    expect(doc.documentElement.dataset.themeScheme).toBe('archive');
+    expect(doc.documentElement.dataset.themeScheme).toBe(DEFAULT_ID);
     // 只读不写：没存过就不该凭空写一条记录出来
     expect(store.map.has(KEY)).toBe(false);
+  });
+
+  it('部署默认方案：没存过就用 `<html data-default-scheme>`,认不出的 id 落到框架默认', () => {
+    doc.documentElement.dataset.defaultScheme = THIRD;
+    expect(apply().selectedId).toBe(THIRD);
+    studioMod.disposeThemeStudio();
+    doc.documentElement.dataset.defaultScheme = '没这个方案';
+    expect(apply().selectedId).toBe(DEFAULT_ID);
+  });
+
+  it('部署默认方案：存过的选择赢过它,删掉自定义方案后回到它', () => {
+    doc.documentElement.dataset.defaultScheme = THIRD;
+    store.map.set(KEY, JSON.stringify({ selectedId: SECOND, mode: 'light', custom: [] }));
+    const s = studio();
+    s.apply(false);
+    expect(s.snapshot().selectedId).toBe(SECOND);
+    s.saveAs('待删', s.snapshot().palette);
+    expect(s.removeCurrent()).toBe(true);
+    expect(s.snapshot().selectedId).toBe(THIRD);
   });
 
   it('applyStoredTheme：系统偏好为深色时，system 挡位解析成 dark', () => {
@@ -504,8 +527,8 @@ describe('主题工作室', () => {
   it('存档里的方案没了（别的标签页删的）→ 退回默认方案并把纠正写回存档', () => {
     store.map.set(KEY, JSON.stringify({ selectedId: 'ghost', mode: 'light', custom: [] }));
     const snap = apply();
-    expect(snap.selectedId).toBe('archive');
-    expect(JSON.parse(store.map.get(KEY) as string).selectedId).toBe('archive');
+    expect(snap.selectedId).toBe(DEFAULT_ID);
+    expect(JSON.parse(store.map.get(KEY) as string).selectedId).toBe(DEFAULT_ID);
   });
 
   it('select / setMode：认不出的值原样拒绝，认得的写存档并刷 CSS 变量', () => {
@@ -513,26 +536,26 @@ describe('主题工作室', () => {
     const s = studio();
     expect(s.select('不存在')).toBe(false);
     expect(s.setMode('neon')).toBe(false);
-    expect(s.select('sepia')).toBe(true);
+    expect(s.select(THIRD)).toBe(true);
     expect(doc.documentElement.style.getPropertyValue('--paper'))
       .toBe(registry.BUILTIN_SCHEMES[2].palettes.light.paper);
     expect(s.setMode('dark')).toBe(true);
     expect(doc.documentElement.style.getPropertyValue('--paper'))
       .toBe(registry.BUILTIN_SCHEMES[2].palettes.dark.paper);
     const raw = JSON.parse(store.map.get(KEY) as string);
-    expect(raw).toEqual({ selectedId: 'sepia', mode: 'dark', custom: [] });
+    expect(raw).toEqual({ selectedId: THIRD, mode: 'dark', custom: [] });
   });
 
   it('onChange：订阅收到快照，dispose 之后一条都不再收', () => {
     apply();
     const seen: Any[] = [];
     const sub = studio().onChange((c: Any) => seen.push(c));
-    studio().select('mineral');
+    studio().select(SECOND);
     expect(seen.length).toBe(1);
     expect(seen[0].preview).toBe(false);
-    expect(seen[0].snapshot.selectedId).toBe('mineral');
+    expect(seen[0].snapshot.selectedId).toBe(SECOND);
     sub.dispose();
-    studio().select('sepia');
+    studio().select(THIRD);
     expect(seen.length).toBe(1);
     // 重复 dispose 幂等
     expect(() => sub.dispose()).not.toThrow();
@@ -553,7 +576,7 @@ describe('主题工作室', () => {
       throw new Error('这张图重画失败了');
     });
     s.onChange(() => after.push('还是跑到了'));
-    s.select('sepia');
+    s.select(THIRD);
     expect(hits).toBe(1);
     expect(after).toEqual(['还是跑到了']);
     expect((errs[0] as Error).message).toBe('这张图重画失败了');
@@ -609,7 +632,7 @@ describe('主题工作室', () => {
     apply();
     const s = studio();
     s.saveAs('   ', s.snapshot().palette);
-    expect(s.snapshot().scheme.name).toBe('暖陶米白 副本');
+    expect(s.snapshot().scheme.name).toBe(`${registry.BUILTIN_SCHEMES[0].name} 副本`);
     s.saveAs('长'.repeat(80), s.snapshot().palette);
     expect(s.snapshot().scheme.name.length).toBe(40);
   });
@@ -633,7 +656,7 @@ describe('主题工作室', () => {
     expect(s.removeCurrent()).toBe(false);
     s.saveAs('待删', s.snapshot().palette);
     expect(s.removeCurrent()).toBe(true);
-    expect(s.snapshot().selectedId).toBe('archive');
+    expect(s.snapshot().selectedId).toBe(DEFAULT_ID);
     expect(JSON.parse(store.map.get(KEY) as string).custom).toEqual([]);
   });
 
@@ -677,5 +700,19 @@ describe('主题工作室', () => {
 
   it('没有 Document 又没建过实例时，getThemeStudio 给一条能看懂的错', () => {
     expect(() => studioMod.getThemeStudio()).toThrow(/Document/);
+  });
+});
+
+describe('部署默认方案', () => {
+  it('框架默认与仓内三个 bot 填的 id 都是内置方案,不会静默落回', async () => {
+    const { CORE_DEFAULTS } = await import('../../src/core/config.ts');
+    const bots = await Promise.all([
+      import('../../bots/cormini/index.ts'),
+      import('../../bots/cortiv/index.ts'),
+      import('../../bots/corti-soulmate/index.ts'),
+    ]);
+    const ids = [CORE_DEFAULTS.web.theme, ...bots.map((m) => m.default.defaults().web.theme)];
+    for (const id of ids) expect(registry.resolveDefaultSchemeId(id)).toBe(id);
+    expect(ids.slice(1)).toEqual(['mint', 'navigator', 'crab-daisy']);
   });
 });
