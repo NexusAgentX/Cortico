@@ -30,25 +30,17 @@
   <a href="https://github.com/Pal-AI-Lab/Cortico/issues">Issue Tracker</a>
 </p>
 
-A Cortico bot is far more than a chat bot: with an extensible agent system designed around the event stream, 
-Cortico helps you build agents that respond on their own, run continuously, and take mixed real-time input.
-One bot can watch and act on several external environments at once: chat platforms, live games, even the 
-physical environment. It is perfect for downstream tasks such as persona bots, AI streamers, roleplay, 
-companionship and much more. Cortico's goal: bring your AI to the world!
+Cortico is an agent harness designed around an event stream, built for autonomous, continuously running agents with mixed real-time input. It suits persona bots, AI streamers, roleplay, companionship, and many other downstream tasks. A Cortico bot is far more than a chat bot: with an extensible agent system designed around the event stream, Cortico helps you build persistent AI agents capable of handling complex inputs. It supports flexible external extensions, allowing a single bot to simultaneously observe and act across multiple environments—including chat platforms, live games, and even physical environments. Cortico's goal: bring your AI to the world!
 
 ## Features
 
 1. 🆓 Free and open source!
 2. 🤖 A native agent harness: everything is designed around the agent.
-3. 🔌 Modular LLM provider components: Can connect to many LLM APIs as well as locally deployed servers.
-4. 🧠 Unconstrained internal context management, giving much freedom for the design of agent behaviour
-   patterns and Memory system.
-5. 🧩 An extension system (Cortico World), isolated from the inside, with event delivery and tool
-   calls as its input and output: excellent compatibility and nearly unlimited extensibility.
+3. 🔌 Modular LLM provider components: built on the Responses protocol inside, supporting various upstream LLM APIs as well as locally deployed models outside.
+4. 🧠 Unconstrained internal context management, giving much freedom for the design of agent behaviour patterns and Memory systems.
+5. 🧩 An extension system (Cortico World), isolated from the inside, with event delivery and tool calls as its input and output: excellent compatibility and nearly unlimited extensibility.
 6. 🖥️ A WebUI that is straightforward to operate.
-7. 🪄 An Extension Creator system built for AI development
-   ([Cortina](https://github.com/Pal-AI-Lab/Cortina)): a non-developer can use an AI agent to
-   build the extension they want, or move an existing implementation onto Cortico!
+7. 🪄 An Extension Creator system built for AI development ([Cortina](https://github.com/Pal-AI-Lab/Cortina)): a non-developer can use an AI agent to build the extension they want, or move an existing implementation onto Cortico!
 
 ## Quick Start
 
