@@ -85,27 +85,27 @@ export const THEME_TOKENS: readonly ThemeToken[] = [
   { group: S.groupChart, key: 'chart-8', label: T['chart-8'] },
 ];
 
-/** 主强调用于操作与回执，次强调用于思考与选中边线；大面积背景保持灰阶。 */
+/** 主强调用于操作与回执，次强调用于思考与调用标记；大面积背景保持灰阶。 */
 const mintLight: ThemePalette = {
   paper: '#f4f5f4', 'paper-2': '#ecedec', sheet: '#fbfbfb', 'sheet-2': '#f2f3f2', 'sheet-3': '#e8e9e8',
   ink: '#1b1a1e', 'ink-soft': '#5c5c60', 'ink-dim': '#8b8b8f', line: '#e3e4e3', 'line-2': '#d0d2d0', 'line-strong': '#aeb0ae',
-  accent: '#4d7b6c', 'accent-2': '#9a718e', 'on-accent': '#ffffff', ok: '#527b61', warn: '#96743b', danger: '#b45950',
-  'ink-blue': '#3d6f80', violet: '#805b75', 'agent-surface': '#f4f5f4', 'world-bg': '#f0f1f0', 'world-ink': '#4a4a4e',
+  accent: '#4d7b6c', 'accent-2': '#617f75', 'on-accent': '#ffffff', ok: '#527b61', warn: '#96743b', danger: '#b45950',
+  'ink-blue': '#466e6f', violet: '#516d63', 'agent-surface': '#f4f5f4', 'world-bg': '#f0f1f0', 'world-ink': '#4a4a4e',
   'bubble-bg': '#e6e9e7', 'bubble-ink': '#1f2221', 'tool-result': '#3e685b',
   'chart-hit': '#6b9078', 'chart-miss': '#96743b', 'chart-output': '#4d7b6c',
-  'chart-1': '#4d7b6c', 'chart-2': '#9a718e', 'chart-3': '#557b86', 'chart-4': '#6b9078',
-  'chart-5': '#ad855c', 'chart-6': '#a66f80', 'chart-7': '#658c88', 'chart-8': '#858b58',
+  'chart-1': '#4d7b6c', 'chart-2': '#617f75', 'chart-3': '#557b86', 'chart-4': '#6b9078',
+  'chart-5': '#ad855c', 'chart-6': '#877970', 'chart-7': '#658c88', 'chart-8': '#858b58',
 };
 
 const mintDark: ThemePalette = {
   paper: '#121312', 'paper-2': '#181a19', sheet: '#1d1f1e', 'sheet-2': '#242726', 'sheet-3': '#2c302e',
   ink: '#e9eae9', 'ink-soft': '#b0b2b1', 'ink-dim': '#828584', line: '#292c2b', 'line-2': '#383c3a', 'line-strong': '#535856',
-  accent: '#8bb6a5', 'accent-2': '#c6a2bc', 'on-accent': '#17251f', ok: '#95b69b', warn: '#c4a372', danger: '#d18c83',
-  'ink-blue': '#91bbcc', violet: '#c6a2bc', 'agent-surface': '#181a19', 'world-bg': '#1e211f', 'world-ink': '#adb2b0',
+  accent: '#8bb6a5', 'accent-2': '#a3b8b1', 'on-accent': '#17251f', ok: '#95b69b', warn: '#c4a372', danger: '#d18c83',
+  'ink-blue': '#94b8b6', violet: '#a3b8b1', 'agent-surface': '#181a19', 'world-bg': '#1e211f', 'world-ink': '#adb2b0',
   'bubble-bg': '#2c3230', 'bubble-ink': '#e6eae8', 'tool-result': '#a3c5b8',
   'chart-hit': '#95b69b', 'chart-miss': '#c4a372', 'chart-output': '#8bb6a5',
-  'chart-1': '#8bb6a5', 'chart-2': '#c6a2bc', 'chart-3': '#91bbcc', 'chart-4': '#95b69b',
-  'chart-5': '#c3a084', 'chart-6': '#c09ba9', 'chart-7': '#8db6b0', 'chart-8': '#b4b68a',
+  'chart-1': '#8bb6a5', 'chart-2': '#a3b8b1', 'chart-3': '#91adb7', 'chart-4': '#95b69b',
+  'chart-5': '#c3a084', 'chart-6': '#b1a497', 'chart-7': '#8db6b0', 'chart-8': '#b4b68a',
 };
 
 const navigatorLight: ThemePalette = {
@@ -232,10 +232,10 @@ export function cloneScheme(scheme: ThemeScheme): ThemeScheme {
   };
 }
 
-/** 方案卡的四格色带：底纸 / 主卡纸 / 主强调 / 次强调。 */
+/** 方案卡上那条四格色带：底纸 / 主卡纸 / 主强调 / 一个图表系列色。 */
 export function schemeSwatches(scheme: ThemeScheme, appearance: ThemeAppearance): string[] {
   const p = scheme.palettes[appearance];
-  return [p.paper, p.sheet, p.accent, p['accent-2']];
+  return [p.paper, p.sheet, p.accent, p['chart-2']];
 }
 
 /**

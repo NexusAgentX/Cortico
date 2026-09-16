@@ -302,19 +302,7 @@ function specimen(ctx: FeatureContext): HTMLElement {
   );
   const monolog = ui.h('div', 'monolog');
   monolog.appendChild(ui.h('div', 'monolog-body', S.monologBody));
-  const tool = ui.h('div', 'toolcall');
-  const toolHead = ui.h('div', 'toolhead');
-  for (const [key, value] of [['tool_name', 'example_read'], ['call_id', 'read_1']]) {
-    const tag = ui.h('span', `kv kv-${key}`);
-    tag.append(ui.h('span', 'kv-k', key), ui.h('span', 'kv-v', value));
-    toolHead.appendChild(tag);
-  }
-  const args = ui.h('div', 'toolargs');
-  args.appendChild(ui.h('pre', 'mono', '{ "path": "note.md" }'));
-  const result = ui.h('div', 'toolresult');
-  result.appendChild(ui.h('pre', 'mono', S.toolResultBody));
-  tool.append(toolHead, args, result);
-  turnCol.append(turnHead, think, monolog, tool);
+  turnCol.append(turnHead, think, monolog);
   turn.append(avatar, turnCol);
 
   const chart = ui.h('div', 'theme-chart-preview');

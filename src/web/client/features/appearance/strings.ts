@@ -37,7 +37,6 @@ const zh = {
   thinkLabel: '思考',
   thinkBody: "思考文本预览",
   monologBody: "正文预览",
-  toolResultBody: '工具回执预览',
   chartAria: '图表系列色预览',
   navLabel: '外观',
 };
@@ -79,7 +78,6 @@ const en: typeof zh = {
   thinkLabel: 'Reasoning',
   thinkBody: "Reasoning text preview",
   monologBody: "Message text preview",
-  toolResultBody: 'Tool receipt preview',
   chartAria: 'Chart series color preview',
   navLabel: 'Appearance',
 };

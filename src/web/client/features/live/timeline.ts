@@ -427,7 +427,7 @@ export function createTimeline(deps: TimelineDeps): TimelineView {
       stick();
       return null;
     }
-    const card = tag(ui.h('div', live ? 'tcard standalone tool-output anim-in' : 'tcard standalone tool-output'), entry);
+    const card = tag(ui.h('div', live ? 'tcard standalone anim-in' : 'tcard standalone'), entry);
     const head = ui.h('div', 'cardhead');
     head.append(ui.h('span', 'badge', 'function_call_output'), kv('call_id', item.call_id));
     const ord = ordinal(index);
