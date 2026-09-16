@@ -53,12 +53,15 @@ export function createOnboarding(deps: OnboardingDeps): OnboardingView {
   grid.append(gutter, col);
   el.appendChild(grid);
 
-  const bubble = (line: string, action: { label: string; icon?: ConsoleIconName; onClick(): void }): Bubble => {
+  const bubble = (
+    line: string,
+    action: { label: string; icon?: ConsoleIconName; accent?: boolean; onClick(): void },
+  ): Bubble => {
     const box = ui.h('div', 'monolog');
     box.appendChild(ui.h('div', 'monolog-body', line));
     const state = ui.h('div', 'ob-state hidden');
     // 外观取子页签那颗按钮（`.seg`），`ob-btn` 只挂本页的微调。
-    const button = ui.h('button', 'seg active ob-btn');
+    const button = ui.h('button', action.accent ? 'seg active ob-btn ob-go' : 'seg active ob-btn');
     button.type = 'button';
     if (action.icon) button.appendChild(icon(doc, action.icon));
     button.appendChild(ui.h('span', null, action.label));
@@ -82,7 +85,12 @@ export function createOnboarding(deps: OnboardingDeps): OnboardingView {
 
   const startLabel = S.obStart;
   // 最后那颗按的是「开始跑」，图标与左下角运行控制里的继续是同一个。
-  const ready = bubble(S.obReady, { label: startLabel, icon: 'play', onClick: () => deps.start(startLabel) });
+  const ready = bubble(S.obReady, {
+    label: startLabel,
+    icon: 'play',
+    accent: true,
+    onClick: () => deps.start(startLabel),
+  });
 
   // 读不到就让这一行空着：引导区少一行读数，不该变成错误卡。
   void get<{ worlds?: WorldRow[] }>('/api/worlds', { signal }).then((data) => {

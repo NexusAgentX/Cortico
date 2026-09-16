@@ -1712,3 +1712,5 @@
   .ob-btn { display: inline-flex; align-items: center; gap: 6px; }
   .ob-btn .icon { width: 14px; height: 14px; }
   .ob-btn:disabled { opacity: .55; cursor: not-allowed; }
+  .ob-btn.ob-go { background: var(--accent); color: var(--on-accent); }
+  .ob-btn.ob-go:hover:not(:disabled) { filter: brightness(1.06); }
