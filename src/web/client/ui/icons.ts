@@ -99,11 +99,7 @@ const SHAPES: Readonly<Record<ConsoleIconName, readonly Shape[]>> = {
   ],
 };
 
-/**
- * Cortico 字标。笔画与 README 横幅(assets/cortico-banner.svg)是同一份。
- * 横幅上那四个圈(两只眼睛与两个字母 o)是品牌绿,这里改成跟当前主题的强调色走,
- * 其余笔画取 currentColor。颜色写在样式表里:presentation 属性吃不下 var()。
- */
+/** 字标沿用 assets/cortico-banner.svg 的笔画；眼睛与字母 o 使用主题强调色，其余笔画继承文字色。 */
 const WORDMARK_MARK: readonly Shape[] = [
   ['path', { d: 'M182 63.66A84 84 0 1 0 182 192.34', 'stroke-width': '30' }],
   ['circle', { cx: '113', cy: '117', r: '16', 'stroke-width': '11', class: 'accent' }],

@@ -213,14 +213,14 @@ describe('主题词表', () => {
     expect(merged[0].tokens.map((t: Any) => t.key)).toEqual(['k1', 'k3']);
   });
 
-  it('schemeSwatches：底纸 / 主卡纸 / 主强调 / 一个系列色，按变体取', () => {
+  it('schemeSwatches：底纸 / 主卡纸 / 主强调 / 次强调，按变体取', () => {
     const scheme = registry.BUILTIN_SCHEMES[0];
     const light = registry.schemeSwatches(scheme, 'light');
     expect(light).toEqual([
       scheme.palettes.light.paper,
       scheme.palettes.light.sheet,
       scheme.palettes.light.accent,
-      scheme.palettes.light['chart-2'],
+      scheme.palettes.light['accent-2'],
     ]);
     expect(registry.schemeSwatches(scheme, 'dark')[0]).toBe(scheme.palettes.dark.paper);
   });
