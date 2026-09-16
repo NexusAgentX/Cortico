@@ -130,26 +130,26 @@ const navigatorDark: ThemePalette = {
   'chart-5': '#f0b8bf', 'chart-6': '#a79ed6', 'chart-7': '#8fa8bf', 'chart-8': '#5fd0d8',
 };
 
-/** claude.ai 的 CDS 灰阶、赤陶品牌色与蓝色交互色；浅色回执使用加深的赤陶色。 */
+/** Claude 灰阶配赤陶与灰玫瑰强调色；浅色文字使用同色系的深色。 */
 const crabDaisyLight: ThemePalette = {
   paper: '#fcfcfb', 'paper-2': '#f9f9f7', sheet: '#ffffff', 'sheet-2': '#f3f3f0', 'sheet-3': '#f0efec',
   ink: '#0b0b0b', 'ink-soft': '#52514e', 'ink-dim': '#7b7974', line: '#e1e0d9', 'line-2': '#d2d1c7', 'line-strong': '#b4b3a8',
-  accent: '#d97757', 'accent-2': '#256abf', 'on-accent': '#131313', ok: '#006300', warn: '#835100', danger: '#8e2626',
-  'ink-blue': '#256abf', violet: '#256abf', 'agent-surface': '#fcfcfb', 'world-bg': '#f3f3f0', 'world-ink': '#52514e',
-  'bubble-bg': '#f0efec', 'bubble-ink': '#131313', 'tool-result': '#ad5236',
-  'chart-hit': '#009300', 'chart-miss': '#a66a00', 'chart-output': '#d97757',
-  'chart-1': '#d97757', 'chart-2': '#256abf', 'chart-3': '#7161e0', 'chart-4': '#009300',
+  accent: '#c87c5d', 'accent-2': '#cb7c78', 'on-accent': '#131313', ok: '#006300', warn: '#835100', danger: '#8e2626',
+  'ink-blue': '#cb7c78', violet: '#a15d59', 'agent-surface': '#fcfcfb', 'world-bg': '#f3f3f0', 'world-ink': '#52514e',
+  'bubble-bg': '#f0efec', 'bubble-ink': '#131313', 'tool-result': '#995b43',
+  'chart-hit': '#009300', 'chart-miss': '#a66a00', 'chart-output': '#c87c5d',
+  'chart-1': '#c87c5d', 'chart-2': '#cb7c78', 'chart-3': '#7161e0', 'chart-4': '#009300',
   'chart-5': '#c6613f', 'chart-6': '#a66a00', 'chart-7': '#7b7974', 'chart-8': '#c04873',
 };
 
 const crabDaisyDark: ThemePalette = {
   paper: '#151515', 'paper-2': '#111111', sheet: '#20201f', 'sheet-2': '#1e1e1d', 'sheet-3': '#2c2c2a',
   ink: '#f0efec', 'ink-soft': '#c3c2b7', 'ink-dim': '#97958d', line: '#383835', 'line-2': '#454442', 'line-strong': '#5f5e5a',
-  accent: '#d97757', 'accent-2': '#6da7ec', 'on-accent': '#131313', ok: '#91d68b', warn: '#db9300', danger: '#ec7e7e',
-  'ink-blue': '#6da7ec', violet: '#6da7ec', 'agent-surface': '#151515', 'world-bg': '#20201f', 'world-ink': '#c3c2b7',
-  'bubble-bg': '#2c2c2a', 'bubble-ink': '#f0efec', 'tool-result': '#d97757',
-  'chart-hit': '#91d68b', 'chart-miss': '#db9300', 'chart-output': '#d97757',
-  'chart-1': '#d97757', 'chart-2': '#6da7ec', 'chart-3': '#a096eb', 'chart-4': '#91d68b',
+  accent: '#c87c5d', 'accent-2': '#cb7c78', 'on-accent': '#131313', ok: '#91d68b', warn: '#db9300', danger: '#ec7e7e',
+  'ink-blue': '#cb7c78', violet: '#cb7c78', 'agent-surface': '#151515', 'world-bg': '#20201f', 'world-ink': '#c3c2b7',
+  'bubble-bg': '#2c2c2a', 'bubble-ink': '#f0efec', 'tool-result': '#c87c5d',
+  'chart-hit': '#91d68b', 'chart-miss': '#db9300', 'chart-output': '#c87c5d',
+  'chart-1': '#c87c5d', 'chart-2': '#cb7c78', 'chart-3': '#a096eb', 'chart-4': '#91d68b',
   'chart-5': '#ec835a', 'chart-6': '#db9300', 'chart-7': '#97958d', 'chart-8': '#e87ba4',
 };
 
