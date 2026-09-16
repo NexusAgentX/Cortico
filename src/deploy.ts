@@ -32,22 +32,46 @@ export const DEFAULT_DEPLOYMENT = { name: 'mybot', bot: 'cormini' } as const;
  */
 export const ONBOARDING_FLAG_FILE = '.onboarding';
 
+/** 部署根下另有用途的目录名，不能拿来当部署名。 */
+const RESERVED_DEPLOYMENT_NAMES: readonly string[] = ['providers', 'runtimes', 'models'];
+
+/** 部署目录名不合用的原因；合用时为 null。这个名字就是目录名，也出现在命令行上。 */
+export function deploymentNameProblem(name: string, taken: readonly string[]): string | null {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    return '只能用字母、数字、- . _，且以字母或数字开头。';
+  }
+  if (RESERVED_DEPLOYMENT_NAMES.includes(name)) return `${name} 是部署根下的固定目录。`;
+  if (taken.includes(name)) return `${name} 已经有了。`;
+  return null;
+}
+
 /**
- * 返回一个可启动的部署名；部署根下一份都没有时先建 DEFAULT_DEPLOYMENT，连同开场引导的标记。
- * 新建的部署没有别的文件，端点与其余设置在控制台里配。
+ * 建一份空白部署：`deployment.json` 指向代码包，加上开场引导的标记；给了展示名就写一份
+ * 只有 `displayName` 的 `config.json`。端点与其余设置在控制台里配。
  */
+export function createDeployment(
+  options: { name: string; bot: string; displayName?: string; root?: string },
+): string {
+  const root = options.root ?? deploymentRoot();
+  const problem = deploymentNameProblem(options.name, listBots(root));
+  if (problem) throw new Error(problem);
+  const dir = resolve(root, options.name);
+  mkdirSync(dir, { recursive: true });
+  writeJson(resolve(dir, 'deployment.json'), { bot: options.bot });
+  if (options.displayName) writeJson(resolve(dir, 'config.json'), { displayName: options.displayName });
+  writeFileSync(resolve(dir, ONBOARDING_FLAG_FILE), '', 'utf8');
+  return options.name;
+}
+
+function writeJson(file: string, value: unknown): void {
+  writeFileSync(file, JSON.stringify(value, null, 2) + '\n', 'utf8');
+}
+
+/** 返回一个可启动的部署名；部署根下一份都没有时先建 DEFAULT_DEPLOYMENT。 */
 export function ensureDeployment(root = deploymentRoot()): string {
   const existing = listBots(root);
   if (existing.length > 0) return existing[0];
-  const dir = resolve(root, DEFAULT_DEPLOYMENT.name);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    resolve(dir, 'deployment.json'),
-    JSON.stringify({ bot: DEFAULT_DEPLOYMENT.bot }, null, 2) + '\n',
-    'utf8',
-  );
-  writeFileSync(resolve(dir, ONBOARDING_FLAG_FILE), '', 'utf8');
-  return DEFAULT_DEPLOYMENT.name;
+  return createDeployment({ ...DEFAULT_DEPLOYMENT, root });
 }
 
 export interface DeploymentSource<C extends CoreConfig> {

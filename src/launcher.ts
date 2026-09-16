@@ -3,21 +3,22 @@
  * 部署根由 src/paths.ts 解析，代码包来自 bots/ 或已安装的 bot 扩展。
  */
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { webAssetsProblem } from '../bin/web-assets.mjs';
 import { LOG_LEVEL_RANK, type CoreConfig, type LogLevel } from './core/types.ts';
 import type { BotDefinition } from './bot.ts';
 import { createBot } from './bot.ts';
-import { ensureDeployment, listBots, loadDeployment } from './deploy.ts';
+import { createDeployment, ensureDeployment, listBots, loadDeployment } from './deploy.ts';
+import { buildListing, type BotDefaults } from './deploy-listing.ts';
 import { secretReader } from './core/secrets.ts';
 import { announceDataDir, consumeBootFlags } from './boot.ts';
-import { importBotDefinition, loadExtensions, locateBotPackage, type ActiveBotPackage } from './extensions.ts';
+import { extensionsDir, importBotDefinition, loadExtensions, locateBotPackage, readInstalled, type ActiveBotPackage } from './extensions.ts';
 import { withWorlds } from './world.ts';
 import { BUILTIN_WORLDS } from './worlds/index.ts';
 import { providerModules, registerProviderModules } from './providers/registry.ts';
-import { deploymentDir, deploymentRoot, packageDir, providerDir, providersRoot, readDeploymentManifest, repoRoot } from './paths.ts';
+import { deploymentDir, deploymentRoot, mainRepoRoot, packageDir, providerDir, providersRoot, readDeploymentManifest, repoRoot } from './paths.ts';
 
 /**
  * botPackage 仅在部署引用扩展 bot 包时返回。
@@ -69,9 +70,61 @@ function pickBotName(): string {
   return name;
 }
 
+/** 代码包的默认值:展示名与它选的配色方案 id。 */
+async function botDefaults(bot: string): Promise<BotDefaults> {
+  const location = locateBotPackage(repoRoot(), bot, packageDir(bot));
+  const definition = await importBotDefinition(location, {
+    treeHas: (id) => existsSync(resolve(packageDir(id), 'index.ts')),
+  });
+  const defaults = definition.defaults();
+  return { displayName: defaults.displayName, scheme: defaults.web.theme };
+}
+
+/** 可以拿来建部署的代码包:仓内 `bots/<名>/`,加上装好的 bot 类扩展。 */
+function botPackages(): Array<{ id: string; source: 'tree' | 'extension' }> {
+  const treeDir = resolve(mainRepoRoot(), 'bots');
+  const tree = existsSync(treeDir)
+    ? readdirSync(treeDir).filter((id) => existsSync(resolve(treeDir, id, 'index.ts')))
+    : [];
+  const installed = readInstalled(extensionsDir(repoRoot())).map((p) => p.name);
+  return [
+    ...tree.map((id) => ({ id, source: 'tree' as const })),
+    ...installed.filter((id) => !tree.includes(id)).map((id) => ({ id, source: 'extension' as const })),
+  ];
+}
+
+/** 命令行上 `--名=值` 的值;没给这个开关时为 null。 */
+function flagValue(name: string): string | null {
+  const prefix = `--${name}=`;
+  const hit = process.argv.find((a) => a.startsWith(prefix));
+  return hit ? hit.slice(prefix.length) : null;
+}
+
 async function main(): Promise<void> {
   if (process.argv.includes('--create-default')) {
     process.stdout.write(ensureDeployment() + '\n');
+    return;
+  }
+
+  const created = flagValue('create-deployment');
+  if (created !== null) {
+    const bot = flagValue('bot');
+    if (!bot) throw new Error('--create-deployment 需要同时给 --bot=<代码包>');
+    const displayName = flagValue('display-name');
+    process.stdout.write(
+      createDeployment({ name: created, bot, ...(displayName ? { displayName } : {}) }) + '\n',
+    );
+    return;
+  }
+
+  if (process.argv.includes('--json')) {
+    const listing = await buildListing({
+      root: deploymentRoot(),
+      deployments: listBots(),
+      packages: botPackages(),
+      defaultsOf: botDefaults,
+    });
+    process.stdout.write(JSON.stringify(listing) + '\n');
     return;
   }
 

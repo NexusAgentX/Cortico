@@ -42,6 +42,7 @@ pnpm start mybot
 | `data/` | 事件、会话、用量和进程状态等运行数据；删除后可重新启动，但原有记录无法恢复 |
 | `prompts/` | Persona 文本的部署侧覆盖:`ORIENTATION.md`;`FIRST_TURN_{USER,THINKING,REPLY}.md` 只有这一层 |
 | `worlds/<id>/ENV_PROMPT.md` | 某个 World 环境提示词的部署侧覆盖,整份替换。控制台编辑写入此文件,「移除部署覆盖」删除此文件 |
+| `theme.json` | 控制台外观页的选择:方案 id、明暗挡位与自定义调色板。没有这个文件时用 `web.theme` |
 | `avatar.png`、`voices/` | 头像与参考声线 |
 | `.onboarding` | 开场引导的一次性标记,自建部署时写下;控制台见到它才给引导,操作员开口或按下那颗按钮后删除 |
 
@@ -61,7 +62,8 @@ pnpm start <部署名>
 | 参数 / 变量 | 作用 |
 |---|---|
 | `--list`(`pnpm bots`) | 列出部署根下每个含 `deployment.json` 的目录 |
-| 不给名字 | 取 `CORTICO_BOT`;只有一份部署时可省略 |
+| `--new` | 在终端里建一份空白部署再启动它:选代码包、起目录名、取个名字 |
+| 不给名字 | 取 `CORTICO_BOT`;交互终端弹菜单,非交互终端只有一份部署时可省略 |
 | `--paused`、`CORTICO_START_PAUSED=1` | 启动时暂停事件投递，事件仍写入事件库并排队 |
 | `--open`、`CORTICO_OPEN_BROWSER=1` | 启动后打开控制台 |
 | `--log-level=<级别>`、`CORTICO_LOG` | 写入日志文件的最低级别，覆盖 `config.json` |
@@ -72,11 +74,18 @@ pnpm start <部署名>
 保存后下一次模型调用生效，不必重启。
 
 `pnpm start`、`start.bat` 与 `start.sh` 都调用 `bin/cortico.mjs`。它安装缺失的依赖、在控制台产物缺失或不完整时构建，
-在一份部署都没有时建一份、有多份时提供方向键菜单，并创建和监管 bot 子进程。子进程设置 `CORTICO_SUPERVISED=1`；
+在一份部署都没有时建一份、在交互终端上提供方向键菜单，并创建和监管 bot 子进程。子进程设置 `CORTICO_SUPERVISED=1`；
 `CORTICO_START_PAUSED` 未设置时默认为 `1`。首次启动默认打开控制台，
 `CORTICO_OPEN_BROWSER=0` 可关闭此行为；重启不再打开浏览器。控制台的「重启进程」由此启动器执行。
 
+菜单里一份部署占两行:相对部署根的路径,以及 `bot id - 名字`;颜色取这份部署控制台里的配色方案
+(`theme.json`,没有则 `web.theme`),选中的那行路径更亮。末项「新建部署」与 `--new` 是同一条路。
+终端不认色时(非 TTY、`NO_COLOR`、`FORCE_COLOR=0`)只出文字。
+
 `tsx src/launcher.ts <部署名>` 直接运行 bot 进程本身：不装依赖、不建产物、不重启。
+
+启动器自己要用的两个开关也在这个入口上:`--json` 输出菜单要的清单(部署、代码包与各自的颜色),
+`--create-deployment=<目录名> --bot=<代码包> [--display-name=<名字>]` 建一份空白部署。
 
 子进程通过 IPC 消息或 `data/.restart-request` 文件请求重启，启动器接受任一方式。
 没有重启请求时，崩溃、非零退出和信号退出均不触发自动重启。

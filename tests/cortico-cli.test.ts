@@ -1,4 +1,4 @@
-/** 验证部署选择、pnpm 发现与子进程重启条件;监管测试使用本地假子进程。 */
+/** 验证部署选择、菜单渲染、pnpm 发现与子进程重启条件;监管测试使用本地假子进程。 */
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,17 +12,48 @@ import {
   parseArgs,
   parseRequest,
   pnpmMissingMessage,
-  promptChoice,
   resolvePnpm,
   shouldRelaunch,
   supervise,
 } from '../bin/cortico.mjs';
+import {
+  MINT_ACCENT,
+  NEW_DEPLOYMENT,
+  colorEnabled,
+  deploymentRows,
+  displayWidth,
+  paint,
+  promptChoice,
+  renderLine,
+} from '../bin/menu.mjs';
 
 /** 假终端要在 Readable 上补 isTTY / setRawMode,类型上没有这两项。 */
 type Any = any;
 
-/** 回车键送进输入流的字节。 */
+/** 送进输入流的按键。 */
 const ENTER = String.fromCharCode(13);
+const ESCAPE = String.fromCharCode(27);
+const DOWN = ESCAPE + '[B';
+/** 转义序列的前缀,断言里拼出上移与清行。 */
+const CSI = ESCAPE + '[';
+
+/** 两份部署,配色各不相同。 */
+const DEPLOYMENTS = [
+  {
+    name: 'a',
+    dir: 'deployments/a',
+    bot: 'cortiv',
+    displayName: '可缇Corti',
+    colors: { accent: '#81c9ef', accent2: '#6591c3', ink: '#f2f5fa', inkDim: '#8594a7', danger: '#e99bae' },
+  },
+  {
+    name: 'b',
+    dir: 'deployments/b',
+    bot: 'cormini',
+    displayName: '可缇mini',
+    colors: { accent: '#2fd59b', accent2: '#78cbae', ink: '#e9eae9', inkDim: '#828584', danger: '#d18c83' },
+  },
+];
 
 describe('shouldRelaunch', () => {
   const never = () => false;
@@ -94,12 +125,13 @@ describe('chooseBot', () => {
     expect(out.kind === 'error' && out.message).toContain('a / b');
   });
 
-  it('只有一份部署就不问', () => {
-    expect(chooseBot({ bot: null, available: ['only'], interactive: true })).toEqual({ kind: 'run', bot: 'only' });
+  it('交互终端一份也弹菜单:新建那一项要够得着', () => {
+    expect(chooseBot({ bot: null, available: ['only'], interactive: true })).toEqual({ kind: 'ask' });
+    expect(chooseBot({ bot: null, available: ['a', 'b'], interactive: true })).toEqual({ kind: 'ask' });
   });
 
-  it('多份 + 交互终端 → 弹菜单', () => {
-    expect(chooseBot({ bot: null, available: ['a', 'b'], interactive: true })).toEqual({ kind: 'ask' });
+  it('非交互终端只有一份就用它', () => {
+    expect(chooseBot({ bot: null, available: ['only'], interactive: false })).toEqual({ kind: 'run', bot: 'only' });
   });
 
   it('多份部署且非交互时要求指定名称并列出可选项', () => {
@@ -125,10 +157,18 @@ describe('promptChoice', () => {
     return { stream, modes };
   }
 
+  /** 两项的假菜单,一项一行。 */
+  function rows(): Any[] {
+    return [
+      { lines: [[{ text: 'alpha' }]], value: 'alpha' },
+      { lines: [[{ text: 'beta' }]], value: 'beta' },
+    ];
+  }
+
   it('选完就退出 raw 模式,并摘掉自己挂的 exit 监听', async () => {
     const { stream: input, modes } = fakeTty();
     const exitListeners = process.listenerCount('exit');
-    const picked = promptChoice(['alpha', 'beta'], new PassThrough() as Any, input);
+    const picked = promptChoice(rows(), { out: new PassThrough() as Any, input });
     input.write(ENTER);
     expect(await picked).toBe('alpha');
     expect(modes).toEqual([true, false]);
@@ -137,12 +177,86 @@ describe('promptChoice', () => {
 
   it('菜单开着时进程退出:exit 监听把终端从 raw 模式带回来', async () => {
     const { stream: input, modes } = fakeTty();
-    const picked = promptChoice(['alpha', 'beta'], new PassThrough() as Any, input);
+    const picked = promptChoice(rows(), { out: new PassThrough() as Any, input });
     const restore = process.listeners('exit').at(-1) as () => void;
     restore();
     expect(modes).toEqual([true, false]);
     input.write(ENTER);
     await picked;
+  });
+
+  it('两行一项:重绘上移的行数等于画出去的行数', async () => {
+    const { stream: input } = fakeTty();
+    const out = new PassThrough() as Any;
+    let written = '';
+    out.write = (chunk: string): boolean => { written += chunk; return true; };
+    const picked = promptChoice(deploymentRows(DEPLOYMENTS, 0) as Any, { out, input, color: false });
+    input.write(DOWN);
+    input.write(ENTER);
+    expect(await picked).toBe('b');
+    // 两份部署各两行 + 新建一行
+    expect(written).toContain(`${CSI}5A`);
+    expect(written.split('\n').filter((l) => l.includes('deployments/')).length).toBe(4);
+  });
+
+  it('Esc 取消', async () => {
+    const { stream: input } = fakeTty();
+    const picked = promptChoice(rows(), { out: new PassThrough() as Any, input });
+    input.write(ESCAPE);
+    expect(await picked).toBe(null);
+  });
+});
+
+describe('菜单渲染', () => {
+  it('部署一项两行:路径在上,`bot id - 名字`在下;末项是新建部署', () => {
+    const menu = deploymentRows(DEPLOYMENTS, 0);
+    expect(menu.length).toBe(3);
+    expect(menu[0].lines.length).toBe(2);
+    expect(menu[0].lines[0][0].text).toBe('deployments/a');
+    expect(menu[0].lines[1].map((s: Any) => s.text).join('')).toBe('cortiv - 可缇Corti');
+    expect(menu[2].value).toBe(NEW_DEPLOYMENT);
+    expect(menu[2].lines[0][0].color).toBe(MINT_ACCENT);
+  });
+
+  it('颜色按这份部署自己的配色:bot id 主强调、名字次强调、路径按选中换亮度', () => {
+    const menu = deploymentRows(DEPLOYMENTS, 1);
+    expect(menu[0].lines[0][0].color).toBe(DEPLOYMENTS[0].colors.inkDim);
+    expect(menu[1].lines[0][0].color).toBe(DEPLOYMENTS[1].colors.ink);
+    expect(menu[1].lines[1][0].color).toBe(DEPLOYMENTS[1].colors.accent);
+    expect(menu[1].lines[1][2].color).toBe(DEPLOYMENTS[1].colors.accent2);
+  });
+
+  it('代码包读不出来时第二行写原因,这一项仍然可选', () => {
+    const broken = { ...DEPLOYMENTS[0], problem: '找不到 bot 代码包「ghost」' };
+    const [row] = deploymentRows([broken], 0);
+    expect(row.value).toBe('a');
+    expect(row.lines[1][2]).toEqual({ text: '找不到 bot 代码包「ghost」', color: broken.colors.danger });
+  });
+
+  it('着色:非 TTY、NO_COLOR、FORCE_COLOR=0 都不上色', () => {
+    expect(colorEnabled({ isTTY: true }, {})).toBe(true);
+    expect(colorEnabled({ isTTY: false }, {})).toBe(false);
+    expect(colorEnabled({ isTTY: true }, { NO_COLOR: '1' })).toBe(false);
+    expect(colorEnabled({ isTTY: true }, { NO_COLOR: '' })).toBe(true);
+    expect(colorEnabled({ isTTY: true }, { FORCE_COLOR: '0' })).toBe(false);
+  });
+
+  it('上色走 24 位真彩;关掉时原样输出', () => {
+    expect(paint('x', '#00a870', true)).toBe(`${CSI}38;2;0;168;112mx${CSI}0m`);
+    expect(paint('x', '#00a870', false)).toBe('x');
+    expect(paint('x', 'red', true)).toBe('x');
+  });
+
+  it('列宽:CJK 算两列', () => {
+    expect(displayWidth('cortiv')).toBe(6);
+    expect(displayWidth('可缇Corti')).toBe(9);
+  });
+
+  it('超出列宽就截断补省略号,免得折行把重绘行数算错', () => {
+    const spans = [{ text: 'cortiv', color: '#00a870' }, { text: ' - ' }, { text: '可缇Corti' }];
+    expect(renderLine(spans, { columns: 40, color: false })).toBe('cortiv - 可缇Corti');
+    expect(renderLine(spans, { columns: 10, color: false })).toBe('cortiv - …');
+    expect(displayWidth(renderLine(spans, { columns: 10, color: false }))).toBeLessThanOrEqual(10);
   });
 });
 

@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { DEFAULT_DEPLOYMENT, ONBOARDING_FLAG_FILE, ensureDeployment, listBots, loadDeployment } from '../src/deploy.ts';
+import { DEFAULT_DEPLOYMENT, ONBOARDING_FLAG_FILE, createDeployment, deploymentNameProblem, ensureDeployment, listBots, loadDeployment } from '../src/deploy.ts';
 import type { CoreConfig } from '../src/core/types.ts';
 
 interface TestConfig extends CoreConfig {
@@ -152,5 +152,50 @@ describe('第一次上手:部署根空着时自建一份', () => {
 
     expect(ensureDeployment(root)).toBe('aaa');
     expect(readdirSync(root)).toEqual(['aaa']);
+  });
+});
+
+describe('在终端里建一份空白部署', () => {
+  const homes: string[] = [];
+  const home = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'deploy-new-'));
+    homes.push(dir);
+    return dir;
+  };
+
+  afterEach(() => {
+    for (const dir of homes.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('不给名字时只写 deployment.json 与开场引导的标记', () => {
+    const root = home();
+    expect(createDeployment({ root, name: 'blank', bot: 'cortiv' })).toBe('blank');
+    const dir = join(root, 'blank');
+    expect(readdirSync(dir).sort()).toEqual([ONBOARDING_FLAG_FILE, 'deployment.json'].sort());
+    expect(JSON.parse(readFileSync(join(dir, 'deployment.json'), 'utf8'))).toEqual({ bot: 'cortiv' });
+  });
+
+  it('给了名字就多一份只有 displayName 的 config.json', () => {
+    const root = home();
+    createDeployment({ root, name: 'named', bot: 'cortiv', displayName: '值班的那位' });
+    expect(JSON.parse(readFileSync(join(root, 'named', 'config.json'), 'utf8')))
+      .toEqual({ displayName: '值班的那位' });
+  });
+
+  it('名字不合用就不动磁盘,报错说清楚为什么', () => {
+    const root = home();
+    createDeployment({ root, name: 'taken', bot: 'cortiv' });
+    for (const name of ['taken', 'providers', 'models', 'runtimes', '带 空格', '.hidden', '', '../逃逸']) {
+      expect(() => createDeployment({ root, name, bot: 'cortiv' }), name).toThrow();
+    }
+    expect(listBots(root)).toEqual(['taken']);
+  });
+
+  it('部署根下的固定目录与已有部署都占着名字,别的名字放行', () => {
+    expect(deploymentNameProblem('mybot', [])).toBe(null);
+    expect(deploymentNameProblem('my-bot_2.0', [])).toBe(null);
+    expect(deploymentNameProblem('providers', [])).toContain('固定目录');
+    expect(deploymentNameProblem('mybot', ['mybot'])).toContain('已经有了');
+    expect(deploymentNameProblem('-mybot', [])).toContain('字母或数字开头');
   });
 });
