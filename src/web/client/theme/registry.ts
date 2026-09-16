@@ -85,27 +85,27 @@ export const THEME_TOKENS: readonly ThemeToken[] = [
   { group: S.groupChart, key: 'chart-8', label: T['chart-8'] },
 ];
 
-/** 主强调用于操作与回执，次强调用于思考与调用标记；大面积背景保持灰阶。 */
+/** 主强调取自明暗版 Logo；正文使用加深或调亮的同色系绿色。 */
 const mintLight: ThemePalette = {
   paper: '#f4f5f4', 'paper-2': '#ecedec', sheet: '#fbfbfb', 'sheet-2': '#f2f3f2', 'sheet-3': '#e8e9e8',
   ink: '#1b1a1e', 'ink-soft': '#5c5c60', 'ink-dim': '#8b8b8f', line: '#e3e4e3', 'line-2': '#d0d2d0', 'line-strong': '#aeb0ae',
-  accent: '#4d7b6c', 'accent-2': '#617f75', 'on-accent': '#ffffff', ok: '#527b61', warn: '#96743b', danger: '#b45950',
-  'ink-blue': '#466e6f', violet: '#516d63', 'agent-surface': '#f4f5f4', 'world-bg': '#f0f1f0', 'world-ink': '#4a4a4e',
-  'bubble-bg': '#e6e9e7', 'bubble-ink': '#1f2221', 'tool-result': '#3e685b',
-  'chart-hit': '#6b9078', 'chart-miss': '#96743b', 'chart-output': '#4d7b6c',
-  'chart-1': '#4d7b6c', 'chart-2': '#617f75', 'chart-3': '#557b86', 'chart-4': '#6b9078',
-  'chart-5': '#ad855c', 'chart-6': '#877970', 'chart-7': '#658c88', 'chart-8': '#858b58',
+  accent: '#00a870', 'accent-2': '#54b494', 'on-accent': '#082a1e', ok: '#19815e', warn: '#96743b', danger: '#b45950',
+  'ink-blue': '#238268', violet: '#25765e', 'agent-surface': '#f4f5f4', 'world-bg': '#f0f1f0', 'world-ink': '#4a4a4e',
+  'bubble-bg': '#e6e9e7', 'bubble-ink': '#1f2221', 'tool-result': '#087452',
+  'chart-hit': '#19815e', 'chart-miss': '#96743b', 'chart-output': '#00a870',
+  'chart-1': '#00a870', 'chart-2': '#54b494', 'chart-3': '#348f86', 'chart-4': '#72967f',
+  'chart-5': '#b59564', 'chart-6': '#9b8071', 'chart-7': '#4a8f9a', 'chart-8': '#889460',
 };
 
 const mintDark: ThemePalette = {
   paper: '#121312', 'paper-2': '#181a19', sheet: '#1d1f1e', 'sheet-2': '#242726', 'sheet-3': '#2c302e',
   ink: '#e9eae9', 'ink-soft': '#b0b2b1', 'ink-dim': '#828584', line: '#292c2b', 'line-2': '#383c3a', 'line-strong': '#535856',
-  accent: '#8bb6a5', 'accent-2': '#a3b8b1', 'on-accent': '#17251f', ok: '#95b69b', warn: '#c4a372', danger: '#d18c83',
-  'ink-blue': '#94b8b6', violet: '#a3b8b1', 'agent-surface': '#181a19', 'world-bg': '#1e211f', 'world-ink': '#adb2b0',
-  'bubble-bg': '#2c3230', 'bubble-ink': '#e6eae8', 'tool-result': '#a3c5b8',
-  'chart-hit': '#95b69b', 'chart-miss': '#c4a372', 'chart-output': '#8bb6a5',
-  'chart-1': '#8bb6a5', 'chart-2': '#a3b8b1', 'chart-3': '#91adb7', 'chart-4': '#95b69b',
-  'chart-5': '#c3a084', 'chart-6': '#b1a497', 'chart-7': '#8db6b0', 'chart-8': '#b4b68a',
+  accent: '#2fd59b', 'accent-2': '#78cbae', 'on-accent': '#082a1e', ok: '#76ca9f', warn: '#c4a372', danger: '#d18c83',
+  'ink-blue': '#53bda0', violet: '#91d8bb', 'agent-surface': '#181a19', 'world-bg': '#1e211f', 'world-ink': '#adb2b0',
+  'bubble-bg': '#2c3230', 'bubble-ink': '#e6eae8', 'tool-result': '#75cfa8',
+  'chart-hit': '#76ca9f', 'chart-miss': '#c4a372', 'chart-output': '#2fd59b',
+  'chart-1': '#2fd59b', 'chart-2': '#78cbae', 'chart-3': '#64b8ad', 'chart-4': '#91b99d',
+  'chart-5': '#c4a372', 'chart-6': '#b69b8c', 'chart-7': '#76afb9', 'chart-8': '#a8b17e',
 };
 
 const navigatorLight: ThemePalette = {

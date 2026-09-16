@@ -26,31 +26,31 @@
     --line:    #e3e4e3;
     --line-2:  #d0d2d0;
     --line-strong: #aeb0ae;
-    --accent:  #4d7b6c;
-    --accent-2:#617f75;
-    --ink-blue:#466e6f;
-    --ok:  #527b61;
+    --accent:  #00a870;
+    --accent-2:#54b494;
+    --ink-blue:#238268;
+    --ok:  #19815e;
     --warn:#96743b;
     --danger:#b45950;
-    --violet:#516d63;
-    --on-accent:#ffffff;
+    --violet:#25765e;
+    --on-accent:#082a1e;
     --agent-surface:#f4f5f4;
     --world-bg:#f0f1f0;
     --world-ink:#4a4a4e;
     --bubble-bg:#e6e9e7;
     --bubble-ink:#1f2221;
-    --tool-result:#3e685b;
-    --chart-hit:#6b9078;
+    --tool-result:#087452;
+    --chart-hit:#19815e;
     --chart-miss:#96743b;
-    --chart-output:#4d7b6c;
-    --chart-1:#4d7b6c;
-    --chart-2:#617f75;
-    --chart-3:#557b86;
-    --chart-4:#6b9078;
-    --chart-5:#ad855c;
-    --chart-6:#877970;
-    --chart-7:#658c88;
-    --chart-8:#858b58;
+    --chart-output:#00a870;
+    --chart-1:#00a870;
+    --chart-2:#54b494;
+    --chart-3:#348f86;
+    --chart-4:#72967f;
+    --chart-5:#b59564;
+    --chart-6:#9b8071;
+    --chart-7:#4a8f9a;
+    --chart-8:#889460;
     --shadow-soft: color-mix(in srgb, var(--ink) 7%, transparent);
     --shadow-strong: color-mix(in srgb, var(--ink) 20%, transparent);
     --overlay: color-mix(in srgb, var(--ink) 44%, transparent);
@@ -1423,6 +1423,14 @@
   .btn:hover { background: var(--hover); color: var(--foreground); border-color: transparent; box-shadow: none; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
   .btn.primary:hover { background: color-mix(in srgb, var(--accent) 90%, var(--ink)); filter: none; }
+  :root[data-theme-scheme="mint"] .btn.primary {
+    background: color-mix(in srgb, var(--accent) 78%, var(--sheet-2));
+    border-color: color-mix(in srgb, var(--accent) 78%, var(--sheet-2));
+  }
+  :root[data-theme-scheme="mint"] .btn.primary:hover {
+    background: color-mix(in srgb, var(--accent) 86%, var(--sheet-2));
+    border-color: color-mix(in srgb, var(--accent) 86%, var(--sheet-2));
+  }
   .btn.danger { color: var(--danger); border: 0; }
   .btn.danger:hover { background: color-mix(in srgb, var(--danger) 8%, transparent); }
 
