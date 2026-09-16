@@ -59,15 +59,19 @@ pnpm start
 在控制台的终端页面中，开场引导将协助你完成三项基础配置：配置语言模型端点、查看已挂载的 World、调整系统提示词。配置好可用端点后，点击「打个招呼」即可让 Bot 主动开口交流。模型端点、API 密钥与运行参数均可在控制台中可视化修改，保存即时生效。
 
 ### 2. 多部署管理
-每个部署对应 `deployments/` 下的一个独立子目录（详见 [deployment.md](docs/deployment.md)）：
+每个部署对应 `deployments/` 下的一个独立子目录（详见 [deployment.md](docs/deployment.md)）。再建一份：
 
 ```bash
-mkdir deployments/second
-echo '{ "bot": "cormini" }' > deployments/second/deployment.json
+pnpm start --new
+```
+
+依次选择 bot 代码包、部署目录名与展示名称，建好后直接启动，端点等其余配置在控制台中完成。按名称启动指定部署：
+
+```bash
 pnpm start second
 ```
 
-启动脚本（`pnpm start`、`./start.sh` 或 Windows 上的 `start.bat`）会自动安装缺失依赖、按需构建控制台前端产物，在存在多份部署时提供交互式选择菜单，并在控制台请求重启时自动重启守护进程。
+启动脚本（`pnpm start`、`./start.sh` 或 Windows 上的 `start.bat`）会自动安装缺失依赖、按需构建控制台前端产物，在交互式终端中列出全部部署供选择（含新建部署入口），并在控制台请求重启时自动重启守护进程。
 
 ## 四层设计
 

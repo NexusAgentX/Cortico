@@ -59,15 +59,19 @@ On your first launch with an empty deployment directory, Cortico automatically i
 The terminal page opens with three onboarding steps: configure a model endpoint, inspect active Worlds, and adjust the system prompt. Once an endpoint is configured, click **Say hello** to let the bot initiate conversation. All endpoints, credentials, and runtime parameters can be adjusted directly from the console and take effect upon saving.
 
 ### 2. Managing Deployments
-Each deployment is an isolated configuration directory inside `deployments/` (see [deployment.md](docs/deployment.md)):
+Each deployment is an isolated configuration directory inside `deployments/` (see [deployment.md](docs/deployment.md)). To add another one:
 
 ```bash
-mkdir deployments/second
-echo '{ "bot": "cormini" }' > deployments/second/deployment.json
+pnpm start --new
+```
+
+Pick a bot package, a directory name and a display name; the new deployment starts right away, with endpoints and everything else configured from the console. To start a specific deployment by name:
+
+```bash
 pnpm start second
 ```
 
-The launcher scripts (`pnpm start`, `./start.sh`, and `start.bat` on Windows) automatically install missing dependencies, build web console assets if absent, present an interactive selection menu when multiple deployments exist, and restart processes on request from the console.
+The launcher scripts (`pnpm start`, `./start.sh`, and `start.bat` on Windows) automatically install missing dependencies, build web console assets if absent, list every deployment for selection on an interactive terminal (including an entry for creating a new one), and restart processes on request from the console.
 
 ## The Four Layers
 
