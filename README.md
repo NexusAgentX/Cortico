@@ -22,6 +22,7 @@
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> ｜
+  <a href="#the-four-layers">Architecture</a> ｜
   <a href="#documentation">Documentation</a> ｜
   <a href="PHILOSOPHY.md">Design Stance</a> ｜
   <a href="docs/extensions.md">Extensions</a> ｜
@@ -42,10 +43,10 @@ companionship and much more. Cortico's goal: bring your AI to the world!
 3. 🔌 Modular LLM provider components: Can connect to many LLM APIs as well as locally deployed servers.
 4. 🧠 Unconstrained internal context management, giving much freedom for the design of agent behaviour
    patterns and Memory system.
-6. 🧩 An extension system (Cortico World), isolated from the inside, with event delivery and tool
+5. 🧩 An extension system (Cortico World), isolated from the inside, with event delivery and tool
    calls as its input and output: excellent compatibility and nearly unlimited extensibility.
-7. 🖥️ A WebUI that is straightforward to operate.
-8. 🪄 An Extension Creator system built for AI development
+6. 🖥️ A WebUI that is straightforward to operate.
+7. 🪄 An Extension Creator system built for AI development
    ([Cortina](https://github.com/Pal-AI-Lab/Cortina)): a non-developer can use an AI agent to
    build the extension they want, or move an existing implementation onto Cortico!
 
@@ -58,14 +59,15 @@ corepack pnpm install
 pnpm start
 ```
 
-With no deployment around, the launcher creates one named `mybot` and starts it: it uses the
-reference bot `cormini`, which enables terminal conversation alone. The console is at
-`http://127.0.0.1:7788/`, and the terminal page opens with three steps: configure a model
-endpoint, look at the Worlds, edit the system prompt. Once an endpoint is usable, press
-**Say hello** and the bot speaks first. Endpoints, keys and every other knob are edited in the
-console and take effect on save.
+### 1. First Launch & Web Console
+On your first launch with an empty deployment directory, Cortico automatically initializes a default deployment named `mybot` (using the reference bot `cormini` with terminal chat enabled) and spins up the web console at:
 
-A second deployment is a second directory (see [deployment.md](docs/deployment.md)):
+**`http://127.0.0.1:7788/`**
+
+The terminal page opens with three onboarding steps: configure a model endpoint, inspect active Worlds, and adjust the system prompt. Once an endpoint is configured, click **Say hello** to let the bot initiate conversation. All endpoints, credentials, and runtime parameters can be adjusted directly from the console and take effect upon saving.
+
+### 2. Managing Deployments
+Each deployment is an isolated configuration directory inside `deployments/` (see [deployment.md](docs/deployment.md)):
 
 ```bash
 mkdir deployments/second
@@ -73,83 +75,82 @@ echo '{ "bot": "cormini" }' > deployments/second/deployment.json
 pnpm start second
 ```
 
-`pnpm start`, `./start.sh`, and `start.bat` on Windows all install missing dependencies, build
-the console bundle when it is absent, create the first deployment when there is none, offer a
-deployment menu when there are several, and restart the process when the console asks for it.
+The launcher scripts (`pnpm start`, `./start.sh`, and `start.bat` on Windows) automatically install missing dependencies, build web console assets if absent, present an interactive selection menu when multiple deployments exist, and restart processes on request from the console.
 
 ## The Four Layers
 
-| Layer | Owns | Lives in |
+Cortico strictly separates concerns across four distinct layers:
+
+| Layer | Responsibility | Directory |
 |---|---|---|
-| **Core** | The lifecycle of sessions, the event stream and model calls. No semantics of its own | `src/core/` |
-| **Persona** | The semantics of one class of bot: context, cognitive flow, the Memory protocol | `bots/<name>/persona/` |
-| **Memory** | The only authoritative carrier of a bot's internal state; its form is the Persona's choice | `<deployment>/memory/` |
-| **World** | The only boundary to one external environment: events, tools, environment prompt | `src/worlds/<id>/` |
-| **Bot** | The assembly: one Persona, a set of Worlds | `bots/<name>/index.ts` |
+| **Core** | Manages session lifecycles, event streams, and model invocations. Semantics-free. | `src/core/` |
+| **Persona** | Defines the semantics of a bot category: context synthesis, cognitive loop, and Memory protocols. | `bots/<name>/persona/` |
+| **Memory** | The authoritative persistence store for internal state; layout and lifecycle are chosen by the Persona. | `<deployment>/memory/` |
+| **World** | The isolated boundary to an external environment: event ingestion, tool declarations, and environment prompts. | `src/worlds/<id>/` |
+| **Bot** | Assembly definition: couples one Persona with a designated set of Worlds. | `bots/<name>/index.ts` |
 
 ## Documentation
 
-| Page | Covers |
+| Document | Topic |
 |---|---|
-| [deployment.md](docs/deployment.md) | Deployment directories, the deployment root, the launcher |
-| [configuration.md](docs/configuration.md) | The four-layer config merge, config groups, hot reload |
-| [providers.md](docs/providers.md) | Provider modules, endpoint entries, model catalogs, prices |
+| [deployment.md](docs/deployment.md) | Deployment layouts, deployment roots, and launcher behaviors |
+| [configuration.md](docs/configuration.md) | Four-layer config cascading, configuration groups, and hot reload |
+| [providers.md](docs/providers.md) | Provider modules, model catalogs, endpoint configurations, and pricing |
 | [runtimes.md](docs/runtimes.md) | Local runtimes and model files for `llamacpp` |
-| [console.md](docs/console.md) | The per-deployment console and the pages modules declare |
-| [sessions.md](docs/sessions.md) | Sessions, context capacity, handoff |
-| [runs.md](docs/runs.md) | Run directories, logs, `pnpm logq` |
-| [personas.md](docs/personas.md) | Persona hooks, Memory, bot assembly |
-| [worlds.md](docs/worlds.md) | The World contract: events, tools, environment prompt |
-| [extensions.md](docs/extensions.md) | Extension packages, the manifest, the loader |
-| [environment-variables.md](docs/environment-variables.md) | `CORTICO_*` and the three `.env` files |
-| [windows.md](docs/windows.md) | Windows compatibility |
-| [development.md](docs/development.md) | Commands, the two tsconfigs, test layout |
+| [console.md](docs/console.md) | Console architecture, live monitoring, and custom module pages |
+| [sessions.md](docs/sessions.md) | Session lifecycle, token capacity management, and context handoff |
+| [runs.md](docs/runs.md) | Runtime directories, structured logs, and `pnpm logq` CLI |
+| [personas.md](docs/personas.md) | Persona lifecycle hooks, Memory architecture, and bot assembly |
+| [worlds.md](docs/worlds.md) | The World contract: events, tools, and environment prompts |
+| [extensions.md](docs/extensions.md) | Extension package specifications, manifests, and dynamic loading |
+| [environment-variables.md](docs/environment-variables.md) | `CORTICO_*` environment configuration and the `.env` hierarchy |
+| [windows.md](docs/windows.md) | Windows environment compatibility and setup |
+| [development.md](docs/development.md) | Development workflows, dual tsconfig setup, and test architecture |
 
 ## Built-in Worlds
 
-| World | id | Connects |
+| World | ID | Integration & Capabilities |
 |---|---|---|
-| Terminal | `terminal` | Two-way conversation in the console terminal |
-| QQ | `qq` | Several group chats and private chats; images optionally described by a vision model |
-| Bilibili live | `bilibili` | Read-only danmaku, gifts, superchats, guard buys, entries and viewer counts, with a local overlay |
-| Minecraft | `minecraft` | A mineflayer client on a vanilla server: game state as text observations, high-level intent as game actions |
-| Web search | `websearch` | The Brave Search API |
-
-Published extensions: `cortico-world-vtuber`, `cortico-world-asr`, `cortico-world-pvz`,
-`cortico-world-canvas`, `cortico-provider-grok`. `templates/extension/` holds one minimal
-package per kind, and [Cortina](https://github.com/Pal-AI-Lab/Cortina) generates one.
+| Terminal | `terminal` | Interactive two-way conversation within the web console |
+| QQ | `qq` | Multi-group and direct message channels with optional vision model transcription |
+| Bilibili Live | `bilibili` | Real-time danmaku, superchats, gifts, guards, and viewer traffic monitoring with local OBS overlay |
+| Minecraft | `minecraft` | Mineflayer client for vanilla servers: game state observations and high-level autonomous action dispatch |
+| Web Search | `websearch` | Real-time web search integration powered by Brave Search API |
 
 ## Model Providers
 
-| Provider | Talks to |
+| Provider | Supported Services |
 |---|---|
-| `openai-responses-compat` | Model services that expose the Responses API |
-| `llamacpp` | A local llama-server, including release download and process supervision |
+| `openai-responses-compat` | Any model API supporting the Responses protocol specification |
+| `llamacpp` | Local `llama-server` runtime with automated binary download and process management |
 
-Other providers can be added as extensions.
+Additional upstream protocols and providers can be integrated seamlessly via extensions.
 
 ## Contributing
-* [CONTRIBUTING.md](CONTRIBUTING.md) says what belongs in this repository and what belongs
-in an extension.
-* [AGENTS.md](AGENTS.md) is the review checklist.
 
-A contributor may submit AI-generated code but they must be able to explain all submitted code. 
+We welcome issues and pull requests!
 
-Run the following two commands before submitting pull request:
+* Please read [CONTRIBUTING.md](CONTRIBUTING.md) for architectural guidelines and code separation rules.
+* Refer to [AGENTS.md](AGENTS.md) for our engineering conventions and code review checklist.
+* AI-assisted contributions are welcome, provided the author thoroughly understands and can explain all submitted logic.
+
+Run automated verifications before submitting:
 
 ```bash
 pnpm test
-```
-
-```bash
 pnpm run typecheck
 ```
 
-Browser changes also require `pnpm typecheck:web`, and `pnpm build:web` rebuilds the console
-bundle.
+For changes touching frontend browser code, also run:
+
+```bash
+pnpm typecheck:web
+pnpm build:web
+```
 
 ## Built With Cortico
-If you build something with Cortico, make a pull request to add to this list!
 
-* [@可缇Corti](https://space.bilibili.com/3707044056009191), an AI VTuber from the future
+Building something cool with Cortico? Submit a pull request to share it here!
+
+* [@可缇Corti](https://space.bilibili.com/3707044056009191) — An AI VTuber from the future
 * ...and more!

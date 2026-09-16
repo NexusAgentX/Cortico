@@ -22,6 +22,7 @@
 
 <p align="center">
   <a href="#快速开始">快速开始</a> ｜
+  <a href="#四层设计">四层设计</a> ｜
   <a href="#文档">文档</a> ｜
   <a href="PHILOSOPHY.md">设计说明</a> ｜
   <a href="docs/extensions.md">扩展</a> ｜
@@ -29,16 +30,12 @@
   <a href="https://github.com/Pal-AI-Lab/Cortico/issues">Issues</a>
 </p>
 
-Cortico 是基于事件流系统设计的 Agent Harness，用于自主响应、持续运行、混合实时输入场景的智能体
-开发，适用于人格 Bot、AI 主播、角色扮演、聊天陪伴等多种下游任务。Cortico Bot 远不只是聊天 Bot：
-得益于围绕事件流设计的 Agent 系统，Cortico 可以帮助构建长期持续存在、适用于复杂输入的 AI 智能
-体，它支持自由的外部扩展，能够同时观察和操作多个外部环境，包括聊天平台、实时游戏、甚至现实环境。
-Cortico 的目标是：把你的 AI 带到这个世界！（Bring your AI to the world！）
+Cortico 是基于事件流系统设计的 Agent Harness，用于自主响应、持续运行、混合实时输入场景的智能体开发，适用于人格 Bot、AI 主播、角色扮演、聊天陪伴等多种下游任务。Cortico Bot 远不只是聊天 Bot：得益于围绕事件流设计的 Agent 系统，Cortico 可以帮助构建长期持续存在、适用于复杂输入的 AI 智能体，它支持自由的外部扩展，能够同时观察和操作多个外部环境，包括聊天平台、实时游戏、甚至现实环境。Cortico 的目标是：把你的 AI 带到这个世界！（Bring your AI to the world！）
 
 ## 特性
 
 1. 🆓 免费开源！
-2. 🤖 源生 Agent Harness，一切围绕 Agent 设计。
+2. 🤖 原生 Agent Harness，一切围绕 Agent 设计。
 3. 🔌 模块化的 LLM Provider 组件，内部使用 Responses 协议，对外支持多种上游 LLM API，并支持使用本地部署模型。
 4. 🧠 自由的内部上下文管理，支持不同的 AI 智能体行为模式，兼容多种 Memory 系统设计。
 5. 🧩 插件系统（Cortico World）与内部隔离，采用事件投递／工具调用作为输入／输出，提供优秀的兼容性和近乎无限的可扩展能力。
@@ -47,18 +44,22 @@ Cortico 的目标是：把你的 AI 带到这个世界！（Bring your AI to the
 
 ## 快速开始
 
-Node 22+。
+运行环境需 Node 22+。
 
 ```bash
 corepack pnpm install
 pnpm start
 ```
 
-一份部署都没有时，启动器建一份 `mybot` 并启动它：它用参考 bot `cormini`，只启用终端对话。
-控制台在 `http://127.0.0.1:7788/`，终端页上是配模型端点、看 World、改系统提示词三条引导，
-配好模型端点后按「打个招呼」，bot 就会开口。端点、密钥和其余参数都在控制台里改，保存即生效。
+### 1. 首次启动与控制台引导
+首次启动且未检测到已有部署时，启动器会自动创建名为 `mybot` 的默认部署（基于参考实现 `cormini`，默认启用终端对话），并自动启动控制台服务：
 
-再开一份部署就是再建一个目录（见 [deployment.md](docs/deployment.md)）：
+**`http://127.0.0.1:7788/`**
+
+在控制台的终端页面中，开场引导将协助你完成三项基础配置：配置语言模型端点、查看已挂载的 World、调整系统提示词。配置好可用端点后，点击「打个招呼」即可让 Bot 主动开口交流。模型端点、API 密钥与运行参数均可在控制台中可视化修改，保存即时生效。
+
+### 2. 多部署管理
+每个部署对应 `deployments/` 下的一个独立子目录（详见 [deployment.md](docs/deployment.md)）：
 
 ```bash
 mkdir deployments/second
@@ -66,76 +67,80 @@ echo '{ "bot": "cormini" }' > deployments/second/deployment.json
 pnpm start second
 ```
 
-`pnpm start`、`./start.sh`（Windows 上双击 `start.bat`）都会安装缺失的依赖、构建缺失的控制台产物，
-一份部署都没有时先建一份、有多份时给出选择菜单，并在控制台请求重启后重新启动进程。
+启动脚本（`pnpm start`、`./start.sh` 或 Windows 上的 `start.bat`）会自动安装缺失依赖、按需构建控制台前端产物，在存在多份部署时提供交互式选择菜单，并在控制台请求重启时自动重启守护进程。
 
 ## 四层设计
 
-| 层 | 职责 | 位置 |
+Cortico 采用严格解耦的四层架构设计：
+
+| 层级 | 核心职责 | 所在路径 |
 |---|---|---|
-| **Core** | session、事件流与模型调用的生命周期，不拥有任何语义 | `src/core/` |
-| **Persona** | 一类 Bot 的语义：上下文构造、认知流程、对 Memory 的解释 | `bots/<名>/persona/` |
-| **Memory** | Bot 内部状态的唯一权威载体，形式由 Persona 决定 | `<部署>/memory/` |
-| **World** | 与一个外部环境之间的唯一边界：事件、工具、环境提示词 | `src/worlds/<id>/` |
-| **Bot** | 装配定义：选一个 Persona，声明一组 World | `bots/<名>/index.ts` |
+| **Core** | 管理会话（Session）、事件流分发与模型调用生命周期；内部无业务语义。 | `src/core/` |
+| **Persona** | 定义一类 Bot 的核心语义：上下文构造、认知循环与对 Memory 的读写协议。 | `bots/<名称>/persona/` |
+| **Memory** | Bot 内部持久化状态的唯一权威载体，结构与组织形态由 Persona 决定。 | `<部署>/memory/` |
+| **World** | 与单个外部环境交互的隔离边界：处理环境事件输入、工具声明与环境提示词。 | `src/worlds/<id>/` |
+| **Bot** | 部署装配定义：将一个指定的 Persona 与一组 World 组装成可运行实例。 | `bots/<名称>/index.ts` |
 
 ## 文档
 
-| 页面 | 内容 |
+| 页面 | 内容索引 |
 |---|---|
-| [deployment.md](docs/deployment.md) | 部署目录、部署根、启动器 |
-| [configuration.md](docs/configuration.md) | 四层配置合并、配置组、热更新 |
-| [providers.md](docs/providers.md) | Provider 模块、端点条目、模型目录、价格 |
-| [runtimes.md](docs/runtimes.md) | `llamacpp` 的本机运行时与模型文件 |
-| [console.md](docs/console.md) | 控制台与各模块声明的页面 |
-| [sessions.md](docs/sessions.md) | Session、上下文容量、交接 |
-| [runs.md](docs/runs.md) | run 目录、日志、`pnpm logq` |
-| [personas.md](docs/personas.md) | Persona 钩子、Memory、bot 装配 |
-| [worlds.md](docs/worlds.md) | World 契约：事件、工具、环境提示词 |
-| [extensions.md](docs/extensions.md) | 扩展包、manifest、装载 |
-| [environment-variables.md](docs/environment-variables.md) | `CORTICO_*` 与三处 `.env` |
-| [windows.md](docs/windows.md) | Windows 兼容 |
-| [development.md](docs/development.md) | 命令、两份 tsconfig、测试布局 |
+| [deployment.md](docs/deployment.md) | 部署目录结构、部署根路径与启动器工作机制 |
+| [configuration.md](docs/configuration.md) | 四层配置合并规则、配置组定义与参数热更新 |
+| [providers.md](docs/providers.md) | Provider 模块、模型目录、端点配置与计费策略 |
+| [runtimes.md](docs/runtimes.md) | `llamacpp` 本机运行时管理与模型文件配置 |
+| [console.md](docs/console.md) | 控制台架构、运行时监控与各模块页面声明 |
+| [sessions.md](docs/sessions.md) | Session 生命周期、上下文容量调度与交接机制 |
+| [runs.md](docs/runs.md) | 运行记录目录、日志结构与 `pnpm logq` 检索工具 |
+| [personas.md](docs/personas.md) | Persona 生命周期钩子、Memory 架构与装配机制 |
+| [worlds.md](docs/worlds.md) | World 交互契约：事件投递、工具执行与环境提示词 |
+| [extensions.md](docs/extensions.md) | 扩展包规范、Manifest 定义与动态加载器 |
+| [environment-variables.md](docs/environment-variables.md) | `CORTICO_*` 环境变量规范与三层 `.env` 文件继承 |
+| [windows.md](docs/windows.md) | Windows 环境兼容性与运行说明 |
+| [development.md](docs/development.md) | 常用开发命令、双 tsconfig 架构与测试体系布局 |
 
 ## 内建 World
 
-| World | id | 接入内容 |
+| World | ID | 接入环境与能力 |
 |---|---|---|
-| 终端对话 | `terminal` | 控制台终端里的双向对话 |
-| QQ | `qq` | 多个群聊与私聊；图片可选经视觉模型转文字 |
-| 哔哩哔哩直播 | `bilibili` | 弹幕、礼物、醒目留言、上舰、进场与人流读数只读接入，附本机 Overlay |
-| Minecraft | `minecraft` | mineflayer 玩家客户端连原版服务器，游戏状态转文字观察，高层意图转游戏操作 |
-| 网页搜索 | `websearch` | Brave 搜索接口 |
-
-已发布的扩展：`cortico-world-vtuber`、`cortico-world-asr`、`cortico-world-pvz`、
-`cortico-world-canvas`、`cortico-provider-grok`。`templates/extension/` 为三类扩展各提供一个最小
-包，[Cortina](https://github.com/Pal-AI-Lab/Cortina) 可以生成一个。
+| 终端对话 | `terminal` | 控制台内建交互终端，支持双向文字会话 |
+| QQ | `qq` | 接入 QQ 群聊与私聊，支持可选的多模态视觉模型图像理解 |
+| 哔哩哔哩直播 | `bilibili` | 实时监听弹幕、礼物、醒目留言（SC）、大航海、进场通知与人流指标，附带本机 OBS 画面 Overlay |
+| Minecraft | `minecraft` | 基于 Mineflayer 接入 Minecraft 原版服务器，实现文字环境观察与高层动作执行 |
+| 网页搜索 | `websearch` | 集成 Brave Search API 的实时网络信息检索能力 |
 
 ## 模型端点
 
-| Provider | 接的是什么 |
+| Provider | 适配模型服务 / 说明 |
 |---|---|
-| `openai-responses-compat` | 提供 Responses API 的模型服务 |
-| `llamacpp` | 本机 llama-server，含官方 release 的下载与进程托管 |
+| `openai-responses-compat` | 支持 Responses API 协议规范的模型服务与兼容网关 |
+| `llamacpp` | 本机 `llama-server` 运行时集成，支持官方 Binary 自动下载与子进程生命周期托管 |
 
-其他协议通过扩展安装。
+如需接入更多模型协议与供应商，可通过扩展系统无缝安装。
 
-## 贡献
+## 参与贡献
 
-贡献者必须能解释自己提交的全部代码，用编码 agent 写的也一样。
-[CONTRIBUTING.md](CONTRIBUTING.md) 写明什么属于本仓库、什么应该做成扩展，
-[AGENTS.md](AGENTS.md) 是评审清单。
+欢迎提交 Issue 与 Pull Request！
+
+* 提交前请查阅 [CONTRIBUTING.md](CONTRIBUTING.md)（了解仓库边界与扩展开发规范）以及 [AGENTS.md](AGENTS.md)（代码审查清单）。
+* 欢迎使用 AI 编码助手辅助开发，但贡献者必须能够清晰解释提交的所有代码逻辑。
+* 提交 PR 前请确保自动化校验通过：
 
 ```bash
 pnpm test
-```
-
-```bash
 pnpm run typecheck
 ```
 
-改动浏览器侧代码还需要 `pnpm typecheck:web`，`pnpm build:web` 重建控制台产物。
+若涉及控制台前端代码改动，需额外执行：
+
+```bash
+pnpm typecheck:web
+pnpm build:web
+```
 
 ## 范例实现
 
-来自未来的 AI Vtuber [@可缇Corti](https://space.bilibili.com/3707044056009191)，使用 Cortico 开发！
+如果你使用 Cortico 构建了有趣的 Bot，欢迎提交 PR 收录到这里！
+
+* [@可缇Corti](https://space.bilibili.com/3707044056009191) — 来自未来的 AI VTuber。
+* ...持续更新中！
