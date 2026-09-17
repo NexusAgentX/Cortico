@@ -12,14 +12,12 @@ import { SessionLog } from "./fixture-session.ts";
 import { JsonlEventStore } from '../../src/core/event-store.ts';
 import { CoreState } from '../../src/core/state.ts';
 import { estimateMessagesTokens, nullLogger } from "./fixture-util.ts";
-import { ToolCallLog } from '../../src/core/tool-log.ts';
-import { Transcript } from '../../src/core/transcript.ts';
 import { LLMError, LLMStreamAborted } from './fixture-errors.ts';
 import { SessionTracker } from '../../src/core/sessions.ts';
-import type { UsageRecord, Persona } from '../../src/core/types.ts';
+import type { Persona } from '../../src/core/types.ts';
 import type { ChatMessage, LLMDelta } from './fixture-types.ts';
 import type { Logger, CandidateProjector, EventEnvelope, World, WorldHost, ToolDef } from '../../src/core/types.ts';
-import type { BotConfig } from '../../bots/corti-soulmate/assemble.ts';
+import type { BotConfig } from './helpers.ts';
 import {
   activeSpec,
   FakeLLM,
@@ -50,7 +48,6 @@ interface RigOptions {
   cfgPatch?: (cfg: BotConfig) => void;
   worlds?: World[];
   /** 对模型隐藏但仍挂载运行的 World id。 */
-  hiddenWorlds?: string[];
   /** 时机钩子,直接装到假Persona上 */
   hooks?: Pick<Persona, 'onTurnEnded' | 'onIdle' | 'onStallsRecovered'>;
   /** 记录 schedule_wake 对 timers 原语的调用。 */
@@ -74,8 +71,6 @@ interface RigOptions {
   /** 输出旁路(缺省=声明里不写,即不流式) */
   outputTap?: OutputTap;
   /** 模型工具调用流水(缺省=不接) */
-  toolLog?: ToolCallLog;
-  transcript?: Transcript;
   /** session 用量观察注册表(缺省=不接,mainTrack 为 null) */
   tracker?: SessionTracker;
   /** 重试预算；默认次数与配置一致，退避设为零。 */
@@ -133,15 +128,13 @@ function makeRig(opts: RigOptions = {}) {
       ...opts.context,
     },
     blobs: fakeBlobIntern(),
-    worlds: { all: () => worlds, visible: () => worlds.filter((m) => opts.hiddenWorlds?.includes(m.id) !== true) },
+    worlds: { all: () => worlds },
     bus,
     session,
     store,
     state,
     log: opts.log ?? nullLogger(),
-    toolLog: opts.toolLog,
     resubmit: opts.resubmit ?? { maxConsecutive: 2, maxPerBatch: 4, backoffMs: [0, 0] },
-    ...(opts.transcript ? { transcript: opts.transcript } : {}),
     ...(opts.tracker ? { tracker: opts.tracker } : {}),
   });
   // 将 CoreApi 交给测试 Persona。
@@ -228,7 +221,7 @@ describe('MainLoop standard Response execution', () => {
   const attempt = (responseId: string): ProviderAttempt => ({
     id: `attempt_${responseId}`, generationId: responseId, ordinal: 0, origin,
     startedAt: new Date().toISOString(), elapsedMs: 10, requestId: null, responseId,
-    outcome: 'completed', status: 200, serviceTier: 'default', charges: [],
+    outcome: 'completed', status: 200, serviceTier: 'default',
     meters: { ...unknownMeters(), input: 10, output: 2, total: 12 },
   });
 
@@ -288,9 +281,9 @@ describe('MainLoop standard Response execution', () => {
   });
 
   it('rejects late events and output after preempt while retaining the consumed attempt', async () => {
-    const usage: UsageRecord[] = [];
+    const tracker = new SessionTracker('UTC');
     const seen: string[] = [];
-    const rig = makeRig({ silent: true, tracker: new SessionTracker('UTC', row => usage.push(row)), outputTap: { onDelta: delta => seen.push(delta.type) } });
+    const rig = makeRig({ silent: true, tracker, outputTap: { onDelta: delta => seen.push(delta.type) } });
     let started = false;
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -310,10 +303,10 @@ describe('MainLoop standard Response execution', () => {
       await until(() => started);
       expect(rig.loop.abortCurrentRound()).toBe(true);
       release();
-      await until(() => usage.length === 1);
+      await until(() => tracker.list()[0]?.calls === 1);
       expect(seen).toEqual([]);
       expect(rig.session.records.some(entry => entry.context.responseId === 'late')).toBe(false);
-      expect(usage[0].attempt).toMatchObject({ outcome: 'discarded', meters: { input: 10, output: 2 } });
+      expect(tracker.list()[0]).toMatchObject({ promptTokens: 10, completionTokens: 2 });
     } finally { release(); await rig.cleanup(); }
   });
 });
@@ -564,10 +557,10 @@ describe('MainLoop shutdown generation', () => {
       await until(() => rig.llm.calls.length >= 1);
       const systemBefore = rig.session.messages[0].content;
       rewriteFakeIOTemplate(worlds, '不应落库的新前缀');
-      worlds.envPromptVars = async () => {
+      worlds.environment = async () => {
         reloadStarted = true;
         await reloadGate;
-        return {};
+        return "";
       };
       const reload = rig.loop.reloadSystemPrefix();
       await until(() => reloadStarted);
@@ -638,10 +631,9 @@ describe('MainLoop shutdown generation', () => {
   it.each([
     ['普通派发', false],
     ['提前派发', true],
-  ] as const)('%s慢工具跨过 seal 后只保留同步关机配对，不写迟到结果或工具流水', async (_name, eager) => {
+  ] as const)('%s慢工具跨过 seal 后只保留同步关机配对，不写迟到结果', async (_name, eager) => {
     const logTmp = makeTmpDir();
     const toolFile = join(logTmp.dir, 'shutdown-tools.jsonl');
-    const toolLog = new ToolCallLog(toolFile);
     const tapped: LLMDelta[] = [];
     let ended = 0;
     let handlerStarted = false;
@@ -661,7 +653,6 @@ describe('MainLoop shutdown generation', () => {
     const rig = makeRig({
       worlds: [makeFakeIO('slow', [slow])],
       hooks: { onTurnEnded: () => { ended++; } },
-      toolLog,
       ...(eager ? { outputTap: { onDelta: (delta: LLMDelta) => tapped.push(delta) } } : {}),
     });
     try {
@@ -716,7 +707,6 @@ describe('MainLoop shutdown generation', () => {
     };
     const rig = makeRig({
       worlds: [makeFakeIO('slow-aborted', [slow])],
-      toolLog: new ToolCallLog(toolFile),
       outputTap: { onDelta: () => {}, onAbort: (reason) => aborts.push(reason) },
     });
     try {
@@ -779,33 +769,6 @@ describe('MainLoop user事件协议', () => {
     expect(rig.llm.calls[0].tools?.map((tool) => tool.name).slice(0, 2))
       .toEqual(['fork', 'schedule_wake']);
     assertPairing(messages);
-  });
-
-
-  it('思维链不进 runlog;transcript 只追加地留下 reasoning 项并带轮次锚点', async () => {
-    const debugs: string[] = [];
-    const long = '想'.repeat(2500);
-    const logTmp = makeTmpDir();
-    const file = join(logTmp.dir, 'transcript.jsonl');
-    const transcript = new Transcript(file, { run: 'r-test' });
-    rig = makeRig({ log: { ...nullLogger(), debug: (msg: string) => debugs.push(msg) }, transcript });
-    // 将 session.onAppend 接到 transcript，与 Core 的订阅方式一致。
-    rig.session.onAppend((record, index) => transcript.item(record, index));
-    rig.llm.script({ role: 'assistant', content: '好的。', reasoning_content: long });
-    rig.start();
-    await until(() => rig.llm.calls.length >= 1);
-    await until(() => rig.session.messages.some((m) => m.role === 'assistant'));
-
-    expect(debugs).not.toContain('思维链');
-    const rows = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { kind: string; run: string; round?: number; sess?: string; item: { type: string } });
-    const reasoning = rows.find((r) => r.kind === 'item' && r.item.type === 'reasoning');
-    expect(reasoning).toBeDefined();
-    expect(reasoning!.run).toBe('r-test');
-    expect(reasoning!.round).toBe(1);
-    expect(reasoning!.sess).toBe('main');
-    // 上下文里那条 assistant 仍是模型交回的原样,落盘这一步不改它
-    const assistant = rig.session.messages.find((m) => m.role === 'assistant')!;
-    expect(assistant.reasoning_content).toBe(long);
   });
 
   it('内部项与外部事件共用事件库和游标,并保留来源标识', async () => {
@@ -1464,39 +1427,6 @@ describe('MainLoop user事件协议', () => {
     rig.start();
     await until(() => handoffs >= 1);
     expect(warnings.some((w) => w.includes('越过模型上下文上限'))).toBe(true);
-  });
-
-  it('交接收尾通知可见 World onHandoffEnded:此刻 session 已换新前缀,钩子里推的项落在新 session 第一批;隐藏 World 不通知', async () => {
-    const seenAt: string[][] = [];
-    let lenAtHook = -1;
-    let hiddenCalls = 0;
-    let rig!: ReturnType<typeof makeRig>;
-    const vt = {
-      ...makeFakeIO('vt'),
-      onHandoffEnded() {
-        seenAt.push(rig.session.messages.map((m) => m.role));
-        lenAtHook = rig.session.messages.length;
-        rig.loop.injectInternal('交接后开口提示', 'worlds.note');
-      },
-    };
-    const hidden = { ...makeFakeIO('hidden'), onHandoffEnded() { hiddenCalls++; } };
-    rig = makeRig({ worlds: [vt, hidden], hiddenWorlds: ['hidden'], onHandoff: async () => ({ tail: null }) });
-    try {
-      rig.start();
-      await until(() => rig.llm.calls.length >= 1);
-      await rig.loop.handoffContext();
-
-      expect(seenAt).toHaveLength(1);
-      expect(seenAt[0][0]).toBe('system');
-      expect(hiddenCalls).toBe(0);
-      await until(() => rig.session.messages.length > lenAtHook);
-      // 重建后的第一条新消息就是钩子里推的那条:它在新 session 的第一批里
-      const firstAppended = rig.session.messages[lenAtHook];
-      expect(firstAppended.role).toBe('user');
-      expect(firstAppended.content).toContain('交接后开口提示');
-    } finally {
-      await rig.cleanup();
-    }
   });
 
   it('事件帧带 sidecar:每条事件的游标/时间/类型/tag 与正文位置,按位置切回去正好是各自的 text', async () => {
@@ -2462,121 +2392,6 @@ describe("MainLoop endsTurn", () => {
   });
 });
 
-/**
- * 每次模型工具调用记录一行日志。
- */
-describe('MainLoop 工具调用流水', () => {
-  let rig: ReturnType<typeof makeRig>;
-  afterEach(async () => {
-    if (rig) await rig.cleanup();
-  });
-
-  function sink() {
-    const tmp = makeTmpDir();
-    const file = join(tmp.dir, 'toolcalls.jsonl');
-    return {
-      tmp,
-      log: new ToolCallLog(file),
-      rows: (): Array<Record<string, unknown>> =>
-        (existsSync(file) ? readFileSync(file, 'utf8') : '')
-          .split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>),
-    };
-  }
-
-  it('一次调用一行:工具名、归一前的原始参数、耗时、回执全长与摘要', async () => {
-    const s = sink();
-    rig = makeRig({
-      toolLog: s.log,
-      worlds: [makeFakeIO('vtuber', [makeTool('vtuber_act', '已排上')])],
-    });
-    rig.start();
-    await until(() => rig.llm.calls.length >= 1);
-    const script = '大家好呀,今天我们接着挖矿——';
-    rig.llm.script(
-      toolReply([{ name: 'vtuber_act', args: { script, mood: 'happy' }, id: 'a1' }]),
-      textReply('说完了'),
-    );
-    rig.pushEvent('开播了');
-
-    await until(() => s.rows().length >= 1);
-    const [row] = s.rows();
-    expect(row.tool).toBe('vtuber_act');
-    expect(row.role).toBe('main');
-    // 工具调用日志保存完整原始参数。
-    expect(row.args).toEqual({ script, mood: 'happy' });
-    expect(row.chars).toBe('已排上'.length);
-    expect(row.receipt).toBe('已排上');
-    expect(typeof row.durMs).toBe('number');
-    expect(row.failed).toBeUndefined();
-    s.tmp.cleanup();
-  });
-
-  it('handler 抛异常的那次照样留一行,并标 failed', async () => {
-    const s = sink();
-    const boom: ToolDef = {
-      name: 'boom',
-      description: 'boom',
-      tags: [],
-      parameters: { type: 'object', properties: {} },
-      handler: async () => { throw new Error('炸了'); },
-    };
-    rig = makeRig({ toolLog: s.log, worlds: [makeFakeIO('qq', [boom])] });
-    rig.start();
-    await until(() => rig.llm.calls.length >= 1);
-    rig.llm.script(toolReply([{ name: 'boom', id: 'b1' }]), textReply('知道了'));
-    rig.pushEvent('试试');
-
-    await until(() => s.rows().length >= 1);
-    expect(s.rows()[0]).toMatchObject({ tool: 'boom', failed: true });
-    expect(s.rows()[0].receipt).toContain('炸了');
-    s.tmp.cleanup();
-  });
-
-  it('工具名不认识、参数不是合法 JSON:两条机械回执也各留一行,args 为 null', async () => {
-    const s = sink();
-    rig = makeRig({ toolLog: s.log });
-    rig.start();
-    await until(() => rig.llm.calls.length >= 1);
-    const bad = toolReply([{ name: 'send', id: 'x1' }]);
-    bad.tool_calls![0].function.arguments = '{不是 JSON';
-    rig.llm.script(
-      toolReply([{ name: 'nosuchtool', id: 'u1' }]),
-      bad,
-      textReply('好'),
-    );
-    rig.pushEvent('试试');
-
-    await until(() => s.rows().length >= 2);
-    expect(s.rows().map((r) => [r.tool, r.args])).toEqual([
-      ['nosuchtool', null],
-      ['send', null],
-    ]);
-    expect(s.rows()[0].receipt).toBe('[unknown tool]');
-    expect(s.rows()[1].receipt).toContain('not valid JSON');
-    s.tmp.cleanup();
-  });
-
-  it('提前派发(流式)与消息落定后执行走同一个落点,不会记两次', async () => {
-    const s = sink();
-    const seen: LLMDelta[] = [];
-    rig = makeRig({
-      toolLog: s.log,
-      outputTap: { onDelta: (d) => seen.push(d) },
-      worlds: [makeFakeIO('qq', [makeTool('send', '已发送')])],
-    });
-    rig.start();
-    await until(() => rig.llm.calls.length >= 1);
-    rig.llm.script(toolReply([{ name: 'send', args: { to: '群1' }, id: 's1' }]), textReply(''));
-    rig.pushEvent('发一条');
-
-    await until(() => s.rows().length >= 1);
-    await sleep(50);
-    expect(s.rows()).toHaveLength(1);
-    expect(s.rows()[0]).toMatchObject({ tool: 'send', args: { to: '群1' } });
-    s.tmp.cleanup();
-  });
-});
-
 
 describe("MainLoop 连续失败与恢复通知", () => {
   let rig: ReturnType<typeof makeRig>;
@@ -2838,248 +2653,9 @@ describe("MainLoop 连续失败与恢复通知", () => {
   });
 });
 
-/**
- * 失败流的 token 用量也须入账。
- */
-describe('MainLoop 失败流入账', () => {
-  let rig: ReturnType<typeof makeRig>;
-  afterEach(async () => {
-    if (rig) await rig.cleanup();
-  });
-
-  /** 用量注册表追加的每条记录同时收集到 rows。 */
-  const rigWithUsage = (): { rows: UsageRecord[]; tracker: SessionTracker } => {
-    const rows: UsageRecord[] = [];
-    return { rows, tracker: new SessionTracker('Asia/Shanghai', (r) => rows.push(r)) };
-  };
-
-  it('流内失败带着 usage 上来:记一条 outcome:failed 的流水,带耗时/requestId/status', async () => {
-    const { rows, tracker } = rigWithUsage();
-    rig = makeRig({ tracker });
-    rig.start();
-    await until(() => rig.llm.calls.length >= 1);
-    rows.length = 0;
-
-    const err = new LLMStreamAborted('LLM流中断: Responses 流失败: 流内错误', 0, '', {
-      role: 'assistant',
-      content: '',
-    });
-    err.usage = {
-      promptTokens: 58089,
-      completionTokens: 2817,
-      cacheHitTokens: 128,
-      cacheMissTokens: 57961,
-      reasoningTokens: 2600,
-    };
-    err.failedAfterMs = 46200;
-    err.requestId = 'req-0823-abc';
-    rig.llm.throwNext = err;
-    rig.pushEvent('[10:05] 阿明: 在吗');
-    await until(() => rows.length >= 1);
-
-    expect(rows[0]).toMatchObject({
-      outcome: 'failed',
-      promptTokens: 58089,
-      completionTokens: 2817,
-      failedAfterMs: 46200,
-      requestId: 'req-0823-abc',
-      status: 0,
-    });
-  });
-
-  it('未报告用量的失败请求仍记一次尝试，token 计量保持未知', async () => {
-    const { rows, tracker } = rigWithUsage();
-    rig = makeRig({ tracker });
-    rig.start();
-    await until(() => rig.llm.calls.length >= 1);
-    rows.length = 0;
-
-    rig.llm.throwNext = new LLMError('LLM API 400', 400, 'Model Not Exist');
-    rig.pushEvent('[10:05] 阿明: 在吗');
-    await until(() => rig.llm.calls.length >= 2);
-    await sleep(50);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].attempt?.meters.input).toBeNull();
-    expect(rows[0].attempt?.meters.output).toBeNull();
-  });
-
-  it('成功的一发照旧记成功行(不带 outcome 键)', async () => {
-    const { rows, tracker } = rigWithUsage();
-    rig = makeRig({ tracker });
-    rig.start();
-    await until(() => rows.length >= 1);
-    expect(rows[0].outcome).toBeUndefined();
-  });
-
-  it('主循环把请求前缀哈希带进流水(前缀断裂可归因)', async () => {
-    const { rows, tracker } = rigWithUsage();
-    rig = makeRig({ tracker });
-    rig.start();
-    await until(() => rows.length >= 1);
-    expect(rows[0].prefixHash).toMatch(/^[0-9a-f]{12}$/);
-  });
-
-  it('成功返回但本轮随关机丢弃:token 照样入账,标 discarded', async () => {
-    const { rows, tracker } = rigWithUsage();
-    rig = makeRig({ tracker });
-    rig.start();
-    await until(() => rig.llm.calls.length >= 1);
-    rows.length = 0;
-    // 请求成功返回时正在关机，仍应保留实际用量。
-    rig.llm.chat = async () => {
-      rig.loop.stop();
-      return {
-        message: textReply('说到一半就关机了'),
-        usage: { promptTokens: 1234, completionTokens: 56, cacheHitTokens: 0, cacheMissTokens: 1234 },
-      };
-    };
-    rig.pushEvent('[10:05] 阿明: 在吗');
-    await until(() => rows.length >= 1);
-    expect(rows[0]).toMatchObject({ outcome: 'discarded', promptTokens: 1234, completionTokens: 56 });
-  });
-
-  // 运行期水位自检报告停滞，不修改水位或补投状态。
-  describe('投递水位周期自检', () => {
-    /** 创建已归档、尚未投递且等待已超时的外部事件。 */
-    function seedStale(target: ReturnType<typeof makeRig>, count: number, ageMs: number): void {
-      const base = Date.now() - ageMs;
-      for (let i = 0; i < count; i++) {
-        target.store.append({
-          type: 'qq.message',
-          ts: new Date(base + i * 1000).toISOString(),
-          source: 'qq',
-          origin: 'external',
-          text: `迟迟没进上下文的第${i + 1}条`,
-        });
-      }
-      target.state.data.lastDeliveredCursor = 0;
-    }
-
-    it('水位落后超过阈值:error 一条事实(落后条数 + 最老一条的 ts 与摘要)', () => {
-      const errors: Array<{ msg: string; data?: unknown }> = [];
-      rig = makeRig({
-        silent: true,
-        log: { ...nullLogger(), error: (msg, data) => errors.push({ msg, data }), child: () => nullLogger() },
-      });
-      seedStale(rig, 3, 20 * 60_000);
-      rig.loop.auditDeliveryWatermark();
-      expect(errors).toHaveLength(1);
-      expect(errors[0].data).toMatchObject({
-        behind: 3,
-        lastDeliveredCursor: 0,
-        oldestCursor: 1,
-        oldestSource: 'qq',
-        oldestText: '迟迟没进上下文的第1条',
-      });
-      expect((errors[0].data as { stalledForMs: number }).stalledForMs).toBeGreaterThan(19 * 60_000);
-      // 水位与落后量可在线查询。
-      expect(rig.loop.getStatus()).toMatchObject({ lastDeliveredCursor: 0, behind: 3 });
-    });
-
-    // 同一 watermark 停滞时，首报后 15 分钟、1 小时各退避重报一次，并带落后增量。
-    it('同一次停滞退避重报(15min/1h 各一次,带增量),水位动了之后报一条解除', () => {
-      const lines: Array<{ level: string; msg: string; data?: unknown }> = [];
-      const mk = (level: string) => (msg: string, data?: unknown) => lines.push({ level, msg, data });
-      rig = makeRig({
-        silent: true,
-        log: { ...nullLogger(), warn: mk('warn'), error: mk('error'), child: () => nullLogger() },
-      });
-      seedStale(rig, 2, 20 * 60_000);
-      const t0 = Date.now();
-      const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(t0);
-      try {
-        rig.loop.auditDeliveryWatermark();
-        rig.loop.auditDeliveryWatermark();
-        rig.loop.auditDeliveryWatermark();
-        // 退避窗口内:只报一次
-        expect(lines.filter((l) => l.level === 'error')).toHaveLength(1);
-        // 停滞期间又堆了一条;15 分钟到点:第 2 报,带 behind 增量
-        rig.store.append({
-          type: 'qq.message', ts: new Date(t0 - 60_000).toISOString(),
-          source: 'qq', origin: 'external', text: '停滞期间又来一条',
-        });
-        nowSpy.mockReturnValue(t0 + 15 * 60_000);
-        rig.loop.auditDeliveryWatermark();
-        rig.loop.auditDeliveryWatermark();
-        const errs = lines.filter((l) => l.level === 'error');
-        expect(errs).toHaveLength(2);
-        expect(errs[1].data).toMatchObject({ behind: 3, behindDelta: 1, report: 2 });
-        // 1 小时到点:第 3 报;之后封顶不再刷屏
-        nowSpy.mockReturnValue(t0 + 61 * 60_000);
-        rig.loop.auditDeliveryWatermark();
-        rig.loop.auditDeliveryWatermark();
-        expect(lines.filter((l) => l.level === 'error')).toHaveLength(3);
-        // 水位追上来:解除只报一条
-        rig.state.data.lastDeliveredCursor = rig.store.latestCursor();
-        rig.loop.auditDeliveryWatermark();
-        rig.loop.auditDeliveryWatermark();
-        const cleared = lines.filter((l) => l.level === 'warn' && l.msg.includes('停滞已解除'));
-        expect(cleared).toHaveLength(1);
-        expect(cleared[0].data).toMatchObject({ lastDeliveredCursor: rig.store.latestCursor() });
-      } finally {
-        nowSpy.mockRestore();
-      }
-    });
-
-    it('人工暂停期间事件本来就该堆着,不当停滞报', () => {
-      const errors: Array<{ msg: string }> = [];
-      rig = makeRig({
-        silent: true,
-        log: { ...nullLogger(), error: (msg) => errors.push({ msg }), child: () => nullLogger() },
-      });
-      seedStale(rig, 5, 30 * 60_000);
-      rig.bus.setPaused(true);
-      rig.loop.auditDeliveryWatermark();
-      expect(errors).toHaveLength(0);
-    });
-
-    it('积压的只有内部事件与 archive-only 原始归档:水位不动也不算停滞', () => {
-      const errors: Array<{ msg: string }> = [];
-      rig = makeRig({
-        silent: true,
-        log: { ...nullLogger(), error: (msg) => errors.push({ msg }), child: () => nullLogger() },
-      });
-      const old = new Date(Date.now() - 30 * 60_000).toISOString();
-      rig.store.append({ type: 'opening', ts: old, source: 'persona', origin: 'internal', text: '内部' });
-      rig.store.append({
-        type: 'bilibili.danmaku', ts: old, source: 'bilibili', origin: 'external',
-        contextDelivery: 'archive-only', text: '原始归档',
-      });
-      rig.state.data.lastDeliveredCursor = 0;
-      rig.loop.auditDeliveryWatermark();
-      expect(errors).toHaveLength(0);
-    });
-
-    it('落后但还没到阈值:不报', () => {
-      const errors: Array<{ msg: string }> = [];
-      rig = makeRig({
-        silent: true,
-        log: { ...nullLogger(), error: (msg) => errors.push({ msg }), child: () => nullLogger() },
-      });
-      seedStale(rig, 4, 5_000);
-      rig.loop.auditDeliveryWatermark();
-      expect(errors).toHaveLength(0);
-    });
-  });
-
-  it('主循环把常驻 session 实例 id 带给 LLM', async () => {
-    const { tracker } = rigWithUsage();
-    rig = makeRig({ tracker });
-    let llmSessionId: string | undefined;
-    const original = rig.llm.chat.bind(rig.llm);
-    rig.llm.chat = async (spec, messages, tools, opts) => {
-      llmSessionId = opts?.sessionId;
-      return original(spec, messages, tools, opts);
-    };
-    rig.start();
-    await until(() => llmSessionId !== undefined);
-    expect(llmSessionId).toBe('main');
-  });
-});
-
 // deliver:false 和隐藏 World 的事件不会生成候选引用，归档时即标记已处理。
 // 尚未处理的候选原文继续阻止水位推进。
-describe("deliver:false 与隐藏 World 的事件归档后推进水位", () => {
+describe("deliver:false 的事件归档后推进水位", () => {
   let tmp: ReturnType<typeof makeTmpDir>;
   let core: Core<BotConfig>;
   let host: WorldHost;
@@ -3087,7 +2663,6 @@ describe("deliver:false 与隐藏 World 的事件归档后推进水位", () => {
   async function build(): Promise<void> {
     tmp = makeTmpDir();
     const cfg = makeCfg();
-    cfg.worlds.qq.enabled = false;
     const probe = makeFakeIO('probe');
     let captured: WorldHost | null = null;
     probe.start = async (h) => { captured = h; };
@@ -3121,33 +2696,6 @@ describe("deliver:false 与隐藏 World 的事件归档后推进水位", () => {
     expect(echo.contextDelivery).toBe('archive-only');
     // 归档后立即推进水位，不要求候选引用。
     await until(() => core.state.data.lastDeliveredCursor >= echo.cursor);
-  });
-
-  it('隐藏 World 的 pushEvent 与 pushCandidate 原文归档后推进水位', async () => {
-    await build();
-    core.setWorldVisible('probe', false);
-
-    const evt = await host.pushEvent({
-      type: 'probe.msg',
-      ts: new Date().toISOString(),
-      source: 'probe',
-      text: '隐藏期间说的话',
-    });
-    expect(evt.contextDelivery).toBe('archive-only');
-    await until(() => core.state.data.lastDeliveredCursor >= evt.cursor);
-
-    const sources = await host.pushCandidate!({
-      sourceEvents: [{
-        type: 'bilibili.danmaku',
-        ts: new Date().toISOString(),
-        text: '隐藏期间的候选原文',
-      }],
-      gateText: '隐藏期间的候选原文',
-      value: {},
-      project: () => [],
-    });
-    expect(sources).toHaveLength(1);
-    await until(() => core.state.data.lastDeliveredCursor >= sources[0].cursor);
   });
 });
 

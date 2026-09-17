@@ -1,7 +1,7 @@
 import type { Logger } from '../../core/types.ts';
 import type { Request, Response, StreamEvent } from '../../protocol/open-responses/index.ts';
 import type { ItemOrigin } from '../../protocol/open-responses/context.ts';
-import { GenerationError, priceUsage, unknownMeters, type GenerateOptions, type Generation, type ProviderAttempt, type PriceSnapshot, type TokenMeters } from '../../core/generation.ts';
+import { GenerationError, unknownMeters, type GenerateOptions, type Generation, type ProviderAttempt, type TokenMeters } from '../../core/generation.ts';
 import { ResponseProtocolError } from '../../protocol/open-responses/stream.ts';
 import { LLMError, abortError, retryDelay, reqIdSuffix } from './errors.ts';
 import type { ResponseAssembly } from './response-assembly.ts';
@@ -10,11 +10,8 @@ export interface ResponseTransport {
   url: string;
   body: Record<string, unknown>;
   headers(): Record<string, string> | Promise<Record<string, string>>;
-  refresh(): Promise<boolean>;
   assembly(): ResponseAssembly;
   parse(raw: unknown): { response: Response; meters: TokenMeters; serviceTier: string | null };
-  failure(info: { model: string; role?: string; elapsedMs: number; status: number; requestId: string | null; body: string; message: string }, record: (attempts: ProviderAttempt[]) => void): Promise<boolean>;
-  succeeded(): void;
   log: Logger;
 }
 
@@ -60,15 +57,14 @@ const FRAME_IDLE_MS = 120_000;
  */
 const CONTENT_IDLE_MS = 300_000;
 
-/** Every fetch attempt produces its own immutable metering and price snapshot. */
+/** Every fetch attempt produces its own metering snapshot. */
 export async function generate(request: Request, options: GenerateOptions, origin: ItemOrigin, transport: ResponseTransport): Promise<Generation> {
   const generationId = crypto.randomUUID();
   const attempts: ProviderAttempt[] = [];
   let lastError: unknown;
   let partial: Response | null = null;
-  let authRetried = false;
-  const delays = options.diagnostic ? [] : [1000, 4000, 10000];
-  const fail = (error: unknown): GenerationError => new GenerationError((error instanceof Error ? error.message : String(error)) + reqIdSuffix(attempts.filter(attempt => attempt.purpose !== 'diagnostic').at(-1)?.requestId), attempts,
+  const delays = [1000, 4000, 10000];
+  const fail = (error: unknown): GenerationError => new GenerationError((error instanceof Error ? error.message : String(error)) + reqIdSuffix(attempts.at(-1)?.requestId), attempts,
     partial, origin, error instanceof LLMError ? error.status : 0, error instanceof LLMError ? error.body : '', { cause: error });
   for (let ordinal = 0; ordinal <= delays.length; ordinal++) {
     try {
@@ -77,9 +73,8 @@ export async function generate(request: Request, options: GenerateOptions, origi
     } catch (error) { throw fail(error); }
     const attempt: ProviderAttempt = {
       id: crypto.randomUUID(), generationId, ordinal, origin: structuredClone(origin), startedAt: new Date().toISOString(), elapsedMs: 0,
-      requestId: null, responseId: null, outcome: 'failed', status: null, serviceTier: null, requestedServiceTier: typeof transport.body.service_tier === 'string' ? transport.body.service_tier : request.service_tier ?? null, purpose: options.diagnostic ? 'diagnostic' : 'generation', meters: unknownMeters(), charges: [],
+      requestId: null, responseId: null, outcome: 'failed', status: null, serviceTier: null, requestedServiceTier: typeof transport.body.service_tier === 'string' ? transport.body.service_tier : request.service_tier ?? null, meters: unknownMeters(),
     };
-    let quotes: readonly PriceSnapshot[] = [];
     const started = Date.now();
     const controller = new AbortController();
     const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
@@ -93,15 +88,12 @@ export async function generate(request: Request, options: GenerateOptions, origi
     let committed = false;
     let characters = 0;
     let runaway = false;
-    let observed = false;
     const assembly = transport.assembly();
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let sent = false;
     let finishedAt: number | null = null;
-    const diagnostics: ProviderAttempt[] = [];
     partial = null;
     const forward = (event: StreamEvent): void => {
-      observed = true;
       if (carriesContent(event)) touchContent();
       if ('delta' in event && typeof event.delta === 'string') characters += event.delta.length;
       if (irreversible(event)) committed = true;
@@ -116,18 +108,12 @@ export async function generate(request: Request, options: GenerateOptions, origi
       const headers = await transport.headers();
       if (options.signal?.aborted) throw abortError(options.signal);
       attempt.startedAt = new Date().toISOString();
-      quotes = structuredClone(options.quote?.({ startedAt: attempt.startedAt, requestedServiceTier: attempt.requestedServiceTier ?? null }) ?? []);
       sent = true;
       const response = await fetch(transport.url, { method: 'POST', body: JSON.stringify(transport.body), headers, signal });
       attempt.status = response.status;
       attempt.requestId = response.headers.get('x-request-id');
       if (!response.ok) {
         const error = new LLMError(`LLM API ${response.status}`, response.status, await response.text());
-        if (!options.diagnostic && (response.status === 401 || response.status === 403) && !authRetried && await transport.refresh()) {
-          authRetried = true;
-          lastError = error;
-          continue;
-        }
         throw error;
       }
       if (streaming) {
@@ -159,7 +145,6 @@ export async function generate(request: Request, options: GenerateOptions, origi
       if (partial.status === 'failed') throw new LLMError(partial.error?.message ?? partial.error?.code ?? 'Response failed', 0, JSON.stringify(partial.error));
       if (partial.status !== 'completed' && partial.status !== 'incomplete') throw new LLMError(`Response has no terminal status: ${partial.status}`, 0, '');
       attempt.outcome = options.signal?.aborted ? 'discarded' : partial.status;
-      transport.succeeded();
       return { response: partial, origin, attempts };
     } catch (error) {
       finishedAt = Date.now();
@@ -177,19 +162,13 @@ export async function generate(request: Request, options: GenerateOptions, origi
       if (!sent || committed || runaway || (!streaming && error instanceof ResponseProtocolError)) break;
       const status = error instanceof LLMError ? error.status : 0;
       if (status !== 0 && status !== 429 && status < 500) break;
-      if (!options.diagnostic && observed && Date.now() - started >= 20000 && !await transport.failure({
-        model: request.model ?? '', role: options.role, elapsedMs: Date.now() - started, status,
-        requestId: attempt.requestId, body: error instanceof LLMError ? error.body : '', message: String(error),
-      }, values => diagnostics.push(...values))) break;
       transport.log.warn('Provider attempt failed; retrying', { ordinal, err: String(error) });
     } finally {
       clearTimeout(timer);
       if (contentTimer) clearTimeout(contentTimer);
       if (reader) { try { await reader.cancel(); } catch { /* The failed transport may already be closed. */ } reader.releaseLock(); }
       attempt.elapsedMs = (finishedAt ?? Date.now()) - started;
-      attempt.charges = priceUsage(attempt.meters, quotes, attempt.serviceTier);
       if (sent) attempts.push(attempt);
-      attempts.push(...diagnostics);
     }
   }
   throw fail(lastError);

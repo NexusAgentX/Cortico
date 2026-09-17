@@ -74,7 +74,6 @@ interface Rig {
 async function rig(cognition?: PersonaCognition): Promise<Rig> {
   const tmp = makeTmpDir();
   const config = makeCfg();
-  config.worlds.qq.enabled = false;
   const loaded = makeLoaded({
     config,
     rootDir: tmp.dir,

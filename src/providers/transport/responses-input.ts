@@ -3,12 +3,15 @@ import type { Request } from '../../protocol/open-responses/index.ts';
 import { inputItem } from '../../protocol/open-responses/context.ts';
 import type { GenerateOptions } from '../../core/generation.ts';
 import { requestContext } from './native-input.ts';
-import type { CompatMediaOptions } from './history.ts';
+export interface MediaOptions {
+  enabled(): boolean;
+  read(handle: string): Buffer | null;
+}
 
 type Item = Record<string, unknown>;
 
 export interface ResponsesInputOptions {
-  media?: CompatMediaOptions;
+  media?: MediaOptions;
   /** Whether past reasoning re-enters the context; the first synthetic turn is exempt. */
   keepThinking?: () => boolean;
 }
@@ -45,6 +48,7 @@ export function responsesInput(
       const content = wire[field];
       const parts = typeof content === 'string' ? [{ type: 'input_text', text: content }] : [...(content as Item[])];
       for (const ref of entry.context.blobs) {
+        if (!ref.mime.startsWith('image/')) continue;
         const bytes = opts.media.read(ref.handle);
         if (bytes) parts.push({ type: 'input_image', image_url: `data:${ref.mime};base64,${bytes.toString('base64')}` });
       }

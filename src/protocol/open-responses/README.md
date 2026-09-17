@@ -1,14 +1,10 @@
-<!-- Owner: src/protocol/open-responses/index.ts -->
-
+<!-- Owner: src/protocol/open-responses/index.ts, src/protocol/open-responses/generated.ts -->
 # Open Responses
 
-`openapi.json` is the published 2026-04-24 schema from
-https://www.openresponses.org/openapi/2026-04-24/openapi.json.
-The upstream revision recorded at import is
-`92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c`.
-The upstream schema is licensed under Apache-2.0; see LICENSE.
+`openapi.json` contains the published 2026-04-24 Open Responses schema.
+`generated.ts` contains its TypeScript types, schema version and source digest.
+The schema and generated types retain the Apache-2.0 license in `LICENSE`.
 
-Regenerate types with `pnpm exec tsx scripts/generate-open-responses.ts`.
-Use `--check` to verify the generated file and embedded schema digest.
-Type generation preserves the published unions, including fields whose upstream
-type is intentionally open. Stream lifecycle validation is implemented separately.
+`context.ts` wraps standard Items in local persistence metadata; `context-log.ts` reads and writes
+those records. `stream.ts` validates event ordering, Item identity and terminal response consistency.
+`tokens.ts` estimates context occupancy. Protocol metadata is separate from model wire content.

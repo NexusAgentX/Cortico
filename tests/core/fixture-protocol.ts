@@ -6,7 +6,7 @@ import { itemText, type ContextRecord } from '../../src/protocol/open-responses/
 import { createResponse, type OutputItem, type Request, type StreamEvent } from '../../src/protocol/open-responses/index.ts';
 import { ResponseAccumulator } from '../../src/protocol/open-responses/stream.ts';
 import { GenerationError, type ProviderAttempt, type ResponseClient } from '../../src/core/generation.ts';
-import { requestSpec, requestTools } from '../../src/providers/transport/native-input.ts';
+import { requestSpec, requestTools } from './fixture-request.ts';
 import { LLMError, LLMStreamAborted } from './fixture-errors.ts';
 
 export interface FixtureClient { chat(spec: ModelSpec, messages: ChatMessage[], tools?: ToolSchema[], options?: LLMChatOptions): Promise<LLMResult>; }
@@ -136,7 +136,7 @@ export class FixtureStream {
 
 function attempt(usage: LLMUsage | undefined, responseId: string, outcome: ProviderAttempt['outcome']): ProviderAttempt {
   return { id: crypto.randomUUID(), generationId: responseId, ordinal: 0, origin: { instance: 'fixture', module: 'fixture', model: 'fixture', compatibilityDomain: 'fixture' },
-    startedAt: new Date().toISOString(), elapsedMs: 0, requestId: null, responseId, outcome, status: 200, serviceTier: 'default', charges: [],
+    startedAt: new Date().toISOString(), elapsedMs: 0, requestId: null, responseId, outcome, status: 200, serviceTier: 'default',
     meters: { input: usage?.promptTokens ?? null, output: usage?.completionTokens ?? null, total: usage ? usage.promptTokens + usage.completionTokens : null,
       cachedInput: usage?.cacheHitTokens ?? null, uncachedInput: usage?.cacheMissTokens ?? null, reasoning: usage?.reasoningTokens ?? null, native: null } };
 }

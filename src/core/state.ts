@@ -17,8 +17,6 @@ export interface CoreStateData {
   llmStall: { since: number; at: number[] };
   /** Persona所有的不透明状态；core 仅负责原子持久化。 */
   persona: Record<string, unknown>;
-  /** World 可见性默认开启并跨重启保留；隐藏不改变挂载或运行状态。 */
-  worldVisibility: Record<string, boolean>;
 }
 
 const DEFAULTS: CoreStateData = {
@@ -26,11 +24,10 @@ const DEFAULTS: CoreStateData = {
   lastDeliveredCursor: 0,
   llmStall: { since: 0, at: [] },
   persona: {},
-  worldVisibility: {},
 };
 
 function freshDefaults(): CoreStateData {
-  return { ...DEFAULTS, llmStall: { since: 0, at: [] }, persona: {}, worldVisibility: {} };
+  return { ...DEFAULTS, llmStall: { since: 0, at: [] }, persona: {} };
 }
 
 function readStall(raw: unknown): { since: number; at: number[] } {
@@ -68,12 +65,6 @@ export class CoreState {
           raw.persona && typeof raw.persona === 'object' && !Array.isArray(raw.persona)
             ? (raw.persona as Record<string, unknown>)
             : {},
-        worldVisibility:
-          raw.worldVisibility && typeof raw.worldVisibility === 'object' && !Array.isArray(raw.worldVisibility)
-            ? Object.fromEntries(
-                Object.entries(raw.worldVisibility as Record<string, unknown>).map(([k, v]) => [k, v !== false]),
-              )
-            : {},
       };
     } catch {
       // 损坏则用默认值
@@ -89,15 +80,10 @@ export class CoreState {
     renameSync(tmp, this.file);
   }
 
-  /**
-   * 清除人格状态与截断标记并落盘。投递水位和运维可见性跨重置保留，避免重放
-   * 已投递事件或改变 World 可见性。
-   */
   clear(): void {
     this.data = {
       ...freshDefaults(),
       lastDeliveredCursor: this.data.lastDeliveredCursor,
-      worldVisibility: this.data.worldVisibility,
     };
     this.save();
   }

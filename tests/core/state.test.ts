@@ -31,7 +31,6 @@ describe('CoreState', () => {
       lastDeliveredCursor: 0,
       llmStall: { since: 0, at: [] },
       persona: {},
-      worldVisibility: {},
     });
   });
 

@@ -1,6 +1,6 @@
-import { message, record, functionCall, functionResult, responseRecords, itemText, withText, type ContextRecord, type Item } from '../protocol/open-responses/context.ts';
+import { message, record, functionCall, functionResult, responseRecords, withText, type ContextRecord, type Item } from '../protocol/open-responses/context.ts';
 import { hasRole, textOf, withoutPastReasoning, responseRequest, usageCounters } from '../protocol/open-responses/context-helpers.ts';
-import type { Response, StreamEvent } from '../protocol/open-responses/index.ts';
+import type { StreamEvent } from '../protocol/open-responses/index.ts';
 import { GenerationError, type ResponseClient, type TokenMeters } from './generation.ts';
 /**
  * MainLoop 执行 receivesEvents=true 的常驻 session。
@@ -28,6 +28,7 @@ import type {
   Logger,
   ModelSpec,
   Persona,
+  OutputTap,
   SessionDecl,
   SessionOpeningReason,
   ToolCallContext,
@@ -41,9 +42,7 @@ import type { WakeBus } from './bus.ts';
 import type { SessionLog } from './session.ts';
 import type { CoreState } from './state.ts';
 import type { SessionHandle, SessionTracker } from './sessions.ts';
-import { assembleSystem, type EnvPromptDirs } from './prefix.ts';
-import { recordToolCall, type ToolCallLog } from './tool-log.ts';
-import type { Transcript } from './transcript.ts';
+import { assembleSystem } from './prefix.ts';
 import { setAnchors, withAnchors } from './log-context.ts';
 import { withBlobLines } from './blobs.ts';
 import {
@@ -60,29 +59,12 @@ import {
 } from './markers.ts';
 import { fixPairing, rebuildTail } from './truncate.ts';
 
-import { nowIso, prefixFingerprint, renderEventLines } from './util.ts';
+import { nowIso, renderEventLines } from './util.ts';
 
-
-/**
- * 已挂载 World 的当前状态。隐藏不停止 World；事件投递立即停止，
- * 环境前缀与工具表在前缀重建时一同更新，避免保留已不可用工具的说明。
- */
 export interface WorldView {
-  /** 全部已挂载 World(含被隐藏的) */
   all(): World[];
-  /** 当前对 agent 可见的 World */
-  visible(): World[];
 }
 
-/** 当前工具名称，用于检查工具表是否需要重建。 */
-function toolSignature(mod: World): string {
-  return mod
-    .tools()
-    .map((t) => t.name)
-    .join(',');
-}
-
-/** 按当前活跃端点读取上下文容量与计数，支持模型和端点热更新。 */
 export interface ContextFacts {
   /** 输入容量为模型窗口减单轮生成上限；窗口未知时返回 null，Core 不据此限制输入。 */
   hardTokens(): number | null;
@@ -98,28 +80,24 @@ export interface MainLoopDeps {
   persona: Persona;
   /** 本循环所跑的那个session声明(轮数上限/工具集都从这里实时读) */
   decl: SessionDecl;
-  /** 当前活跃端点的模型配置，每轮读取。 */
+
   spec: () => ModelSpec;
   context: ContextFacts;
   /** 记录落库刻的附件内部化(新字节进日志附件库、已有句柄补 mime);core 提供 */
   blobs: { intern(inputs: readonly (BlobInput | BlobRef)[] | undefined): BlobRef[] | undefined };
-  /** 已挂载 World 的**实时**视图(可见性可被运维改;见 WorldView) */
+
   worlds: WorldView;
-  /** 环境提示词的两个覆盖层(包 / 部署);缺席 = 只用 World 自带的模板。 */
-  dirs?: EnvPromptDirs;
+
   bus: WakeBus;
   session: SessionLog;
   store: EventStore;
   state: CoreState;
   log: Logger;
-  /** session观察注册表(web面板数据源;可选,不接不影响主循环) */
+
   tracker?: SessionTracker;
-  /** 模型工具调用流水(可选;不接则不落盘) */
-  toolLog?: ToolCallLog;
+
   /** 主 session 的只追加副本;交接、清空、前缀重载在这里留边界记录 */
-  transcript?: Transcript;
-  /** 工具归属的 World id(工具流水的 mod 列);认不出的是Persona自己的工具 */
-  toolOwner?: (name: string) => string | undefined;
+
   /** 同一批内模型失败后重新请求的预算，缺省使用 DEFAULT_RESUBMIT。 */
   resubmit?: ResubmitPolicy;
 }
@@ -159,7 +137,7 @@ export interface LoopStatus {
   batchesHandled: number;
   roundsLastBatch: number;
   lastTruncateAt: string | null;
-  /** 人工暂停中(控制台;事件照常落库排队,不投递) */
+
   paused: boolean;
   /** 当前是否安装了 DeliveryGate。 */
   scheduleBlocked: boolean;
@@ -288,9 +266,7 @@ export class MainLoop {
    */
   private anchor: { records: number; tokens: number; reasoningTokens: number } | null = null;
   /** 当前 system 前缀和工具表采用的可见 World 集合。 */
-  private appliedVisibleWorlds: Set<string> | null = null;
   /** 当前前缀中各可见 World 的工具签名，用于检测工具表漂移。 */
-  private appliedWorldTools = new Map<string, string>();
   /** 当前模型轮；非 reasoning 增量一旦外流，本轮不再接受自动抢占。 */
   private currentRound: {
     controller: AbortController;
@@ -335,22 +311,16 @@ export class MainLoop {
     return true;
   }
 
-  /**
-   * 工具 schema 与 handler 来自 session 声明；此处去重、稳定排序并按名称过滤隐藏 World 工具。
-   * World 之间、与 Persona 声明的自有工具及保留帧重名时，装配层拒绝挂载。
-   * Persona 未声明自有工具名时，此处保留先注册项并告警。
-   */
-  private assembleTools(hiddenToolNames: Set<string>): void {
+  private assembleTools(): void {
     const { decl, log } = this.d;
     const defs: ToolDef[] = [];
     const seen = new Set<string>();
-    for (const def of decl.tools()) {
+    for (const def of [...decl.tools(), ...this.d.worlds.all().flatMap(world => world.tools())]) {
       if (RESERVED_FRAME_NAMES.has(def.name)) {
         // 保留帧名称不能注册为工具，同名模型调用会被丢弃。
         log.warn(`工具名与保留帧撞名,拒绝注册: ${def.name}`);
         continue;
       }
-      if (hiddenToolNames.has(def.name)) continue;
       if (seen.has(def.name)) {
         log.warn(`工具重名,跳过后者: ${def.name}`);
         continue;
@@ -368,21 +338,10 @@ export class MainLoop {
   /** 空 tags 只报告一次。 */
   private readonly warnedUntagged = new Set<string>();
 
-  /** 按当前可见性重建工具表并记录所用 World 集合；重启恢复前缀时也执行。 */
   private bindWorlds(): World[] {
     const { worlds } = this.d;
-    const visible = worlds.visible();
-    const visibleIds = new Set(visible.map((m) => m.id));
-    const hiddenToolNames = new Set(
-      worlds
-        .all()
-        .filter((m) => !visibleIds.has(m.id))
-        .flatMap((m) => m.tools().map((t) => t.name)),
-    );
-    this.assembleTools(hiddenToolNames);
-    this.appliedVisibleWorlds = visibleIds;
-    this.appliedWorldTools = new Map(visible.map((m) => [m.id, toolSignature(m)]));
-    return visible;
+    this.assembleTools();
+    return worlds.all();
   }
 
   /**
@@ -390,13 +349,12 @@ export class MainLoop {
    * 必须同步更新。
    */
   private async buildSystem(): Promise<ContextRecord> {
-    const { persona, cfg, dirs } = this.d;
+    const { persona, cfg } = this.d;
     const content = await assembleSystem({
       persona,
       worlds: this.bindWorlds(),
       now: new Date(),
       timezone: cfg.timezone,
-      dirs,
     });
     return message('system', content);
   }
@@ -433,28 +391,29 @@ export class MainLoop {
       .map((entry) => (entry.context.head ? entry : { ...entry, context: { ...entry.context, head: true as const } }));
   }
 
-  /**
-   * 比较当前 World 可见性及工具名称与构建前缀时的记录，供控制台提示重载。
-   * 工具名可同步读取，因此用它检测 World 功能变化，不直接读取异步环境模板。
-   */
-  modulePrefixDrift(): string[] {
-    const applied = this.appliedVisibleWorlds;
-    if (!applied) return [];
-    const visible = new Map(this.d.worlds.visible().map((m) => [m.id, m]));
-    return this.d.worlds
-      .all()
-      .map((m) => m.id)
-      .filter((id) => {
-        const mod = visible.get(id);
-        if (applied.has(id) !== !!mod) return true;
-        return !!mod && this.appliedWorldTools.get(id) !== toolSignature(mod);
-      });
-  }
-
   /** 工具回执落库:附件内部化,每份的文本形态接在正文后。 */
   private toolResult(callId: string, out: ToolOutcome): ContextRecord {
     const blobs = this.d.blobs.intern(out.blobs);
     return functionResult(callId, withBlobLines(out.text, blobs), blobs ? { blobs } : {});
+  }
+
+  private outputTap(): OutputTap | undefined {
+    const taps = [this.d.decl.outputTap, ...this.d.worlds.all().map(world => world.outputTap?.())]
+      .filter((tap): tap is OutputTap => tap !== undefined);
+    if (!taps.length) return undefined;
+    const invoke = (operation: (tap: OutputTap) => void): void => {
+      for (const tap of taps) {
+        try { operation(tap); } catch (error) { this.d.log.warn('Output observer failed', { err: error }); }
+      }
+    };
+    return {
+      onEvent: event => invoke(tap => tap.onEvent(event)),
+      externalizes: event => taps.some(tap => tap.externalizes ? tap.externalizes(event)
+        : event.type === 'response.output_text.delta' || event.type === 'response.refusal.delta'
+          || (event.type === 'response.output_item.added' && event.item?.type === 'function_call')),
+      onRoundEnd: () => invoke(tap => tap.onRoundEnd?.()),
+      onAbort: reason => invoke(tap => tap.onAbort?.(reason)),
+    };
   }
 
   /** 一轮结束时先通知 Persona，再通知可见 World。 */
@@ -466,7 +425,7 @@ export class MainLoop {
     } catch (e) {
       log.warn('onTurnEnded钩子异常', { err: e });
     }
-    for (const m of worlds.visible()) {
+    for (const m of worlds.all()) {
       try {
         m.onTurnEnded?.();
       } catch (e) {
@@ -652,9 +611,7 @@ export class MainLoop {
     const { session } = this.d;
     if (!session.records.some((m) => m.context.ephemeral)) return;
     const kept = session.records.filter((m) => !m.context.ephemeral);
-    const dropped = session.records.length - kept.length;
     session.reset(kept);
-    this.d.transcript?.boundary('ephemeral-drop', { dropped });
   }
 
   /** 延迟渲染应读取当前状态；null、超时或异常均不归档、不投递，超时与异常记录日志。 */
@@ -873,7 +830,6 @@ export class MainLoop {
         if (got === 'stop' || !this.running) break;
         const batch = got;
 
-        // 空闲时由控制台触发的截断/前缀重载可能仍在收尾；新 batch 等维护完成再投递。
         await this.maintenanceChain;
         if (!this.active(generation)) break;
         this.processingBatch = true;
@@ -925,7 +881,7 @@ export class MainLoop {
     const caps = decl.rounds();
     this.roundsLastBatch = 0;
     // tap 接收流式增量；其异常只记日志，不中断模型调用。
-    const tap = decl.outputTap;
+    const tap = this.outputTap();
     const resubmit = this.d.resubmit ?? DEFAULT_RESUBMIT;
     let consecutiveFailures = 0;
     let resubmits = 0;
@@ -966,9 +922,8 @@ export class MainLoop {
       // barrierAfter 阻止之后的调用提前执行。
       const eager = tap
         ? new EagerDispatch(
-            () => this.toolDefs, ctx, log, decl.id, this.d.toolLog,
+            () => this.toolDefs, ctx, log,
             () => this.active(generation) && !flight.controller.signal.aborted,
-            (name) => this.d.toolOwner?.(name),
           )
         : null;
       // 轮级观测:首个内容事件的延迟、模型往返、工具阻塞,一轮一条 debug 记录(event=round)。
@@ -997,7 +952,6 @@ export class MainLoop {
       let assistant: ContextRecord[];
       let meters: TokenMeters | null = null;
       const outbound = this.outboundMessages();
-      const prefixHash = prefixFingerprint(outbound);
       try {
         // role 仅用于故障分类，不写入请求体。
         const llmStart = Date.now();
@@ -1017,7 +971,7 @@ export class MainLoop {
         setAnchors({ resp: res.response.id });
         if (!this.active(generation) || flight.controller.signal.aborted) {
           // 关机或换代丢弃已成功返回的结果时，仍记录这次调用的实际用量。
-          this.mainTrack?.recordAttempts(res.attempts, undefined, { outcome: 'discarded', prefixHash });
+          this.mainTrack?.recordAttempts(res.attempts);
           try {
             tap?.onAbort?.('core 正在关机');
           } catch (tapErr) {
@@ -1029,12 +983,12 @@ export class MainLoop {
         }
         meters = res.attempts[res.attempts.length - 1].meters;
         this.lastUsage = usageCounters(meters);
-        this.mainTrack?.recordAttempts(res.attempts, undefined, { prefixHash });
+        this.mainTrack?.recordAttempts(res.attempts);
         this.noteStallsRecovered();
         consecutiveFailures = 0;
       } catch (e) {
         if (flight.controller.signal.aborted) {
-          this.recordFailedUsage(e, prefixHash);
+          this.recordFailedUsage(e);
           try {
             tap?.onAbort?.(flight.abortReason === 'shutdown' ? 'core 正在关机' : '模型轮被新输入抢占');
           } catch (tapErr) {
@@ -1045,7 +999,7 @@ export class MainLoop {
           this.finishTurn();
           return;
         }
-        this.recordFailedUsage(e, prefixHash);
+        this.recordFailedUsage(e);
         if (tap && e instanceof GenerationError && e.partial) {
           // 已向外发送的部分输出必须保存；已执行的工具调用使用真实结果配对。
           await this.recordAbortedStream(responseRecords(e.partial, e.origin), eager, generation);
@@ -1154,7 +1108,6 @@ export class MainLoop {
         const def = this.toolDefs.find((t) => t.name === call.name);
         if (!def) {
           out = { text: UNKNOWN_TOOL };
-          withAnchors({ call: call.call_id }, () => recordToolCall(this.d.toolLog, decl.id, call.name, null, Date.now(), out));
         } else {
           const eagerOut = eager?.take(call.call_id);
           if (eagerOut !== undefined) {
@@ -1164,15 +1117,12 @@ export class MainLoop {
             const args = parseToolArgs(call.arguments);
             if (args === null) {
               out = { text: TOOL_FAILED_BAD_ARGS, failed: true };
-              withAnchors({ call: call.call_id }, () =>
-                recordToolCall(this.d.toolLog, decl.id, def.name, null, Date.now(), out, this.d.toolOwner?.(def.name)));
               results.push(functionResult(call.call_id, out.text));
               if (def.barrierAfter) barrierHit = true;
               continue;
             }
             out = await runToolHandler(
-              def, args, ctx, call.call_id, decl.id, this.d.toolLog,
-              () => this.active(generation), this.d.toolOwner?.(def.name),
+              def, args, ctx, call.call_id,
             );
             if (!this.active(generation)) return;
           }
@@ -1387,7 +1337,7 @@ export class MainLoop {
     if (!this.active(generation)) return;
     const newTail = this.clampTail(result, snapshot, [sysMsg, ...this.sessionHead()]);
     session.reset([sysMsg, ...newTail]);
-    for (const m of this.d.worlds.visible()) {
+    for (const m of this.d.worlds.all()) {
       try {
         m.onHandoffEnded?.();
       } catch (e) {
@@ -1397,7 +1347,6 @@ export class MainLoop {
     state.data.lastTruncateAt = nowIso(cfg.timezone);
     state.save();
     const summary = { beforeTokens: before, afterTokens: this.estTokens(), kept: newTail.length, dropped: Math.max(0, snapshot.length - newTail.length) };
-    this.d.transcript?.boundary('handoff', summary);
     log.emit('info', '上下文交接完成', { event: 'handoff', data: summary });
   }
 
@@ -1433,7 +1382,6 @@ export class MainLoop {
     const sysMsg = await this.buildSystem();
     if (!this.active(generation)) return;
     session.reset([sysMsg]);
-    this.d.transcript?.boundary('clear', {});
     this.finishTurn();
     this.pushOpening('cleared');
     log.emit('warn', 'session已清空重开', { event: 'session-cleared' });
@@ -1478,13 +1426,12 @@ export class MainLoop {
     let tailStart = 0;
     while (tailStart < snapshot.length && hasRole(snapshot[tailStart], 'system')) tailStart++;
     session.reset([sysMsg, ...snapshot.slice(tailStart)]);
-    this.d.transcript?.boundary('prefix-reload', { keptMessages: snapshot.length - tailStart });
     log.emit('warn', '当前session系统前缀已重载', { event: 'prefix-reload', data: { keptMessages: snapshot.length - tailStart } });
   }
 
   /** 每次已发出的 HTTP 尝试均记账；未报告的 token 维度保留为未知。 */
-  private recordFailedUsage(error: unknown, prefixHash?: string): void {
-    if (error instanceof GenerationError) this.mainTrack?.recordAttempts(error.attempts, undefined, { prefixHash });
+  private recordFailedUsage(error: unknown): void {
+    if (error instanceof GenerationError) this.mainTrack?.recordAttempts(error.attempts);
   }
 
   /** 记录失败时刻与连续失败起点，并持久化。 */
@@ -1565,11 +1512,6 @@ export class MainLoop {
     return { behind, oldest };
   }
 
-  /**
-   * 最老的待投递外部事件等待超过 WATERMARK_STALL_MS 时报告 error，不自动修复。
-   * 人工暂停或投递 gate 生效时不告警；仅含内部事件或 archive-only 原文的积压不触发该告警。等待 projector 的原文仍须由连续水位规则保护。
-   * 公开入口供巡查、测试与控制台调用。
-   */
   auditDeliveryWatermark(): void {
     if (!this.activeNow()) return;
     const { bus, state, store, log } = this.d;
@@ -1681,7 +1623,6 @@ export class MainLoop {
     return { event };
   }
 
-  /** 当前工具 schema，供模型与控制台使用；run() 前为空。tags 保留声明方的分类。 */
   getToolSchemas(): Array<ToolSchema & { tags: readonly ToolTag[] }> {
     return this.toolDefs.map(({ name, description, parameters, tags }) => ({
       name, description, parameters, tags,
@@ -1735,6 +1676,7 @@ export class MainLoop {
   /** 主循环已退出或 drain 超时；阻止迟到异步链继续写 session、工具账或结束钩子。 */
   seal(): void {
     this.sealed = true;
+    this.mainTrack?.close();
   }
 
   /** stop 的同步边界闭合已经落库的工具调用；异步 handler 的迟到结果一律丢弃。 */
@@ -1769,23 +1711,14 @@ function runToolHandler(
   args: Record<string, unknown>,
   ctx: ToolCallContext,
   callId: string,
-  role: string,
-  toolLog?: ToolCallLog,
-  canRecord: () => boolean = () => true,
-  mod?: string,
 ): Promise<ToolOutcome> {
-  const startedAt = Date.now();
   return withAnchors({ call: callId }, () => Promise.resolve()
     .then(() => def.handler(args, { ...ctx, callId }))
     .then((out): ToolOutcome => (typeof out === 'string' ? { text: out } : out))
     .catch((e: unknown): ToolOutcome => ({
       text: toolFailed(e instanceof Error ? e.message : String(e)),
       failed: true,
-    }))
-    .then((out): ToolOutcome => {
-      if (canRecord()) recordToolCall(toolLog, role, def.name, args, startedAt, out, mod);
-      return out;
-    }));
+    })));
 }
 
 /**
@@ -1803,12 +1736,8 @@ class EagerDispatch {
     private readonly defs: () => ToolDef[],
     private readonly ctx: ToolCallContext,
     private readonly log: Logger,
-    private readonly role: string,
-    private readonly toolLog?: ToolCallLog,
     private readonly active: () => boolean = () => true,
-    private readonly owner: (name: string) => string | undefined = () => undefined,
   ) {}
-
 
   onEvent(event: StreamEvent): void {
     if (!this.active()) return;
@@ -1843,7 +1772,7 @@ class EagerDispatch {
     if (args === null) return; // 落回非流式路径的"arguments are not valid JSON"回执
     // handler 按调用顺序串行执行。
     const run = this.chain.then(() => this.active()
-      ? runToolHandler(def, args, this.ctx, call.id, this.role, this.toolLog, this.active, this.owner(def.name))
+      ? runToolHandler(def, args, this.ctx, call.id)
       : { text: NOT_EXECUTED_LOOP_STOPPED });
     this.chain = run.then(() => undefined);
     this.results.set(call.id, run);

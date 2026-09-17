@@ -4,7 +4,6 @@ import type { ContextRecord } from '../protocol/open-responses/context.ts';
 import { ContextLog } from '../protocol/open-responses/context-log.ts';
 import { estimateMessagesTokens } from './util.ts';
 
-
 export class SessionLog {
   private readonly context: ContextLog;
   get records(): readonly ContextRecord[] { return this.context.records; }
@@ -51,6 +50,5 @@ export class SessionLog {
   estTokens(): number {
     return estimateMessagesTokens(this.records);
   }
-
 
 }

@@ -1,17 +1,33 @@
 import { createHash } from 'node:crypto';
 import { FixtureHandoffResult as ContextHandoffResult } from './fixture-protocol.ts';
 import { FixtureClient, adaptClient, adaptTap, records, messages, type FixtureTap, type FixtureHarnessApi } from './fixture-protocol.ts';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect } from 'vitest';
 import type { ChatMessage, LLMChatOptions, LLMDelta, LLMResult } from './fixture-types.ts';
 import type { EventEnvelope, CoreApi, CoreConfig, World, LLMUsage, ModelSpec, Persona, SessionDecl, ToolDef, ToolTag, ToolSchema, BlobInput, BlobRef } from '../../src/core/types.ts';
 import type { Item } from '../../src/protocol/open-responses/context.ts';
-import type { BotConfig } from '../../bots/corti-soulmate/assemble.ts';
-import { composeDefaults, type LoadedConfig } from '../../bots/corti-soulmate/assemble.ts';
 import { validatePairing } from "./fixture-truncate.ts";
 import { nullLogger } from '../../src/core/util.ts';
+
+import { createCoreConfig } from '../../src/core/config.ts';
+export interface BotConfig extends CoreConfig {
+  model: ModelSpec;
+  context: CoreConfig['context'] & { maxTokens: number; softRatio: number; keepRatio: number };
+  loop: { softCap: number; hardCap: number };
+}
+export interface LoadedConfig<C extends CoreConfig = BotConfig> {
+  config: C;
+  rootDir: string;
+  memoryDir: string;
+  dataDir: string;
+}
+function composeDefaults(): BotConfig {
+  return { ...createCoreConfig(), model: { model: 'test-model', thinking: false },
+    context: { keepPastThinking: true, maxTokens: 32000, softRatio: 0.85, keepRatio: 0.25 },
+    loop: { softCap: 6, hardCap: 12 } };
+}
 
 export function makeTmpDir(): { dir: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'bot-core-test-'));
@@ -34,9 +50,7 @@ export function makeCfg(patch?: Partial<BotConfig>): BotConfig {
 
 /** 当前活跃端点的模型配置，可原位修改窗口与生成上限。 */
 export function activeSpec(cfg: CoreConfig): ModelSpec {
-  const entry = cfg.providers[cfg.activeProvider];
-  if (!entry?.spec) throw new Error(`夹具的 provider ${cfg.activeProvider} 没有模型档`);
-  return entry.spec;
+  return (cfg as BotConfig).model;
 }
 
 /** 测试部署默认返回同一假密钥，可用 secrets 映射覆盖。 */
@@ -49,7 +63,6 @@ export function makeLoaded(opts: {
 }): LoadedConfig<BotConfig> {
   return {
     config: opts.config,
-    secret: (name) => opts.secrets?.[name] ?? (opts.secrets ? '' : 'fake-key'),
     rootDir: opts.rootDir,
     memoryDir: opts.memoryDir,
     dataDir: opts.dataDir,
@@ -285,7 +298,6 @@ export function makeFakePersona(extraTools: ToolDef[] = [], opts?: FakePersonaOp
     },
     ...(opts?.sessionHead ? { sessionHead: opts.sessionHead } : {}),
     // 使用不存在的隔离路径，避免读取实际 Memory 内容。
-    memoryDir: '__fake_persona_dir_does_not_exist__',
     blobs: { put: (name: string) => `mem:${name}`, get: () => null, list: () => [] },
   };
   return persona;
@@ -408,32 +420,13 @@ export function makeFakeHarnessApi(patch: Partial<FixtureHarnessApi> = {}): Core
   };
 }
 
-/** 假 World 通过 role=envPrompt 的文件声明提供环境模板，与正式模板使用相同解析入口。 */
-const FAKE_TEMPLATE_DIR = mkdtempSync(join(tmpdir(), 'bot-fake-worlds-'));
-let fakeTemplateSeq = 0;
-
 export function makeFakeIO(id: string, tools: ToolDef[] = [], staticText = ''): World {
-  const path = join(FAKE_TEMPLATE_DIR, `${id}-${++fakeTemplateSeq}.md`);
-  writeFileSync(path, staticText || `${id}World 环境。`, 'utf8');
-  return {
-    id,
-    envPromptVars: () => ({}),
-    console: () => ({
-      promptDocs: [
-        { key: `worlds.${id}.envPrompt`, title: `${id} · 环境提示词`, description: '测试模板', path, role: 'envPrompt' as const },
-      ],
-    }),
-    tools: () => tools,
-    start: async () => {},
-    stop: async () => {},
-  };
+  return { id, environment: () => staticText || `${id}World 环境。`, tools: () => tools,
+    start: async () => {}, stop: async () => {} };
 }
 
-/** 修改假 World 的环境模板文件。 */
 export function rewriteFakeIOTemplate(mod: World, text: string): void {
-  const doc = mod.console?.()?.promptDocs?.find((d) => d.role === 'envPrompt');
-  if (!doc) throw new Error(`${mod.id} 没有环境提示词模板`);
-  writeFileSync(doc.path, text, 'utf8');
+  mod.environment = () => text;
 }
 
 export function makeTool(name: string, result: string | (() => string | Promise<string>)): ToolDef {

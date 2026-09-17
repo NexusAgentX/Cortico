@@ -1,11 +1,14 @@
 /** Native Responses over any OpenAI-compatible endpoint: bearer key, stateless replay, no vendor branching. */
+import { isContextOverflow } from '../transport/errors.ts';
 import type { Logger } from '../../core/types.ts';
 import { nullLogger } from '../../core/util.ts';
-import { OpenAIHttpClient } from '../transport/chat.ts';
+import { createHash } from 'node:crypto';
+import { BaseProvider } from '../base.ts';
+import { generate } from '../transport/response-http.ts';
 import { ResponseProtocolError } from '../../protocol/open-responses/stream.ts';
 import { createResponse, type Request } from '../../protocol/open-responses/index.ts';
-import { standardUsage, type GenerateOptions } from '../../core/generation.ts';
-import { NativeResponseAssembly, type ResponseAssembly, type parseChatResponse } from '../transport/response-assembly.ts';
+import { standardUsage, type GenerateOptions, type Generation } from '../../core/generation.ts';
+import { NativeResponseAssembly, type ParsedResponse } from '../transport/response-assembly.ts';
 import { responseMeters } from '../transport/response-meters.ts';
 import { responsesInput, type ResponsesInputOptions } from '../transport/responses-input.ts';
 
@@ -51,22 +54,34 @@ export function buildResponsesBody(
   return { ...body, ...extraBody };
 }
 
-export class ResponsesProvider extends OpenAIHttpClient {
+export class ResponsesProvider extends BaseProvider {
+  contextOverflow = isContextOverflow;
+  accepts(mime: string): boolean { return this.opts.media?.enabled() === true && mime.startsWith('image/'); }
   private readonly opts: ResponsesProviderOptions;
 
   constructor(opts: ResponsesProviderOptions) {
-    super(opts.baseUrl, opts.log ?? nullLogger());
-    this.opts = opts;
-    this.chatPath = opts.endpointPath ?? '/responses';
+    super();
+    const url = new URL(opts.baseUrl);
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('baseUrl must use HTTP or HTTPS');
+    if (opts.endpointPath !== undefined && !opts.endpointPath.startsWith('/')) throw new Error('endpointPath must start with /');
+    this.opts = { ...opts, baseUrl: opts.baseUrl.replace(/\/+$/, ''),
+      extraHeaders: { ...opts.extraHeaders }, extraBody: structuredClone(opts.extraBody ?? {}) };
   }
 
-  protected override buildResponseBody(request: Request, options: GenerateOptions): Record<string, unknown> {
-    return buildResponsesBody(request, options, { media: this.opts.media, keepThinking: this.opts.keepThinking }, this.opts.extraBody);
-  }
-
-  /** The Chat body builder is unreachable here: `buildResponseBody` is overridden whole. */
-  protected buildBody(): never {
-    throw new Error('ResponsesProvider does not build Chat Completions bodies');
+  async respond(request: Request, options: GenerateOptions = {}): Promise<Generation> {
+    const endpoint = `${this.opts.baseUrl}${this.opts.endpointPath ?? '/responses'}`;
+    const domain = createHash('sha256').update(JSON.stringify([endpoint, this.headers()])).digest('hex');
+    const origin = { instance: domain, module: 'openai-responses-compat', model: request.model ?? '', compatibilityDomain: domain };
+    const opts = { ...options, origin };
+    const log = this.opts.log ?? nullLogger();
+    return generate(request, opts, origin, {
+      url: endpoint,
+      body: buildResponsesBody(request, opts, { media: this.opts.media, keepThinking: this.opts.keepThinking }, this.opts.extraBody),
+      headers: () => this.headers(),
+      assembly: () => new NativeResponseAssembly(),
+      parse: raw => this.parseResponse(raw, request),
+      log,
+    });
   }
 
   protected headers(): Record<string, string> {
@@ -75,11 +90,7 @@ export class ResponsesProvider extends OpenAIHttpClient {
     return headers;
   }
 
-  protected override responseAssembly(): ResponseAssembly {
-    return new NativeResponseAssembly();
-  }
-
-  protected override parseResponse(raw: unknown, request: Request): ReturnType<typeof parseChatResponse> {
+  private parseResponse(raw: unknown, request: Request): ParsedResponse {
     const data = raw as Item;
     if (typeof data.id !== 'string' || typeof data.model !== 'string' || !Array.isArray(data.output)
       || !['completed', 'incomplete', 'failed'].includes(String(data.status))) throw new ResponseProtocolError('Invalid native Responses resource');
@@ -89,39 +100,5 @@ export class ResponsesProvider extends OpenAIHttpClient {
       meters,
       serviceTier: typeof data.service_tier === 'string' ? data.service_tier : null,
     };
-  }
-}
-
-export interface CatalogModel {
-  id: string;
-  contextWindow?: number;
-}
-
-/** `GET /models`: ids always; OpenRouter also states `context_length` per model. */
-export class ModelCatalog {
-  private known = new Map<string, number | undefined>();
-  constructor(
-    private readonly endpoint: () => { baseUrl: string; headers: Record<string, string> },
-    private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
-
-  async list(): Promise<CatalogModel[]> {
-    const { baseUrl, headers } = this.endpoint();
-    const res = await this.fetchImpl(`${baseUrl.replace(/\/+$/, '')}/models`, { headers, signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) throw new Error(`GET /models ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    const json = (await res.json()) as { data?: Array<{ id?: unknown; context_length?: unknown }> };
-    if (!Array.isArray(json.data)) throw new Error('GET /models returned no data array');
-    const models: CatalogModel[] = [];
-    for (const row of json.data) {
-      if (typeof row.id !== 'string') continue;
-      const window = typeof row.context_length === 'number' && Number.isInteger(row.context_length) && row.context_length > 0 ? row.context_length : undefined;
-      this.known.set(row.id, window);
-      models.push(window ? { id: row.id, contextWindow: window } : { id: row.id });
-    }
-    return models.sort((a, b) => a.id.localeCompare(b.id));
-  }
-
-  contextWindow(model: string): number | undefined {
-    return this.known.get(model);
   }
 }

@@ -1,16 +1,14 @@
+import type { ModelSpec } from '../../src/core/types.ts';
 /**
  * OpenAI Responses Compatible 模块(原生 Responses):请求体、鉴权头、流式装配、错误形状、条目校验。
  * 所有 HTTP 都打桩;夹具帧按 DeepSeek / OpenAI 的真实事件名写。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import module, { compatOptions } from '../../src/providers/openai-responses-compat/index.ts';
 import { ResponsesProvider, buildResponsesBody } from '../../src/providers/openai-responses-compat/native.ts';
-import { validateEntry, validateSpec } from '../../src/providers/configuration.ts';
 import { responseRequest } from '../../src/protocol/open-responses/context-helpers.ts';
 import { message, record } from '../../src/protocol/open-responses/context.ts';
 import { GenerationError } from '../../src/core/generation.ts';
 import type { StreamEvent } from '../../src/protocol/open-responses/index.ts';
-import type { LLMProviderEntry, ModelSpec } from '../../src/core/types.ts';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -19,7 +17,7 @@ const request = (spec: ModelSpec) => responseRequest(spec, context);
 /** DeepSeek 风格:reasoning_text 事件名、无 [DONE] 帧。 */
 const sse = (values: unknown[]): Response => new Response(values.map((value) => `data: ${JSON.stringify(value)}\n\n`).join(''));
 const resource = (overrides: Record<string, unknown> = {}) => ({
-  id: 'resp_1', model: 'deepseek-flash', status: 'completed',
+  id: 'resp_1', model: 'test-model', status: 'completed',
   output: [{ type: 'message', id: 'msg_1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'ok', annotations: [] }] }],
   usage: { input_tokens: 12, output_tokens: 3, input_tokens_details: { cached_tokens: 8 }, output_tokens_details: { reasoning_tokens: 1 } },
   ...overrides,
@@ -58,7 +56,7 @@ describe('ResponsesProvider(HTTP 边界)', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(resource({ service_tier: 'default' })), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     const client = new ResponsesProvider({ baseUrl: 'https://api.deepseek.com/', apiKey: 'sk-1', extraHeaders: { 'X-Title': 'cortico' } });
-    const result = await client.respond(request({ model: 'deepseek-flash', thinking: false }), { context });
+    const result = await client.respond(request({ model: 'test-model', thinking: false }), { context });
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/responses');
     expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toEqual({ 'Content-Type': 'application/json', 'X-Title': 'cortico', Authorization: 'Bearer sk-1' });
     expect(result.response.output[0]).toMatchObject({ type: 'message' });
@@ -72,7 +70,7 @@ describe('ResponsesProvider(HTTP 边界)', () => {
     expect('Authorization' in ((fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>)).toBe(false);
   });
   it('流式:reasoning_text 事件按标准名转发,流关即收尾(没有 [DONE]),usage 从 completed 帧取', async () => {
-    const initial = { id: 'resp_s', model: 'deepseek-flash', status: 'in_progress', output: [] };
+    const initial = { id: 'resp_s', model: 'test-model', status: 'in_progress', output: [] };
     const reasoning = { id: 'rs_1', type: 'reasoning', status: 'completed', summary: [], content: [{ type: 'reasoning_text', text: '想' }] };
     const text = { id: 'msg_s', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '好', annotations: [] }] };
     vi.stubGlobal('fetch', async () => sse([
@@ -92,7 +90,7 @@ describe('ResponsesProvider(HTTP 边界)', () => {
       { type: 'response.completed', response: { ...initial, status: 'completed', output: [reasoning, text], usage: { input_tokens: 5, output_tokens: 2, output_tokens_details: { reasoning_tokens: 1 } } } },
     ].map((event, sequence_number) => ({ ...event, sequence_number }))));
     const events: StreamEvent[] = [];
-    const result = await new ResponsesProvider({ baseUrl: 'https://api.deepseek.com' }).respond(request({ model: 'deepseek-flash', thinking: true }), { context, onEvent: (event) => events.push(event) });
+    const result = await new ResponsesProvider({ baseUrl: 'https://api.deepseek.com' }).respond(request({ model: 'test-model', thinking: true }), { context, onEvent: (event) => events.push(event) });
     expect(events.map((event) => event.type)).toContain('response.reasoning.delta');
     expect(events.some((event) => event.type.includes('reasoning_text'))).toBe(false);
     expect(result.response.output.map((item) => item.type)).toEqual(['reasoning', 'message']);
@@ -106,41 +104,5 @@ describe('ResponsesProvider(HTTP 边界)', () => {
     expect(caught).toBeInstanceOf(GenerationError);
     expect(caught.status).toBe(404);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('模块声明与条目校验', () => {
-  const entry = (patch: Partial<LLMProviderEntry> = {}): LLMProviderEntry => ({ kind: 'openai-responses-compat', baseUrl: 'https://api.openai.com/v1', ...patch });
-  it('开放档位:任意非空 effort 通过,关思维链时不能带 effort;归一化裁掉空白', () => {
-    expect(module.reasoningTiers).toEqual([]);
-    expect(validateSpec(module, entry(), { model: ' m ', thinking: true, reasoningEffort: ' max ' })).toEqual({ model: 'm', thinking: true, reasoningEffort: 'max' });
-    expect(() => validateSpec(module, entry(), { model: 'm', thinking: true, reasoningEffort: '  ' })).toThrow('推理强度');
-    expect(() => validateSpec(module, entry(), { model: 'm', thinking: false, reasoningEffort: 'low' })).toThrow('关闭');
-  });
-  it('候选只有两样:几个端点地址与一份 effort 词表,都与具体厂商无关', () => {
-    expect(module.effortSuggestions).toEqual(['none', 'low', 'medium', 'high', 'xhigh']);
-    // 地址是候选不是身份:条目里不记选了哪条,模块也不因此改变任何行为。
-    expect(module.baseUrlSuggestions).toEqual([
-      'https://api.openai.com/v1', 'https://api.deepseek.com', 'https://openrouter.ai/api/v1', 'https://api.x.ai/v1',
-    ]);
-    for (const url of module.baseUrlSuggestions) expect(url.endsWith('/')).toBe(false);
-    expect(module.defaultBaseUrl).toBe(module.baseUrlSuggestions[0]);
-  });
-  it('条目校验:不以 / 开头的路径、非字符串头、非对象体都拒;空值归一化后消失', () => {
-    expect(() => validateEntry(module, entry({ options: { endpointPath: 'responses' } }))).toThrow('以 / 开头');
-    expect(() => validateEntry(module, entry({ options: { extraHeaders: { a: 1 } } }))).toThrow('附加请求头');
-    expect(() => validateEntry(module, entry({ options: { extraBody: [] } }))).toThrow('附加请求体');
-    const normalized = validateEntry(module, entry({ options: { endpointPath: '', extraHeaders: {}, extraBody: {} } }));
-    expect(compatOptions(normalized)).toEqual({});
-  });
-  it('实例:密钥经 host 取,模型目录与窗口挂在实例上,兼容键含端点路径', () => {
-    const instance = module.create('cloud', entry({ secret: 'K', options: { endpointPath: '/x' } }), {
-      stateDir: 'unused', secret: (name) => (name === 'K' ? 'sk' : ''), readBlob: () => null, keepThinking: () => true,
-      log: { info() {}, warn() {}, error() {}, debug() {}, child() { return this; } } as never,
-    });
-    expect(instance.client).toBeInstanceOf(ResponsesProvider);
-    expect(typeof instance.listModels).toBe('function');
-    expect(instance.contextWindow!('anything')).toBeUndefined();
-    expect(instance.compatibilityKey!()).toEqual(['/x', 'cloud']);
   });
 });

@@ -14,7 +14,6 @@ import type {
   CoreApi,
   World,
   WorldHost,
-  LLMProviderEntry,
   LLMUsage,
   Logger,
   ModelFacts,
@@ -24,39 +23,32 @@ import type {
   SessionDecl,
   SessionInfo,
 } from './types.ts';
-import type { LoadedConfig } from './config.ts';
+import { createCoreConfig, type CoreConfigOptions } from './config.ts';
+import type { Provider } from '../providers/base.ts';
 import { Runlog, estimateMessagesTokens, nowIso, withDeadline } from './util.ts';
 import { JsonlEventStore } from './event-store.ts';
 import { WakeBus } from './bus.ts';
 import { SessionLog } from './session.ts';
 import { CoreState } from './state.ts';
-import { ProviderRegistry } from '../providers/registry.ts';
 import { runForkLoop } from './fork.ts';
-import { providerModule } from '../providers/registry.ts';
 import { LogBlobStore, blobScheme, mimeOfHandle, withBlobLines } from './blobs.ts';
 import { TimerStore } from './timers.ts';
 import { SessionTracker, type SessionHandle } from './sessions.ts';
-import { UsageLog } from './usage-log.ts';
-import { ToolCallLog } from './tool-log.ts';
-import { Transcript } from './transcript.ts';
-import { openRun, writeRunJson, type RunInfo } from './run.ts';
-import { currentAnchors } from './log-context.ts';
-import { MainLoop, type ContextFacts } from './loop.ts';
+import { openRun, closeRun, writeRunJson, type RunInfo } from './run.ts';
+import { MainLoop, RESERVED_FRAME_NAMES, type ContextFacts } from './loop.ts';
 import type { ResponseClient } from './generation.ts';
 
 /** 单个 World 的停止期限；失败或超时写入结果，其他停止操作继续。 */
 const MODULE_STOP_MS = 20_000;
 /** 主循环收到 abort 后用于落完已外化片段的期限。 */
 const LOOP_DRAIN_MS = 1_000;
-/**
- * 隐藏 World 仍推送事件时，首条及每隔此周期报告一次。可见性开关跨重启保留。
- */
-const HIDDEN_PUSH_NOTE_GAP_MS = 10 * 60_000;
-
-export interface CoreDeps {
+export interface CoreOptions {
+  dataDir: string;
+  config?: CoreConfigOptions;
   persona: Persona;
-  worlds: World[];
-  llm?: ResponseClient;
+  worlds?: World[];
+  provider: Provider;
+  model: ModelSpec;
 }
 
 export interface WorldStopFailure {
@@ -64,12 +56,14 @@ export interface WorldStopFailure {
   detail: string;
 }
 
-export class Core<C extends CoreConfig = CoreConfig> {
-  readonly loaded: LoadedConfig<C>;
+export class Core {
+  readonly config: CoreConfig;
+  readonly dataDir: string;
+  readonly provider: Provider;
+  private readonly model: ModelSpec;
   /** 本次进程运行的标识与日志目录。 */
   readonly run: RunInfo;
   readonly runlog: Runlog;
-  readonly transcript: Transcript;
   readonly store: JsonlEventStore;
   readonly bus: WakeBus;
   readonly session: SessionLog;
@@ -79,12 +73,9 @@ export class Core<C extends CoreConfig = CoreConfig> {
   readonly llm: ResponseClient;
   /** 媒体库：字节保存在 data/media/，回执与事件只存引用。 */
   readonly logBlobs: LogBlobStore;
-  /** 各agent session的观察注册表(web面板数据源) */
+
   readonly sessions: SessionTracker;
-  /** 每次LLM调用的持久化流水(跨重启;用量·成本页数据源) */
-  readonly usageLog: UsageLog;
-  /** 主循环每次模型工具调用的持久化流水(工具名/原始参数/耗时/回执) */
-  readonly toolLog: ToolCallLog;
+
   /** Persona注册的 session 声明;core 只按 id 查表,不对值分支 */
   readonly sessionDecls = new Map<string, SessionDecl>();
   /** 挂载表。与装配层共用同一个数组:运行中挂载/卸载就地增删。 */
@@ -94,6 +85,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
   private runPromise: Promise<void> | null = null;
   /** start() 已跑过 World 启动循环;之后挂载的 World 立即 start,之前的等 start() 统一起。 */
   private started = false;
+  private stopPromise: Promise<WorldStopFailure[]> | null = null;
   /** 每个声明当前运行的 fork 实例数，用于并发记账。 */
   private readonly forkRunning = new Map<string, number>();
   /** 各 World 在途的认知请求数；并发限制由 Persona 决定。 */
@@ -102,18 +94,22 @@ export class Core<C extends CoreConfig = CoreConfig> {
   private readonly mainDecl: SessionDecl;
   /** World 自愿上报用量的常驻仪表条目(每 World 一条) */
   private readonly moduleUsageTracks = new Map<string, SessionHandle>();
-  /** 隐藏 World 照常落库的事件计数与上次回报时刻(每 World 一条) */
-  private readonly hiddenPushes = new Map<string, { count: number; notedAtMs: number }>();
-  readonly providers: ProviderRegistry;
   private readonly moduleHostLeases = new Map<World, { active: boolean }>();
 
-  constructor(loaded: LoadedConfig<C>, deps: CoreDeps) {
-    this.loaded = loaded;
-    const cfg = loaded.config;
-    const dataDir = loaded.dataDir;
-    if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
-
-    this.run = openRun(dataDir, { timezone: cfg.timezone, bot: cfg.displayName, repoRoot: loaded.repoRoot });
+  constructor(options: CoreOptions) {
+    this.config = createCoreConfig(options.config);
+    this.dataDir = options.dataDir;
+    this.provider = options.provider;
+    this.model = Object.freeze({ ...options.model });
+    if (!this.model.model.trim()) throw new Error('model.model is required');
+    for (const key of ['contextWindow', 'maxTokens'] as const) {
+      const value = this.model[key];
+      if (value !== undefined && (!Number.isInteger(value) || value <= 0)) throw new Error(`Invalid model.${key}`);
+    }
+    const cfg = this.config;
+    const dataDir = this.dataDir;
+    mkdirSync(dataDir, { recursive: true });
+    this.run = openRun(dataDir, { timezone: cfg.timezone });
     this.runlog = new Runlog(join(this.run.dir, 'log.jsonl'), {
       run: this.run.id,
       timezone: cfg.timezone,
@@ -122,44 +118,29 @@ export class Core<C extends CoreConfig = CoreConfig> {
     });
     this.log = this.runlog.logger('core');
     this.store = new JsonlEventStore({ dataDir, run: this.run.id, log: this.log.child('store') });
-    // WakeBus 持有只读配置引用，使 batching 热更新对后续 push 生效。
     this.bus = new WakeBus(cfg.batching, this.log.child('bus'));
     this.session = new SessionLog(dataDir, 'session-main.jsonl', () => nowIso(cfg.timezone));
-    this.transcript = new Transcript(join(this.run.dir, 'transcript.jsonl'), { run: this.run.id, timezone: cfg.timezone });
-    this.session.onAppend((record, index) => this.transcript.item(record, index));
     this.state = new CoreState(dataDir);
     // 先 load 再 attach：load 会整体替换状态对象，Persona首次调用 personaState() 时必须拿到已加载的状态。
     this.state.load();
-    this.worlds = deps.worlds;
-    this.persona = deps.persona;
+    this.worlds = [...(options.worlds ?? [])];
+    if (new Set(this.worlds.map(world => world.id)).size !== this.worlds.length) throw new Error('Duplicate World id');
+    this.persona = options.persona;
     this.logBlobs = new LogBlobStore(dataDir);
-    this.providers = new ProviderRegistry(() => cfg.providers, {
-      // 同一部署根下的部署共享端点配置和状态目录。
-      stateRoot: loaded.providersDir ?? join(loaded.rootDir, 'providers'),
-      repoRoot: loaded.repoRoot ?? process.cwd(),
-      readBlob: (handle) => {
-        const bytes = this.resolveBlob(handle)?.bytes;
-        return bytes ? Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
-      },
-      keepThinking: () => cfg.context.keepPastThinking,
-      log: this.log.child('llm'),
-    });
-    this.llm = deps.llm ?? this.makeProviderRouter();
+    this.llm = options.provider;
 
     // TimerStore 仅提供通用持久定时器；Persona定义心跳与闹钟语义。
     this.timers = new TimerStore(dataDir, this.log.child('timer'));
 
-    this.usageLog = new UsageLog(join(dataDir, 'usage.jsonl'), message => this.log.error(message));
-    this.toolLog = new ToolCallLog(join(this.run.dir, 'toolcalls.jsonl'), { timezone: cfg.timezone, run: this.run.id });
-    this.sessions = new SessionTracker(cfg.timezone, (rec) => {
-      const { round } = currentAnchors();
-      this.usageLog.append({ ...rec, run: this.run.id, ...(round !== undefined ? { round } : {}) });
-    });
+    this.sessions = new SessionTracker(cfg.timezone);
 
     // attach 必须先于 declareSessions，后者会将工具 handler 绑定到 CoreApi。
     this.persona.attach(this.makeApi());
     const decls = this.persona.declareSessions();
-    for (const decl of decls) this.sessionDecls.set(decl.id, decl);
+    for (const decl of decls) {
+      if (this.sessionDecls.has(decl.id)) throw new Error(`Duplicate session id: ${decl.id}`);
+      this.sessionDecls.set(decl.id, decl);
+    }
     const main = decls.filter((d) => d.receivesEvents && d.persistent);
     if (main.length !== 1) {
       throw new Error(
@@ -168,29 +149,26 @@ export class Core<C extends CoreConfig = CoreConfig> {
     }
 
     this.mainDecl = main[0];
+    this.validateTools(this.worlds);
     this.loop = new MainLoop({
       cfg,
 
       llm: this.llm,
-      persona: deps.persona,
+      persona: options.persona,
       decl: main[0],
       spec: () => this.activeSpec(),
       context: this.contextFacts(),
       blobs: { intern: (inputs) => this.internBlobs(inputs) },
       worlds: {
         all: () => this.worlds,
-        visible: () => this.worlds.filter((m) => this.isWorldVisible(m.id)),
+
       },
-      dirs: { packageDir: loaded.packageDir ?? loaded.rootDir, deploymentDir: loaded.rootDir },
       bus: this.bus,
       session: this.session,
       store: this.store,
       state: this.state,
       log: this.log.child('loop'),
       tracker: this.sessions,
-      toolLog: this.toolLog,
-      transcript: this.transcript,
-      toolOwner: (name) => this.worlds.find((m) => m.tools().some((t) => t.name === name))?.id,
     });
     this.bus.setPreemptHandler(() => {
       this.loop.abortCurrentRound();
@@ -280,31 +258,24 @@ export class Core<C extends CoreConfig = CoreConfig> {
    * undefined——core 不猜窗口。
    */
   private contextWindowOf(spec: ModelSpec): number | undefined {
-    const { name } = this.activeProviderEntry();
-    const detected = this.providers.resolve(name).contextWindow?.(spec.model);
+    const detected = this.provider.contextWindow?.(spec.model);
     const manual = spec.contextWindow;
     if (detected === undefined) return manual;
     return manual === undefined ? detected : Math.min(detected, manual);
   }
 
-  /** 按当前活跃端点读取模型上下文事实。 */
   private contextFacts(): ContextFacts {
-    const module = () => providerModule(this.activeProviderEntry().entry.kind);
     return {
       hardTokens: () => {
         const spec = this.activeSpec();
         const window = this.contextWindowOf(spec);
         return window === undefined ? null : Math.max(0, window - (spec.maxTokens ?? 0));
       },
-      estimateTokens: (records) => module().estimateTokens?.(records, this.activeSpec()) ?? estimateMessagesTokens(records),
-      contextOverflow: (error) => module().contextOverflow?.(error) ?? false,
+      estimateTokens: (records) => this.provider.estimateTokens?.(records, this.activeSpec()) ?? estimateMessagesTokens(records),
+      contextOverflow: (error) => this.provider.contextOverflow?.(error) ?? false,
     };
   }
 
-  /**
-   * 创建临时 session；在创建时绑定当前活跃端点与模型，工具和轮数来自声明或调用参数。
-   * 记录并发数与用量；并发限制由 Persona 决定。
-   */
   async spawnFork(opts: ForkOptions): Promise<string> {
     const decl = this.sessionDecls.get(opts.id);
     if (!decl) throw new Error(`未声明的session: ${opts.id}`);
@@ -316,7 +287,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
     try {
       return await runForkLoop({
         id: decl.id,
-        llm: this.llm.bind?.() ?? this.llm,
+        llm: this.llm,
         spec: this.activeSpec(),
         messages: opts.messages,
         tools: opts.tools ?? decl.tools(),
@@ -380,94 +351,19 @@ export class Core<C extends CoreConfig = CoreConfig> {
     };
   }
 
-  /** 各 World 当下在途的认知外包请求数(控制台/诊断用;没有在途的 World 不出现) */
   cognitionInFlight(): Record<string, number> {
     const out: Record<string, number> = {};
     for (const [id, n] of this.cognitionRunning) if (n > 0) out[id] = n;
     return out;
   }
 
-  get config() {
-    return this.loaded.config;
-  }
+  activeSpec(): ModelSpec { return this.model; }
 
-
-  /**
-   * World 隐藏后继续运行，事件仅归档且重新显示时不补投。
-   * 事件投递立即停止；环境前缀与工具表在下一次前缀重建时一同更新。
-   */
-  setWorldVisible(id: string, visible: boolean): void {
-    if (!this.worlds.some((m) => m.id === id)) throw new Error(`未挂载的 World: ${id}`);
-    this.state.data.worldVisibility[id] = visible;
-    this.state.save();
-    this.log.warn(`World 对 agent ${visible ? '可见' : '隐藏'}: ${id}`);
-  }
-
-  isWorldVisible(id: string): boolean {
-    return this.state.data.worldVisibility[id] !== false;
-  }
-
-  /** 隐藏 World 的推送按 HIDDEN_PUSH_NOTE_GAP_MS 限频报告，计数保留在日志中。 */
-  private noteHiddenPush(id: string): void {
-    const note = this.hiddenPushes.get(id) ?? { count: 0, notedAtMs: 0 };
-    note.count += 1;
-    this.hiddenPushes.set(id, note);
-    const now = Date.now();
-    if (note.notedAtMs > 0 && now - note.notedAtMs < HIDDEN_PUSH_NOTE_GAP_MS) return;
-    note.notedAtMs = now;
-    this.log.warn(
-      `隐藏 World 的事件仅归档: ${id}(本轮第 ${note.count} 条)。需要投递时请开启该 World 的可见性`,
-    );
-  }
-
-  /** 全部已挂载 World 的可见性 + 前缀是否已经跟上 */
-  worldVisibility(): { visibility: Record<string, boolean>; driftedWorlds: string[] } {
-    const visibility: Record<string, boolean> = {};
-    for (const mod of this.worlds) visibility[mod.id] = this.isWorldVisible(mod.id);
-    return { visibility, driftedWorlds: this.loop.modulePrefixDrift() };
-  }
-
-  /** 用于控制台状态和启动信息的当前模型配置。 */
-  mainSessionSpec(): ModelSpec {
-    return this.activeSpec();
-  }
-
-  /** 按 activeProvider 读取模型配置；端点未配置模型时抛错。 */
-  activeSpec(): ModelSpec {
-    const { name, entry } = this.activeProviderEntry();
-    if (!entry.spec) {
-      throw new Error(`LLM provider ${name} 还没选模型(去控制台该 Provider 的「实例与模型」面板填模型名并保存)`);
-    }
-    return entry.spec;
-  }
-
-  activeProviderEntry(): { name: string; entry: LLMProviderEntry } {
-    const cfg = this.loaded.config;
-    const name = cfg.activeProvider;
-    const entry = cfg.providers?.[name];
-    if (!entry) {
-      const known = Object.keys(cfg.providers ?? {}).join(' / ') || '(空)';
-      throw new Error(`没有这个 LLM provider: ${name}(config.json providers 段现有: ${known})`);
-    }
-    return { name, entry };
-  }
-
-  /** The selected instance is resolved once at the start of each request. */
-  private makeProviderRouter(): ResponseClient {
-    const bind = (): ResponseClient => this.providers.bind(this.activeProviderEntry().name);
-    return { bind, respond: async (request, options) => bind().respond(request, options) };
-  }
-
-  /** 模型事实(按当前活跃端点实时读,不做启动期快照) */
   private modelFacts(): ModelFacts {
-    const spec = (): ModelSpec => this.activeSpec();
     return {
-      model: () => spec().model,
-      accepts: (mime) => {
-        const {entry} = this.activeProviderEntry();
-        return providerModule(entry.kind).accepts?.(entry,spec(),mime) ?? (entry.multimodal === true && mime.startsWith('image/'));
-      },
-      contextWindow: () => this.contextWindowOf(spec()),
+      model: () => this.model.model,
+      accepts: mime => this.provider.accepts?.(mime) ?? false,
+      contextWindow: () => this.contextWindowOf(this.model),
     };
   }
 
@@ -486,7 +382,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
         opts?: PushOptions,
       ): Promise<EventEnvelope> => {
         if (!lease.active) throw new Error(`World ${mod.id} 的宿主生命周期已结束`);
-        const deliver = opts?.deliver !== false && this.isWorldVisible(mod.id);
+        const deliver = opts?.deliver !== false;
         const blobs = this.internBlobs(e.blobs);
         const envelope = this.store.append({
           ...e,
@@ -495,20 +391,16 @@ export class Core<C extends CoreConfig = CoreConfig> {
           origin: e.origin ?? 'external',
           contextDelivery: deliver ? 'deliver' : 'archive-only',
         });
-        // 隐藏 World 的事件仍归档，不投递。
         if (deliver) {
           this.bus.push({ event: envelope }, { trigger: opts?.trigger });
         } else {
           // 仅归档事件不会经过候选处理，必须在此标记已处理以推进投递水位。
           this.loop.acknowledgeDiscarded([envelope]);
-          if (opts?.deliver !== false) this.noteHiddenPush(mod.id);
         }
         return envelope;
       },
       pushDeferred: (e, opts) => {
         if (!lease.active) return;
-        // 隐藏 World 的延迟渲染项没有正文，直接丢弃。
-        if (!this.isWorldVisible(mod.id)) return;
         this.bus.push(
           { deferred: { ...e, source: mod.id, origin: e.origin ?? 'external' } },
           { trigger: opts?.trigger },
@@ -524,8 +416,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
           origin,
           contextDelivery: 'archive-only',
         }));
-        if (this.isWorldVisible(mod.id)) {
-          this.bus.push({
+        this.bus.push({
             candidate: {
               source: mod.id,
               origin,
@@ -534,11 +425,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
               value: spec.value,
               project: spec.project,
             },
-          }, { trigger: opts?.trigger });
-        } else {
-          // 隐藏的候选不再生成投递内容，立即标记归档事件已处理。
-          this.loop.acknowledgeDiscarded(sourceEvents);
-        }
+        }, { trigger: opts?.trigger });
         return sourceEvents;
       },
       store: this.store,
@@ -565,14 +452,10 @@ export class Core<C extends CoreConfig = CoreConfig> {
     };
   }
 
-  /**
-   * World 上报的用量按 `worlds.<World>` 仪表项计入 session 统计和 usage.jsonl。
-   * 用量标签不携带模型用途语义。
-   */
   private reportWorldUsage(
     worldId: string,
     usage: LLMUsage,
-    opts?: { model?: string; label?: string; charges?: import('./generation.ts').Charge[] },
+    opts?: { label?: string },
   ): void {
     const id = `worlds.${worldId}`;
     let track = this.moduleUsageTracks.get(id);
@@ -580,11 +463,13 @@ export class Core<C extends CoreConfig = CoreConfig> {
       track = this.sessions.open(id, opts?.label ?? `${worldId}World 自带模型`, { id });
       this.moduleUsageTracks.set(id, track);
     }
-    track.record(usage, undefined, opts?.model, { charges: opts?.charges });
+    track.record(usage);
   }
 
   async start(): Promise<void> {
-    const dataDir = this.loaded.dataDir;
+    if (this.stopPromise) throw new Error('Core has stopped; create a new Core to resume');
+    if (this.started) return;
+    const dataDir = this.dataDir;
     if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
     // 构造期已加载状态；此处再次 load 会覆盖装配后、启动前的修改。
     this.session.load();
@@ -599,26 +484,34 @@ export class Core<C extends CoreConfig = CoreConfig> {
       this.log.info(`World 已启动: ${mod.id}`);
     }
     this.started = true;
-    if (this.worlds.length === 0) this.log.warn('没有挂载任何 World:agent 收不到外部事件');
     this.timers.start();
     this.runPromise = this.loop.run().catch((e) => {
       this.timers.stop();
       this.log.error('主循环异常退出', { err: e });
     });
     writeRunJson(this.run, {
-      bot: this.loaded.config.displayName,
       worlds: this.worlds.map((m) => m.id),
-      activeProvider: this.loaded.config.activeProvider,
+      model: this.model.model,
     });
     this.log.emit('info', 'core已启动', { event: 'started', data: { run: this.run.id } });
   }
 
-  /** 先终止主循环，再并发停止 World；各步骤有独立期限，失败写入返回结果。 */
-  /**
-   * 运行中挂载一个 World:入表,core 已启动则立即 start,并重建 system 前缀
-   * (环境提示词段与工具表同属缓存前缀,挂载必须连带换掉)。start 抛错时不入表。
-   */
-  async mountWorld(mod: World): Promise<void> {
+  private validateTools(worlds: World[]): void {
+    const names = new Map(this.mainDecl.tools().map(tool => [tool.name, tool]));
+    for (const world of worlds) {
+      for (const tool of world.tools()) {
+        if (RESERVED_FRAME_NAMES.has(tool.name)) throw new Error(`Reserved tool name: ${tool.name}`);
+        const existing = names.get(tool.name);
+        if (existing && existing !== tool) throw new Error(`Duplicate tool name: ${tool.name}`);
+        names.set(tool.name, tool);
+      }
+    }
+  }
+
+  /** Start the World before registering it; rebuild tools and environment at a safe loop boundary. */
+  async mount(mod: World): Promise<void> {
+    if (this.stopPromise) throw new Error('Core has stopped');
+    this.validateTools([...this.worlds, mod]);
     if (this.worlds.some((m) => m.id === mod.id)) throw new Error(`World 已挂载: ${mod.id}`);
     if (this.started) {
       try {
@@ -635,7 +528,7 @@ export class Core<C extends CoreConfig = CoreConfig> {
   }
 
   /** 停止 World 后使租约失效、移出挂载表并重建前缀；停止失败或超时仍继续卸载。 */
-  async unmountWorld(id: string): Promise<WorldStopFailure | null> {
+  async unmount(id: string): Promise<WorldStopFailure | null> {
     const index = this.worlds.findIndex((m) => m.id === id);
     if (index < 0) throw new Error(`未挂载的 World: ${id}`);
     const mod = this.worlds[index];
@@ -657,7 +550,11 @@ export class Core<C extends CoreConfig = CoreConfig> {
     return failure;
   }
 
-  async stop(): Promise<WorldStopFailure[]> {
+  stop(): Promise<WorldStopFailure[]> {
+    return this.stopPromise ??= this.stopInternal();
+  }
+
+  private async stopInternal(): Promise<WorldStopFailure[]> {
     this.started = false;
     this.loop.stop();
     this.timers.stop();
@@ -690,9 +587,20 @@ export class Core<C extends CoreConfig = CoreConfig> {
       }
     }))).filter((failure): failure is WorldStopFailure => failure !== null);
     failures.push(...moduleFailures);
-    this.usageLog.flush();
-    const ledger = this.usageLog.status();
-    if (ledger.pending) failures.push({ worldId: 'core.usage', detail: `${ledger.pending} usage records remain unwritten: ${ledger.error}` });
+    try { this.state.save(); } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.log.error('Core state could not be saved', { err: error });
+      failures.push({ worldId: 'core.state', detail });
+    }
+    for (const track of this.moduleUsageTracks.values()) track.close();
+    try {
+      closeRun(this.run, { endedAt: nowIso(this.config.timezone), lastCursor: this.store.latestCursor(),
+        complete: failures.length === 0, reason: 'stop' });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      failures.push({ worldId: 'core.run', detail });
+      this.log.error('Run closure could not be saved', { err: error });
+    }
     this.log.info('core已停止');
     return failures;
   }

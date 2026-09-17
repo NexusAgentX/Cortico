@@ -109,22 +109,16 @@ describe('SessionTracker', () => {
     expect(t.messages(t.list()[0].id)).toBeNull();
   });
 
-  it('观察流水失败不打断record;close后的迟到record被忽略', () => {
-    let persisted = 0;
-    const t = new SessionTracker('Asia/Shanghai', () => {
-      persisted++;
-      throw new Error('磁盘观察器故障');
-    });
+  it('close后的迟到record被忽略', () => {
+    const t = new SessionTracker('Asia/Shanghai');
     const h = t.open('dream', '梦');
 
     expect(() => h.record(usage(10, 5))).not.toThrow();
     expect(t.list()[0].calls).toBe(1);
-    expect(persisted).toBe(1);
 
     h.close();
     h.record(usage(100, 50));
     expect(t.list()[0].calls).toBe(1);
     expect(t.list()[0].promptTokens).toBe(10);
-    expect(persisted).toBe(1);
   });
 });

@@ -2,7 +2,7 @@ import { messages as legacyMessages } from './fixture-protocol.ts';
 import { FixtureHandoffResult as ContextHandoffResult } from './fixture-protocol.ts';
 /**
  * 合成开头在请求的 system 前缀之后插入，不写入持久 session，每次请求向 Persona 现取。
- * Core 丢弃 system 项、补齐工具配对;dropPastThinking 保留 head 项;Responses 仅回传来源兼容的
+ * Core 丢弃 system 项、补齐工具配对;Responses 仅回传来源兼容的
  * encrypted_content，不回传明文推理或内部 head 标记。
  */
 import { describe, expect, it } from 'vitest';
@@ -13,12 +13,11 @@ import { JsonlEventStore } from '../../src/core/event-store.ts';
 import { CoreState } from '../../src/core/state.ts';
 import { nullLogger } from '../../src/core/util.ts';
 import { estimateMessagesTokens } from './fixture-util.ts';
-import { dropPastThinking } from '../../src/providers/transport/history.ts';
 import { responsesInput } from '../../src/providers/transport/responses-input.ts';
 import { record, type Item } from '../../src/protocol/open-responses/context.ts';
 import { records } from './fixture-protocol.ts';
 import type { ChatMessage } from './fixture-types.ts';
-import type { BotConfig } from '../../bots/corti-soulmate/assemble.ts';
+import type { BotConfig } from './helpers.ts';
 import {
   activeSpec,
   FakeLLM,
@@ -85,7 +84,7 @@ function makeRig(opts: RigOptions = {}) {
     spec: () => activeSpec(cfg),
     context: { hardTokens: () => null, estimateTokens: estimateMessagesTokens, contextOverflow: () => false },
     blobs: fakeBlobIntern(),
-    worlds: { all: () => worlds, visible: () => worlds },
+    worlds: { all: () => worlds },
     bus,
     session,
     store,
@@ -273,7 +272,7 @@ describe('合成开头:注入位置与落盘边界', () => {
   });
 });
 
-describe("合成开头:不同传输的请求内容", () => {
+describe("合成开头:Responses 请求内容", () => {
   const history: ChatMessage[] = [
     { role: 'system', content: 'sys' },
     { role: 'user', content: HEAD_USER, head: true },
@@ -283,13 +282,6 @@ describe("合成开头:不同传输的请求内容", () => {
     { role: 'user', content: '再一条' },
     { role: 'assistant', content: '新回复', reasoning_content: '新思维链' },
   ];
-
-  it('dropPastThinking 豁免 head 标记的消息', () => {
-    const out = dropPastThinking(history);
-    expect(out[2].reasoning_content).toBe(HEAD_THINKING);
-    expect(out[4].reasoning_content).toBe('');
-    expect(out[6].reasoning_content).toBe('');
-  });
 
   it('Responses 传输:明文思维链没有线上形态,开头与否都不出线;标记字段不出线', () => {
     const context = records(history);

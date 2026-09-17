@@ -2,8 +2,8 @@
  * 一次进程运行对应一个 run，运行日志保存在 data/runs/<run>/。
  * index.jsonl 在启动与正常关机时各追加一行；暂停沿用 run，重启创建新 run。
  */
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { nowIso } from './util.ts';
 
@@ -17,8 +17,6 @@ export interface RunInfo {
 
 export interface RunOpenMeta {
   timezone: string;
-  bot: string;
-  repoRoot?: string;
 }
 
 export interface RunCloseSummary {
@@ -42,26 +40,6 @@ export function listRuns(dataDir: string): string[] {
   return readdirSync(dir).filter((name) => RUN_ID.test(name)).sort();
 }
 
-function gitSha(repoRoot: string | undefined): string | null {
-  if (!repoRoot) return null;
-  try {
-    const head = readFileSync(join(repoRoot, '.git', 'HEAD'), 'utf8').trim();
-    if (!head.startsWith('ref:')) return head.slice(0, 12);
-    const ref = head.slice(4).trim();
-    const refFile = resolve(repoRoot, '.git', ref);
-    if (existsSync(refFile)) return readFileSync(refFile, 'utf8').trim().slice(0, 12);
-    const packed = join(repoRoot, '.git', 'packed-refs');
-    if (!existsSync(packed)) return null;
-    for (const line of readFileSync(packed, 'utf8').split('\n')) {
-      const [sha, name] = line.trim().split(' ');
-      if (name === ref) return sha.slice(0, 12);
-    }
-  } catch {
-    // 不在 git 仓库里就不记
-  }
-  return null;
-}
-
 /** 生成 run id、建目录、在 index.jsonl 记一行开机。 */
 export function openRun(dataDir: string, meta: RunOpenMeta): RunInfo {
   const runsDir = runsDirOf(dataDir);
@@ -76,9 +54,7 @@ export function openRun(dataDir: string, meta: RunOpenMeta): RunInfo {
   appendFileSync(join(runsDir, 'index.jsonl'), JSON.stringify({
     run: id,
     startedAt,
-    bot: meta.bot,
     pid: process.pid,
-    gitSha: gitSha(meta.repoRoot),
     previousRun,
   }) + '\n', 'utf8');
   return { id, dir, runsDir, startedAt, previousRun };

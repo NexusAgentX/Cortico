@@ -6,8 +6,8 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Core } from "./fixture-core.ts";
-import type { LoadedConfig } from '../../src/core/config.ts';
-import type { BotConfig } from '../../bots/corti-soulmate/assemble.ts';
+import type { LoadedConfig } from './helpers.ts';
+import type { BotConfig } from './helpers.ts';
 import type {
   EventEnvelope,
   CoreApi,
@@ -33,7 +33,6 @@ import {
 
 function loadedFor(dir: string): LoadedConfig<BotConfig> {
   const config = makeCfg();
-  config.worlds.qq.enabled = false;
   return makeLoaded({
     config,
     rootDir: dir,
@@ -311,7 +310,7 @@ describe('Core · session 声明与 fork 原语', () => {
     let host: WorldHost | null = null;
     const probe: World = {
       id: 'probe',
-      envPromptVars: () => ({}),
+      environment: () => '',
       tools: () => [],
       start: async (h) => { host = h; },
       stop: async () => {},

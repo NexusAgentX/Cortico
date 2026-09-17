@@ -1,11 +1,6 @@
-import type { PriceDefinition } from '../providers/pricebook.ts';
 import type { ContextRecord, Item } from '../protocol/open-responses/context.ts';
 import type { StreamEvent } from '../protocol/open-responses/index.ts';
-import type { ResponseClient, ProviderAttempt } from './generation.ts';
-import type { ConfigGroup } from './config-schema.ts';
-import type { Language } from './language.ts';
-
-export type { ConfigGroup, ConfigProperty, ConfigValues } from './config-schema.ts';
+import type { ResponseClient } from './generation.ts';
 
 /** Core、Persona 与 World 的共享契约；session id 对 Core 不透明。 */
 
@@ -316,25 +311,6 @@ export interface ModelSpec {
  * provider 的推理选项，将 thinking 和 reasoningEffort 合并为一次选择。
  * 空选项表允许操作者填写任意非空 effort；provider 可提供建议值。
  */
-export interface ReasoningTier {
-  /** provider 内唯一的选项 id。 */
-  id: string;
-  label: string;
-  thinking: boolean;
-  effort?: string;
-  /** 该选项的使用限制或说明。 */
-  note?: string;
-}
-
-/** provider 支持的 service_tier 选项。 */
-export interface ServiceTier {
-  /** 发送给端点的 service_tier 值。 */
-  id: string;
-  label: string;
-  /** 该选项的使用限制或说明。 */
-  note?: string;
-}
-
 export interface LLMUsage {
   promptTokens: number;
   completionTokens: number;
@@ -343,45 +319,6 @@ export interface LLMUsage {
   reasoningTokens?: number;
 }
 
-/** 单次模型调用的持久记录，保存于 data/usage.jsonl。 */
-export interface UsageRecord {
-  recordId?: string;
-  version?: 2;
-  run?: string;
-  /** 主循环轮次；fork 和 World 自报用量不提供。 */
-  round?: number;
-  attempt?: ProviderAttempt;
-  /** World 自报费用，不归属于当前 provider。 */
-  charges?: import('./generation.ts').Charge[];
-  /** 部署时区的 ISO 时间戳，格式由 nowIso 定义。 */
-  ts: string;
-  /** 常驻 session 使用声明 id；fork 实例 id 由声明 id 和序号派生。 */
-  sessionId: string;
-  /** Persona 定义的 session 声明 id，用于分类统计。 */
-  role: string;
-  label: string;
-  model: string;
-  promptTokens: number;
-  completionTokens: number;
-  cacheHitTokens: number;
-  cacheMissTokens: number;
-  reasoningTokens: number;
-  /**
-   * 缺省表示成功。failed 表示无可用结果；discarded 表示已返回结果因关机或运行代次变更而丢弃。
-   * 两者的实际用量均计入总消耗，并在 UsageAggregate.failed 中单列。
-   */
-  outcome?: 'failed' | 'discarded';
-  /** 请求前缀 SHA 指纹的前 12 位，用于判断前缀是否变化。 */
-  prefixHash?: string;
-  /** 失败调用从开流到失败的耗时（ms）。 */
-  failedAfterMs?: number;
-  /** 失败调用的上游请求 id。 */
-  requestId?: string;
-  /** 失败调用的 LLMError.status；0 表示流内失败。 */
-  status?: number;
-}
-
-/** 单个 session 的轮数上限：soft 追加提示，hard 结束循环。 */
 export interface RoundCaps {
   soft: number;
   hard: number;
@@ -395,7 +332,7 @@ export interface RoundCaps {
  */
 export interface SessionDecl {
   id: string;
-  /** 控制台与日志中的显示名。 */
+
   label: string;
   rounds: () => RoundCaps;
   /** 是否持久化；false 用于临时 fork。 */
@@ -632,10 +569,7 @@ export interface WorldHost {
     e: Omit<EventEnvelope, 'cursor' | 'origin' | 'contextDelivery' | 'blobs'> & { origin?: EventOrigin; blobs?: BlobInput[] },
     opts?: PushOptions,
   ): Promise<EventEnvelope>;
-  /**
-   * 渲染与持久化规则见 DeferredEventSpec；origin 缺省为 external。
-   * 隐藏 World 或已失效宿主的项直接丢弃；其他项按 trigger 入队。
-   */
+
   pushDeferred(
     e: Pick<DeferredEventSpec, 'type' | 'senderKey' | 'meta' | 'tags' | 'render'> & { origin?: EventOrigin },
     opts?: { trigger?: TriggerMode },
@@ -661,11 +595,8 @@ export interface WorldHost {
    * 保存新附件须通过事件或工具回执的 blobs 字段。
    */
   blob(handle: string): { bytes: Uint8Array; mime: string } | null;
-  /**
-   * 记录 World 自有模型的用量，写入 session 统计和 usage.jsonl。
-   * 仅记录主动上报的用量；Core 不管理 World 自有模型的运行时。
-   */
-  reportUsage(usage: LLMUsage, opts?: { model?: string; label?: string; charges?: import('./generation.ts').Charge[] }): void;
+
+  reportUsage(usage: LLMUsage, opts?: { label?: string }): void;
   /**
    * 最近 withinMs 毫秒内 Core 模型调用失败或流中断的次数。
    * 未接入此查询的宿主可省略。
@@ -676,163 +607,13 @@ export interface WorldHost {
   log: Logger;
 }
 
-/** 可清除的磁盘或内存存储单元。 */
-export interface StoragePart {
-  key: string;
-  label: string;
-  kind: 'disk' | 'memory';
-  /** 磁盘位置说明；内存存储省略。 */
-  location?: string;
-  /** 清除不可恢复的记录时设置；控制台要求额外确认。 */
-  danger?: boolean;
-  /** 清除后果。 */
-  note?: string;
-  /** 批量清除时的升序执行顺序，默认 0；session 使用 10，清除后重建前缀。 */
-  order?: number;
-  /** 当前存储规模（条数或大小）的实时说明。 */
-  stat(): string;
-  /** 返回清除结果；抛错表示失败。 */
-  clear(): Promise<string> | string;
-}
-
-/** 存储项的归属。装配层按声明来源盖章,控制台按它把项分到 Core、Persona、Memory 与各 World 的页面。 */
-export type StorageOwner = 'core' | 'persona' | 'memory' | `world:${string}`;
-
-export interface OwnedStoragePart extends StoragePart {
-  owner: StorageOwner;
-}
-
-/**
- * 须与 src/web/shared/console-protocol.ts 的 ConsolePanelDecl 保持结构和字段语义一致。
- * 类型分别定义以保持 Core 的依赖方向。id 在页面内唯一。
- */
-export interface WorldPanelDecl {
-  /** 本页内唯一，使用 [a-z0-9-]，不带 World 前缀。 */
-  id: string;
-  title: string;
-  description?: string;
-  /** 允许经 HTTP GET 调用的方法；省略时本面板只接受 POST。 */
-  getMethods?: readonly string[];
-}
-
-/** 提示词模板占位符；控制台展示声明及当前展开值。 */
-export interface PromptVarDecl {
-  /** 包含命名空间的占位符名称。 */
-  name: string;
-  /** 占位符对应的运行时内容。 */
-  description: string;
-  /**
-   * 值是否可能换行；控制台据此建议独占一行。
-   * 模板渲染不对续行追加缩进或列表符号。
-   */
-  multiline?: boolean;
-}
-
-/**
- * 可编辑的提示词模板；框架负责读取、revision 校验和原子保存。
- * 绝对路径不发送到浏览器。
- */
-export interface PromptDocDecl {
-  /** 全局唯一，惯例为 worlds.<World>.<名> 或 persona.<名>。 */
-  key: string;
-  title: string;
-  description: string;
-  /** 读取路径；文件不存在时读作空，首次保存时创建。 */
-  path: string;
-  /**
-   * 部署覆盖文件的写入路径；声明方通过 path 指定当前读取的模板。
-   * 缺省时读写均使用 path。
-   */
-  deploymentPath?: string;
-  /**
-   * envPrompt 为 World 环境模板，prefix 为 Persona 总装模板。
-   * 未指定时仅作为可编辑文件。
-   */
-  role?: 'envPrompt' | 'prefix';
-  /** 模板支持的占位符，须与运行时提供的变量一致。 */
-  vars?: PromptVarDecl[];
-}
-
-/**
- * World 自报的组件可用状态。
- * - online：功能可用，包括当前空闲。
- * - loading：正在连接、启动或预热。
- * - error：已启用但无法工作。
- * - offline：未启用或缺少配置。
- * 控制台按 state 显示，不从其他状态标签推断。
- */
-export interface WorldLamp {
-  /** 组件名称，用于悬停说明。 */
-  label: string;
-  state: 'online' | 'loading' | 'error' | 'offline';
-  /** 悬停时显示的状态详情。 */
-  hint?: string;
-}
-
-/** 每个 World 在导航中最多显示的状态灯数量，超出部分截断。 */
-export const MODULE_LAMP_MAX = 7;
-
-/** World 提供的控制台页面内容，按声明的面板 id 路由。 */
-export interface WorldConsoleDecl {
-  /**
-   * 按 console(language) 生成的显示名；缺省使用 WorldDefinition.label。
-   * 装配层状态和操作结果仍使用定义中的 label。
-   */
-  label?: string;
-  /** 按声明顺序显示，至多 MODULE_LAMP_MAX 个；缺省时不显示。 */
-  lamps?: WorldLamp[];
-  badges?: Array<{ label: string; value: string | number; tone?: 'on' | 'off' | 'plain' }>;
-  panels?: WorldPanelDecl[];
-  /**
-   * 处理本页的 panel/method/args 请求，默认返回 JSON。
-   * 返回 { $binary: { mime, base64 } } 时响应为二进制；未实现时返回 503。
-   */
-  invoke?(panel: string, method: string, args: unknown[]): Promise<unknown>;
-  /**
-   * 每条推送连接调用一次；多连接广播由 World 实现。
-   * 未实现时拒绝对应的 WebSocket 握手。
-   */
-  stream?(panel: string, socket: WorldStreamSocket): void;
-  /** World 的提示词模板；role=envPrompt 的模板用 envPromptVars() 渲染。 */
-  promptDocs?: PromptDocDecl[];
-  /** World 的可清除存储，列在本 World 页的数据页签。 */
-  storage?: StoragePart[];
-  /**
-   * 独立页面链接；inheritTheme 表示打开时附带当前主题快照。
-   * 控制台不解释 href 的路径语义。
-   */
-  links?: Array<{ label: string; href: string; inheritTheme?: boolean }>;
-  config?: ConfigGroup[];
-}
-
-export type ShutdownVerificationStatus = 'verified-ended' | 'still-live' | 'unknown';
-
-/** World 在 stop() 内完成并缓存的外部状态检查；汇总层不重新访问外部系统。 */
-export interface ShutdownExternalCheck {
-  key: string;
-  label: string;
-  status: ShutdownVerificationStatus;
-  detail: string;
-  /** 未验证结束时由操作者执行的动作。 */
-  manualAction: string;
-}
-
-/** World 的环境描述、事件和工具契约。 */
+/** External environment boundary. */
 export interface World {
   id: string;
-  /**
-   * 环境模板的当前变量值；文本来自 role=envPrompt 的 promptDocs 模板。
-   * 返回 null 时省略该 World 的环境段；返回空对象时保留无变量的模板全文。
-   * 每次前缀重建（包括上下文交接）时重新调用。
-   */
-  envPromptVars(): Record<string, string> | null | Promise<Record<string, string> | null>;
+  /** 每次前缀重建时读取的环境描述；文本由 World 提供。 */
+  environment(): string | Promise<string>;
   /** 工具定义和用法由 World 提供；使用时机与跨工具指导写入环境提示词。 */
   tools(): ToolDef[];
-  /**
-   * 每次控制台请求按浏览器 language 生成声明和响应文案，省略时为中文。
-   * 语言不缓存，不影响发给模型的文本；未实现时仅显示通用信息。
-   */
-  console?(language?: Language): WorldConsoleDecl;
   /** 主 session 的输出流接收器；装配层合并已挂载 World 的接收器，随挂载变化更新。 */
   outputTap?(): OutputTap;
   /** 挂载时接收宿主并开始连接平台、推送事件。 */
@@ -840,35 +621,26 @@ export interface World {
   stop(): Promise<void>;
   /**
    * 新前缀和保留上下文已装入 session，总线尚未恢复投递时调用。
-   * 此时推送的事件进入新 session 的第一批；隐藏 World 不接收通知。
+   * 此时推送的事件进入新 session 的第一批；
    */
   onHandoffEnded?(): void;
   /**
    * assistant 自然结束、LLM 失败或轮数达到硬上限时调用，用于清理本轮暂态。
-   * 隐藏 World 不接收通知。
+   *
    */
   onTurnEnded?(): void;
-  /**
-   * stop() 完成后返回外部状态检查的同步只读快照。
-   * 网络检查须在 stop() 的既有期限内完成并缓存。
-   */
-  shutdownVerification?(): readonly ShutdownExternalCheck[];
 }
 
 /** text 按序拼入 system 前缀；title 仅用于显示。 */
 export interface PrefixSegment {
   title: string;
   text: string;
-  /** 来源模板的 promptDoc key；缺省时控制台只读。 */
-  sourceKey?: string;
 }
 
 export interface WorldPrefixContext {
   id: string;
-  /** 框架使用模板和变量渲染的环境描述。 */
+  /** World 提供的环境描述。 */
   envPrompt: string;
-  /** 来源模板 key，传递至 PrefixSegment.sourceKey。 */
-  sourceKey?: string;
 }
 
 /** Core 在构造 system 前缀时提供的上下文。 */
@@ -881,15 +653,6 @@ export interface SystemPrefixContext {
 
 export type SessionOpeningReason = 'new' | 'restarted' | 'cleared';
 
-export interface MemoryAssemblyContext {
-  now: Date;
-  timezone: string;
-}
-
-/** 一个 World 的挂载或可见状态被装配层改变。`label` 是控制台显示名。 */
-export type WorldLifecycleEvent =
-  | { kind: 'mounted' | 'unmounted' | 'restarted'; id: string; label: string }
-  | { kind: 'visibility'; id: string; label: string; visible: boolean };
 
 /**
  * Persona 定义上下文内容、session 和 Memory 操作。Core 在生命周期边界调用可选钩子。
@@ -898,10 +661,6 @@ export type WorldLifecycleEvent =
 export interface Persona {
   /** system 前缀的有序段；Core 按序拼接 text。 */
   systemSegments(ctx: SystemPrefixContext): Promise<PrefixSegment[]>;
-  /** 控制台预览使用的模板变量当前值；未实现时仅显示占位符声明。 */
-  promptVarValues?(ctx: { now: Date; timezone: string }):
-    | Record<string, string>
-    | Promise<Record<string, string>>;
   /** session 新建、重启恢复或清空后调用；可通过 injectInternal 注入开场文本。 */
   onOpening?(ctx: { reason: SessionOpeningReason }): void;
   /**
@@ -920,23 +679,12 @@ export interface Persona {
   onIdle?(): void | Promise<void>;
   /** 连续模型调用失败后恢复时调用；返回待注入文本，null 表示不注入。 */
   onStallsRecovered?(info: { count: number; quietMs: number }): string | null;
-  /** World 被激活、停用、重启或可见性改变时调用；启动期初始挂载不通知。 */
-  onWorldLifecycle?(event: WorldLifecycleEvent): void;
-  /**
-   * Persona 的工具名，用于拒绝重名 World。
-   * 未提供时，重名仅在组装工具表时告警并保留先加入的工具。
-   */
-  ownToolNames?(): string[];
   /**
    * session 的合成开头:每次请求置于 system 前缀之后、持久历史之前,不写入 session,交接时
    * 不进保留内容。Core 每次出请求前调用一次,丢弃 system 与 developer 项,补齐工具配对,
    * 计入 hardTokens。内容只应随 Persona 自己的输入变化;每次不同就每次打穿前缀缓存。
    */
   sessionHead?(): Item[];
-  /** Memory 实例。Core 不读它的内容;bot 没给 memoryName 时控制台以它的类名作 Memory 页标题。 */
-  memory?: object;
-  /** Memory 目录的绝对路径。 */
-  memoryDir: string;
   /** mem: 句柄的后端，由 Persona 解释和保存二进制内容。 */
   blobs: BlobStore;
   /** 在 declareSessions 之前接收 CoreApi。 */
@@ -954,39 +702,6 @@ export interface Persona {
    * 未实现时，WorldHost 不提供 cognition。
    */
   cognition?: PersonaCognition;
-  /**
-   * Persona 的控制台页面声明；Memory 和认知操作归此接口，跨组件部署操作归装配层。
-   * 面板 id 在页内唯一、不带前缀；page id 由装配层生成。language 与 World.console 相同。
-   */
-  console?(language?: Language): PersonaConsoleDecl;
-}
-
-/**
- * 与 src/web/shared/console-protocol.ts 的 ConsoleStream 保持结构和语义一致。
- * 类型分别定义以保持 Core 的依赖方向，修改时须同步。
- */
-export interface WorldStreamSocket {
-  /** 连接已关闭时忽略发送，不抛错。 */
-  send(data: string): void;
-  /** 关闭连接；reason 原样发送给对端。 */
-  close(reason?: string): void;
-  onMessage(cb: (text: string) => void): void;
-  onClose(cb: () => void): void;
-  readonly open: boolean;
-}
-
-export interface PersonaConsoleDecl {
-  badges?: Array<{ label: string; value: string | number; tone?: 'on' | 'off' | 'plain' }>;
-  panels?: WorldPanelDecl[];
-  invoke?(panel: string, method: string, args: unknown[]): Promise<unknown>;
-  promptDocs?: PromptDocDecl[];
-  storage?: StoragePart[];
-  config?: ConfigGroup[];
-  /**
-   * Memory 页的声明:面板、模板与存储项归 Memory 而不是 Persona。面板 id 不得与本页的重复,
-   * invoke 共用;缺省或三项皆空时没有 Memory 页。
-   */
-  memory?: { panels?: WorldPanelDecl[]; promptDocs?: PromptDocDecl[]; storage?: StoragePart[] };
 }
 
 /**
@@ -1069,45 +784,9 @@ export interface Logger {
   child(area: string): Logger;
 }
 
-/** 模型服务端点配置；由 activeProvider 选择当前端点。 */
-export interface LLMProviderEntry {
-  options?: Record<string, unknown>;
-  /** 端点的模型配置。缺省表示尚未选择模型，不能启用或执行调用。 */
-  spec?: ModelSpec;
-  serviceTier?: string;
-  pricing?: PriceDefinition[];
-  /** 已注册的 provider 模块 id。 */
-  kind: string;
-  baseUrl: string;
-  /** 密钥环境变量名；未指定时不要求鉴权。 */
-  secret?: string;
-  /** 图像输入的手动开关；provider 可通过 accepts 提供具体的 MIME 支持判断。 */
-  multimodal?: boolean;
-}
-
-/**
- * Core 的运行配置；部署层合并各组件的配置段。
- * 模型设置归 provider，session 轮数及上下文阶段预算归 Persona。
- */
 export interface CoreConfig {
-  /** 控制台和终端使用的显示名。 */
-  displayName: string;
   timezone: string;
-  /**
-   * 进程启动时确定的控制台默认语言；缺省按环境变量或系统区域选择。
-   * 浏览器可单独保存语言选择，不影响模型文本。
-   */
-  language?: 'zh' | 'en';
-  /** 以端点名为键的共享模型服务配置。 */
-  providers: Record<string, LLMProviderEntry>;
-  /** providers 中的端点名；新模型调用读取当前值。 */
-  activeProvider: string;
-  /** provider 配置格式版本，保存配置时写入。 */
-  providerSchemaVersion?: number;
-  context: {
-    /** 是否在请求中保留 provider 支持回传的历史推理内容；不改变已保存的 session。 */
-    keepPastThinking: boolean;
-  };
+  context: { keepPastThinking: boolean };
   batching: {
     /** debounce 批距末次事件到达的等待时间。 */
     quietGapMs: number;
@@ -1117,17 +796,6 @@ export interface CoreConfig {
     maxBatchAgeMs: number;
     /** 积压外部即时事件和候选达到此数时立即投递；不计 piggyback 项。 */
     maxBatchSize: number;
-  };
-  web: {
-    port: number;
-    /** 控制台配色方案 id；浏览器没有保存过选择时用它，认不出的 id 落到框架默认方案。 */
-    theme: string;
-  };
-  paths: {
-    /** 相对部署目录或绝对路径；目录名由 Persona 指定。 */
-    memory: string;
-
-    data: string;
   };
   logging: {
     /** 低于此级别的记录不写入 log.jsonl。 */

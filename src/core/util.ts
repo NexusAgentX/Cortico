@@ -1,31 +1,12 @@
-import { type ContextRecord } from '../protocol/open-responses/context.ts';
 /**
  * 共享小工具:token估算、时间格式化、Logger实现。
  */
-import { createHash } from 'node:crypto';
 import { appendFileSync, mkdirSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { LOG_LEVEL_RANK, type EventEnvelope, type LogEmitOptions, type LogError, type LogInput, type Logger, type LogLevel, type LogRecord } from './types.ts';
 import { currentAnchors } from './log-context.ts';
 
-
 export { estimateTokens, estimateMessagesTokens } from '../protocol/open-responses/tokens.ts';
-
-/**
- * 前 count 条消息按请求形状序列化后计算 SHA256，取前 12 位用于日志比较。
- * 该指纹不参与运行控制，也不证明上游缓存是否命中。
- */
-export function prefixFingerprint(messages: readonly ContextRecord[], count = PREFIX_FINGERPRINT_MESSAGES): string {
-  const parts = messages.slice(0, count).map(({ item }) => {
-    const { id: _id, ...wire } = item;
-    return JSON.stringify(wire);
-  });
-  return createHash('sha256').update(parts.join('\0'), 'utf8').digest('hex').slice(0, 12);
-}
-
-/** 指纹覆盖的消息条数，包含 system 前缀、合成首轮对话及其后的部分上下文。 */
-export const PREFIX_FINGERPRINT_MESSAGES = 8;
-
 
 /** 超时后拒绝返回的 Promise；不会取消仍在运行的底层 Promise。 */
 export function withDeadline<T>(work: Promise<T>, ms: number, what = '这一步'): Promise<T> {
@@ -188,7 +169,6 @@ export class Runlog {
   get path(): string | null { return this.file; }
   get runId(): string { return this.run; }
 
-  /** 日志追加订阅，供控制台实时观察。 */
   onWrite(cb: (entry: LogRecord) => void): void {
     this.writeListeners.push(cb);
   }
@@ -329,7 +309,6 @@ export class Runlog {
     return makeLogger(this, area);
   }
 
-  /** 清空当前 run 的日志文件(web运维动作);之后照常append */
   clear(): void {
     if (!this.file) return;
     try {
