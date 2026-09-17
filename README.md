@@ -26,6 +26,7 @@
   <a href="#documentation">Documentation</a> ｜
   <a href="PHILOSOPHY.md">Design Stance</a> ｜
   <a href="docs/extensions.md">Extensions</a> ｜
+  <a href="#community">Community</a> ｜
   <a href="CONTRIBUTING.md">Contributing</a> ｜
   <a href="https://github.com/Pal-AI-Lab/Cortico/issues">Issue Tracker</a>
 </p>
@@ -121,6 +122,13 @@ Cortico strictly separates concerns across four distinct layers:
 | `llamacpp` | Local `llama-server` runtime with automated binary download and process management |
 
 Additional upstream protocols and providers can be integrated seamlessly via extensions.
+
+## Community
+
+Join our groups to follow the project and talk with other developers!
+
+* QQ Group: 681195563
+* Discord Server: https://discord.gg/DR37WB5zJf
 
 ## Contributing
 

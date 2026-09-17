@@ -26,6 +26,7 @@
   <a href="#文档">文档</a> ｜
   <a href="PHILOSOPHY.md">设计说明</a> ｜
   <a href="docs/extensions.md">扩展</a> ｜
+  <a href="#社区">社区</a> ｜
   <a href="CONTRIBUTING.md">贡献</a> ｜
   <a href="https://github.com/Pal-AI-Lab/Cortico/issues">Issues</a>
 </p>
@@ -121,6 +122,13 @@ Cortico 采用严格解耦的四层架构设计：
 | `llamacpp` | 本机 `llama-server` 运行时集成，支持官方 Binary 自动下载与子进程生命周期托管 |
 
 如需接入更多模型协议与供应商，可通过扩展系统无缝安装。
+
+## 社区
+
+加入我们的群组咨询项目进展，和其他开发者交流！
+
+* QQ 群：681195563
+* Discord Server：https://discord.gg/DR37WB5zJf
 
 ## 参与贡献
 
